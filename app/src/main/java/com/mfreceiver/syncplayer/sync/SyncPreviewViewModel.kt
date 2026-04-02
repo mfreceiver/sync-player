@@ -1,11 +1,10 @@
 package com.mfreceiver.syncplayer.sync
 
 import android.content.Context
-import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mfreceiver.syncplayer.data.model.SyncAction
-import com.mfreceiver.syncplayer.data.model.SyncPhaseimport dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

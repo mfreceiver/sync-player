@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.mfreceiver.syncplayer.data.model.SyncAction
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -286,7 +287,7 @@ private fun WarningCard(deleteCount: Int) {
 
 @Composable
 private fun SyncActionItem(
-    action: com.mfreceiver.syncplayer.data.model.SyncAction,
+    action: SyncAction,
     isDownload: Boolean
 ) {
     ListItem(
