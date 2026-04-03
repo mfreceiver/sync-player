@@ -12,6 +12,8 @@ import com.mfreceiver.syncplayer.player.PlayerScreen
 import com.mfreceiver.syncplayer.player.PlayerViewModel
 import com.mfreceiver.syncplayer.settings.SettingsScreen
 import com.mfreceiver.syncplayer.settings.SettingsViewModel
+import com.mfreceiver.syncplayer.sync.SyncPreviewScreen
+import com.mfreceiver.syncplayer.sync.SyncPreviewViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
 import android.net.Uri
 

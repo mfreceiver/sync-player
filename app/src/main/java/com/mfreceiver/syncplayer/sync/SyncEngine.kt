@@ -13,8 +13,8 @@ import com.mfreceiver.syncplayer.sync.smb.SmbFileClient
 import com.mfreceiver.syncplayer.sync.sftp.SftpFileClient
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -31,7 +31,7 @@ class SyncEngine @Inject constructor(
 ) {
 
     private val _progress = MutableStateFlow(SyncProgress())
-    val progress: Flow<SyncProgress> = _progress.asStateFlow()
+    val progress: StateFlow<SyncProgress> = _progress.asStateFlow()
 
     private val syncRootDir: File
         get() = File(context.filesDir, "synced").also { it.mkdirs() }
