@@ -14,6 +14,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.mfreceiver.syncplayer.data.model.SyncAction
+import com.mfreceiver.syncplayer.data.model.SyncProgress
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

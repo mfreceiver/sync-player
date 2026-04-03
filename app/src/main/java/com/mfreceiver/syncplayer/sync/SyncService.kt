@@ -1,6 +1,7 @@
 package com.mfreceiver.syncplayer.sync
 
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.os.IBinder
 import com.mfreceiver.syncplayer.data.model.SyncProgress
@@ -48,7 +49,7 @@ class SyncService : Service() {
 
             syncEngine.executeSync(toDownload, toDelete)
 
-            _syncProgress.value = syncEngine.progress.asStateFlow().value
+            _syncProgress.value = syncEngine.progress.value
             SyncNotificationHelper.updateNotification(this@SyncService, _syncProgress.value)
 
             delay(2000)

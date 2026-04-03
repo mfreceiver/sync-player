@@ -36,7 +36,7 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
             shareName = pathParts.firstOrNull() ?: ""
 
             val smbUrl = "smb://${config.host}/${shareName}/"
-            val smbFile = SmbFile(cifsContext, smbUrl)
+            val smbFile = SmbFile(smbUrl, cifsContext)
             smbFile.listFiles()
             true
         } catch (e: Exception) {
@@ -69,7 +69,7 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
                 "smb://$currentHost/$share/"
             }
 
-            val dir = SmbFile(ctx, smbUrl)
+            val dir = SmbFile(smbUrl, ctx)
             if (!dir.exists() || !dir.isDirectory) return@withContext emptyList()
 
             listFilesRecursive(ctx, dir, share, result)
@@ -102,7 +102,7 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
                             path = relPath,
                             name = child.name,
                             isDirectory = false,
-                            size = child.contentLengthLong,
+                            size = child.contentLength.toLong(),
                             lastModified = child.lastModified
                         )
                     )
@@ -126,10 +126,10 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
         val ctx = cifsContext ?: return@withContext false
         try {
             val smbUrl = "smb://$currentHost/$shareName/$remotePath"
-            val smbFile = SmbFile(ctx, smbUrl)
+            val smbFile = SmbFile(smbUrl, ctx)
             if (!smbFile.exists()) return@withContext false
 
-            val totalSize = smbFile.contentLengthLong
+            val totalSize = smbFile.contentLength.toLong()
             localFile.parentFile?.mkdirs()
 
             val buffer = ByteArray(64 * 1024)

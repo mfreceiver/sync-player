@@ -5,7 +5,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.progressSemantics
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -171,6 +170,7 @@ fun BrowserScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FolderItem(
     item: BrowseItem,
@@ -280,11 +280,7 @@ private fun FileItem(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 72.dp, end = 16.dp, bottom = 8.dp)
-                    .height(2.dp)
-                    .progressSemantics(
-                        current = item.playbackPosition,
-                        max = item.playbackDuration
-                    ),
+                    .height(2.dp),
                 color = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
             )

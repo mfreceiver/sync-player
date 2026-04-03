@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.sftp.RemoteResourceInfo
 import net.schmizz.sshj.sftp.SFTPClient
+import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import java.io.File
 import java.io.FileOutputStream
 
@@ -20,7 +21,7 @@ class SftpFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context)
     override suspend fun connect(config: ServerConfig): Boolean = withContext(Dispatchers.IO) {
         try {
             val client = SSHClient()
-            client.addHostKeyVerifier { _, _, _ -> true }
+            client.addHostKeyVerifier(PromiscuousVerifier())
             client.connect(config.host, config.port)
             client.authPassword(config.username, config.password)
 
@@ -114,20 +115,23 @@ class SftpFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context)
     ): Boolean = withContext(Dispatchers.IO) {
         val sftp = sftpClient ?: return@withContext false
         try {
-            val remoteFile = sftp.open(remotePath)
-            val totalSize = remoteFile.length()
+            val attrs = sftp.stat(remotePath)
+            val totalSize = attrs.size
             localFile.parentFile?.mkdirs()
 
             val buffer = ByteArray(64 * 1024)
             var transferred = 0L
 
-            remoteFile.use { rf ->
-                val inputStream = rf.newInputStream()
+            sftp.open(remotePath).use { rf ->
                 FileOutputStream(localFile).use { output ->
-                    var read: Int
-                    while (inputStream.read(buffer).also { read = it } != -1) {
-                        output.write(buffer, 0, read)
-                        transferred += read
+                    var offset = 0L
+                    while (offset < totalSize) {
+                        val len = minOf(buffer.size.toLong(), totalSize - offset).toInt()
+                        val bytesRead = rf.read(offset, buffer, 0, len)
+                        if (bytesRead < 0) break
+                        output.write(buffer, 0, bytesRead)
+                        offset += bytesRead
+                        transferred += bytesRead
                         onProgress?.invoke(transferred, totalSize)
                     }
                 }
