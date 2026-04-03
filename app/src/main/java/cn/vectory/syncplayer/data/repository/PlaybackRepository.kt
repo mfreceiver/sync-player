@@ -52,8 +52,21 @@ class PlaybackRepository @Inject constructor(
     }
 
     suspend fun toggleFavorite(videoItemId: Long) {
-        val existing = playbackRecordDao.getByVideoId(videoItemId) ?: return
-        playbackRecordDao.updateFavorite(videoItemId, !existing.isFavorite)
+        val existing = playbackRecordDao.getByVideoId(videoItemId)
+        if (existing != null) {
+            playbackRecordDao.updateFavorite(videoItemId, !existing.isFavorite)
+        } else {
+            playbackRecordDao.upsert(
+                PlaybackRecordEntity(
+                    videoItemId = videoItemId,
+                    position = 0,
+                    duration = 0,
+                    lastPlayedTime = System.currentTimeMillis(),
+                    isCompleted = false,
+                    isFavorite = true
+                )
+            )
+        }
     }
 
     suspend fun setFavorite(videoItemId: Long, favorite: Boolean) {

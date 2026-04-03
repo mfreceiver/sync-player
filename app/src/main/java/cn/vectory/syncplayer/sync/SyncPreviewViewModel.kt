@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.model.SyncAction
+import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProgress
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -45,11 +46,9 @@ class SyncPreviewViewModel @Inject constructor(
 
     val progress: StateFlow<SyncProgress> = syncEngine.progress
 
-    init {
-        // No auto-load - wait for user to press preview button
-    }
+    private var initialDownloadCount = 0
+    private var initialDeleteCount = 0
 
-    
     fun loadPreview() {
         viewModelScope.launch {
             _isLoading.value = true
@@ -59,12 +58,15 @@ class SyncPreviewViewModel @Inject constructor(
                     val (downloads, deletions) = syncEngine.dryRun()
                     _toDownload.value = downloads
                     _toDelete.value = deletions
+                    initialDownloadCount = downloads.size
+                    initialDeleteCount = deletions.size
                 } else {
                     val (actions, error) = syncEngine.dryRunDelete()
                     if (error != null) {
                         _error.value = error
                     } else {
                         _toDelete.value = actions
+                        initialDeleteCount = actions.size
                     }
                 }
                 _previewLoaded.value = true
@@ -77,27 +79,61 @@ class SyncPreviewViewModel @Inject constructor(
     }
 
     fun startSync() {
+        val downloads = _toDownload.value
+        val deletes = _toDelete.value
+        _isSyncing.value = true
         viewModelScope.launch {
-            _isSyncing.value = true
+            // Observe progress and shrink lists as items complete
+            val progressJob = viewModelScope.launch {
+                syncEngine.progress.collect { p ->
+                    if (p.phase == SyncPhase.DOWNLOADING || p.phase == SyncPhase.DELETING) {
+                        val completed = p.completedFiles
+                        if (p.phase == SyncPhase.DOWNLOADING && completed <= initialDownloadCount) {
+                            _toDownload.value = downloads.drop(completed)
+                        }
+                        if (p.phase == SyncPhase.DELETING) {
+                            val downloadDone = initialDownloadCount
+                            val deleteCompleted = completed - downloadDone
+                            if (deleteCompleted >= 0) {
+                                _toDelete.value = deletes.drop(deleteCompleted)
+                            }
+                        }
+                    }
+                }
+            }
             try {
-                syncEngine.executeSync(_toDownload.value, _toDelete.value)
+                syncEngine.executeSync(downloads, deletes)
             } catch (e: Exception) {
                 _error.value = "同步失败: ${e.message}"
             } finally {
+                progressJob.cancel()
                 _isSyncing.value = false
+                _toDownload.value = emptyList()
+                _toDelete.value = emptyList()
             }
         }
     }
 
     fun startDelete() {
+        val deletes = _toDelete.value
+        _isDeleting.value = true
         viewModelScope.launch {
-            _isDeleting.value = true
+            val progressJob = viewModelScope.launch {
+                syncEngine.progress.collect { p ->
+                    if (p.phase == SyncPhase.DELETING) {
+                        val completed = p.completedFiles
+                        _toDelete.value = deletes.drop(completed)
+                    }
+                }
+            }
             try {
-                syncEngine.executeDelete(_toDelete.value)
+                syncEngine.executeDelete(deletes)
             } catch (e: Exception) {
                 _error.value = "删除失败: ${e.message}"
             } finally {
+                progressJob.cancel()
                 _isDeleting.value = false
+                _toDelete.value = emptyList()
             }
         }
     }

@@ -231,6 +231,14 @@ feat: <short description>
 # feat: rename package to cn.vectory.syncplayer, fix sync path/SQL/browser/debug
 ```
 
+### Versioning Rule
+
+**After every `git commit` + `git push`, increment the app version number by +1 (major version).**
+
+- Version is defined in `app/build.gradle.kts` as `versionCode` and `versionName`
+- After push: bump `versionCode += 1` and update `versionName` accordingly (e.g. `1.0.0` → `2.0.0`)
+- Also tag the release with the new version (e.g. `v2.0.0`)
+
 ---
 
 ## 9. Known Issues & Limitations

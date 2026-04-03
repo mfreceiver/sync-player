@@ -122,6 +122,7 @@ fun PlayerScreen(
     // Reactive time polling
     LaunchedEffect(exoPlayer) {
         while (true) {
+            gestureView.videoDuration = exoPlayer.duration.coerceAtLeast(0)
             currentPosition = exoPlayer.currentPosition.coerceAtLeast(0)
             currentDuration = exoPlayer.duration.coerceAtLeast(0)
             delay(200L)

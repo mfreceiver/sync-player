@@ -31,6 +31,7 @@ class GesturePlayerView @JvmOverloads constructor(
 
     var gestureListener: GestureListener? = null
     var speedMultiplier: Float = 2.0f
+    var videoDuration: Long = 0L
     private var isLongPressing = false
     private var isSeeking = false
     private var seekAccumulatedMs = 0L
@@ -108,7 +109,7 @@ class GesturePlayerView @JvmOverloads constructor(
             }
 
             if (isAdjustingVertical) {
-                val delta = -distanceY / height.toFloat()
+                val delta = distanceY / height.toFloat()
                 if (isInLeftHalf) {
                     gestureListener?.onBrightnessChanged(delta)
                 } else {
@@ -144,6 +145,9 @@ class GesturePlayerView @JvmOverloads constructor(
                     hideOverlay()
                 }
                 if (isSeeking) {
+                    if (videoDuration > 0) {
+                        seekAccumulatedMs = seekAccumulatedMs.coerceIn(-videoDuration, videoDuration)
+                    }
                     gestureListener?.onSeekTo(seekAccumulatedMs)
                     isSeeking = false
                     seekAccumulatedMs = 0L
