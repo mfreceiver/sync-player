@@ -5,19 +5,22 @@ import android.media.AudioManager
 import android.util.AttributeSet
 import android.view.GestureDetector
 import android.view.MotionEvent
-import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.media3.ui.PlayerView
-import cn.vectory.syncplayer.R
 import kotlinx.coroutines.*
+import kotlin.math.abs
+
 
 class GesturePlayerView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
 ) : FrameLayout(context, attrs) {
 
-    private val playerView = PlayerView(context)
+    private val playerView = PlayerView(context).apply {
+        controllerAutoShow = false
+        useController = false
+    }
     private val overlayText = TextView(context).apply {
         setTextColor(0xFFFFFFFF.toInt())
         textSize = 16f
@@ -28,7 +31,6 @@ class GesturePlayerView @JvmOverloads constructor(
 
     var gestureListener: GestureListener? = null
     var speedMultiplier: Float = 2.0f
-
     private var isLongPressing = false
     private var isSeeking = false
     private var seekAccumulatedMs = 0L
@@ -37,14 +39,19 @@ class GesturePlayerView @JvmOverloads constructor(
     private var isInLeftHalf = false
     private var initialBrightness = 0f
     private var overlayHideJob: Job? = null
-
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+    private var singleTapCallback: (() -> Unit)? = null
 
     interface GestureListener {
         fun onSpeedUpChanged(speedUp: Boolean)
         fun onSeekTo(offsetMs: Long)
         fun onVolumeChanged(delta: Float)
         fun onBrightnessChanged(delta: Float)
+    }
+
+    fun setOnSingleTapCallback(callback: (() -> Unit)?) {
+        singleTapCallback = callback
     }
 
     init {
@@ -70,15 +77,16 @@ class GesturePlayerView @JvmOverloads constructor(
             distanceY: Float
         ): Boolean {
             if (e1 == null) return false
+            if (isLongPressing) return false
 
-            val absDx = kotlin.math.abs(distanceX)
-            val absDy = kotlin.math.abs(distanceY)
+            val absDx = abs(distanceX)
+            val absDy = abs(distanceY)
+
+            val dxFromStart = e2.x - touchStartX
+            val dyFromStart = e2.y - touchStartY
 
             if (!isSeeking && !isAdjustingVertical) {
-                if (absDx > absDy && absDx > 10) {
-                    isSeeking = true
-                    seekAccumulatedMs = 0L
-                } else if (absDy > absDx && absDy > 10) {
+                if (absDy > absDx && absDy > 20) {
                     isAdjustingVertical = true
                     isInLeftHalf = e1.x < width / 2f
                     if (isInLeftHalf) {
@@ -86,6 +94,9 @@ class GesturePlayerView @JvmOverloads constructor(
                         initialBrightness = window?.attributes?.screenBrightness ?: 0.5f
                         if (initialBrightness < 0) initialBrightness = 0.5f
                     }
+                } else if (absDx > absDy && absDx > 30) {
+                    isSeeking = true
+                    seekAccumulatedMs = 0L
                 }
             }
 
@@ -105,16 +116,11 @@ class GesturePlayerView @JvmOverloads constructor(
                 }
                 return true
             }
-
             return false
         }
 
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-            if (playerView.isControllerFullyVisible) {
-                playerView.hideController()
-            } else {
-                playerView.showController()
-            }
+            singleTapCallback?.invoke()
             return true
         }
     })
@@ -144,14 +150,11 @@ class GesturePlayerView @JvmOverloads constructor(
                     hideOverlay()
                 }
                 isAdjustingVertical = false
-                parent.requestDisallowInterceptTouchEvent(false)
             }
         }
-
         if (isSeeking || isAdjustingVertical || isLongPressing) {
-            parent.requestDisallowInterceptTouchEvent(true)
+            parent?.requestDisallowInterceptTouchEvent(true)
         }
-
         return true
     }
 
@@ -177,11 +180,10 @@ class GesturePlayerView @JvmOverloads constructor(
         overlayHideJob?.cancel()
         overlayText.visibility = GONE
     }
-
     private fun formatSeekOffset(ms: Long): String {
-        val totalSeconds = kotlin.math.abs(ms) / 1000
-        val minutes = totalSeconds / 60
-        val seconds = totalSeconds % 60
+        val totalSeconds = abs(ms) / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
         return "%d:%02d".format(minutes, seconds)
     }
 }

@@ -19,6 +19,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import cn.vectory.syncplayer.data.model.OrientationPreference
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
 
@@ -35,6 +36,7 @@ fun SettingsScreen(
     val password by viewModel.password.collectAsStateWithLifecycle()
     val remotePath by viewModel.remotePath.collectAsStateWithLifecycle()
     val longPressSpeed by viewModel.longPressSpeed.collectAsStateWithLifecycle()
+    val orientationPreference by viewModel.orientationPreference.collectAsStateWithLifecycle()
     val isTesting by viewModel.isTesting.collectAsStateWithLifecycle()
     val testResult by viewModel.testResult.collectAsStateWithLifecycle()
     val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
@@ -199,6 +201,27 @@ fun SettingsScreen(
                                     label = { Text("${speed}x") }
                                 )
                             }
+                        }
+                    }
+                }
+            }
+
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("播放方向", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = orientationPreference == OrientationPreference.FOLLOW_VIDEO,
+                                onClick = { viewModel.setOrientationPreference(OrientationPreference.FOLLOW_VIDEO) },
+                                label = { Text("按照视频方向") }
+                            )
+                            FilterChip(
+                                selected = orientationPreference == OrientationPreference.FOLLOW_SYSTEM,
+                                onClick = { viewModel.setOrientationPreference(OrientationPreference.FOLLOW_SYSTEM) },
+                                label = { Text("按照系统方向") }
+                            )
                         }
                     }
                 }
