@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -9,6 +11,20 @@ plugins {
 android {
     namespace = "cn.vectory.syncplayer"
     compileSdk = 35
+
+    signingConfigs {
+        create("release") {
+            val props = Properties()
+            val propsFile = rootProject.file("local.properties")
+            if (propsFile.exists()) {
+                props.load(propsFile.inputStream())
+            }
+            storeFile = file(props.getProperty("release.storeFile", "release.keystore"))
+            storePassword = props.getProperty("release.storePassword", "")
+            keyAlias = props.getProperty("release.keyAlias", "release")
+            keyPassword = props.getProperty("release.keyPassword", "")
+        }
+    }
 
     defaultConfig {
         applicationId = "cn.vectory.syncplayer"
@@ -27,6 +43,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
