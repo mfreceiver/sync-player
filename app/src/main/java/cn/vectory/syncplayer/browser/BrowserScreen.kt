@@ -1,6 +1,7 @@
 package cn.vectory.syncplayer.browser
 
 import android.graphics.BitmapFactory
+import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -52,6 +53,7 @@ fun BrowserScreen(
     
     var showContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
     var showSortMenu by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     LaunchedEffect(currentFolder) {
         viewModel.setFolder(currentFolder)
@@ -210,7 +212,14 @@ fun BrowserScreen(
                     } else {
                         FileItem(
                             item = item,
-                            onClick = { onNavigateToPlayer(item.videoItemId!!) },
+                            onClick = {
+                                if (isVideoFile(item.name)) {
+                                    viewModel.setFolderVideoIdsForNavigation(viewModel.getFolderVideoIds())
+                                    onNavigateToPlayer(item.videoItemId!!)
+                                } else {
+                                    Toast.makeText(context, "该文件无法播放", Toast.LENGTH_SHORT).show()
+                                }
+                            },
                             onLongClick = { showContextMenu = item }
                         )
                     }

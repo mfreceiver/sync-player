@@ -34,20 +34,40 @@ class SyncPreviewViewModel @Inject constructor(
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
+    private val _isDeleting = MutableStateFlow(false)
+    val isDeleting: StateFlow<Boolean> = _isDeleting.asStateFlow()
+
+    private val _previewLoaded = MutableStateFlow(false)
+    val previewLoaded: StateFlow<Boolean> = _previewLoaded.asStateFlow()
+
+    private val _syncMode = MutableStateFlow(SyncMode.DOWNLOAD)
+    val syncMode: StateFlow<SyncMode> = _syncMode.asStateFlow()
+
     val progress: StateFlow<SyncProgress> = syncEngine.progress
 
     init {
-        loadPreview()
+        // No auto-load - wait for user to press preview button
     }
 
+    
     fun loadPreview() {
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
             try {
-                val (downloads, deletions) = syncEngine.dryRun()
-                _toDownload.value = downloads
-                _toDelete.value = deletions
+                if (_syncMode.value == SyncMode.DOWNLOAD) {
+                    val (downloads, deletions) = syncEngine.dryRun()
+                    _toDownload.value = downloads
+                    _toDelete.value = deletions
+                } else {
+                    val (actions, error) = syncEngine.dryRunDelete()
+                    if (error != null) {
+                        _error.value = error
+                    } else {
+                        _toDelete.value = actions
+                    }
+                }
+                _previewLoaded.value = true
             } catch (e: Exception) {
                 _error.value = "加载预览失败: ${e.message}"
             } finally {
@@ -67,6 +87,27 @@ class SyncPreviewViewModel @Inject constructor(
                 _isSyncing.value = false
             }
         }
+    }
+
+    fun startDelete() {
+        viewModelScope.launch {
+            _isDeleting.value = true
+            try {
+                syncEngine.executeDelete(_toDelete.value)
+            } catch (e: Exception) {
+                _error.value = "删除失败: ${e.message}"
+            } finally {
+                _isDeleting.value = false
+            }
+        }
+    }
+
+    fun setSyncMode(mode: SyncMode) {
+        _syncMode.value = mode
+        _previewLoaded.value = false
+        _toDownload.value = emptyList()
+        _toDelete.value = emptyList()
+        _error.value = null
     }
 
     fun cancelSync() {

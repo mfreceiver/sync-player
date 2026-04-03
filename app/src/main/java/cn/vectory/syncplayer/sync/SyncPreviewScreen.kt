@@ -19,74 +19,96 @@ import cn.vectory.syncplayer.data.model.SyncAction
 @Composable
 fun SyncPreviewScreen(
     viewModel: SyncPreviewViewModel = hiltViewModel(),
-    onBack: () -> Unit,
-    onNavigateToDeletePreview: () -> Unit = {}
+    onBack: () -> Unit
 ) {
     val toDownload by viewModel.toDownload.collectAsState()
     val toDelete by viewModel.toDelete.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
+    val isDeleting by viewModel.isDeleting.collectAsState()
+    val syncMode by viewModel.syncMode.collectAsState()
+    val previewLoaded by viewModel.previewLoaded.collectAsState()
     val progress by viewModel.progress.collectAsState()
-    var syncMode by remember { mutableStateOf(SyncMode.DOWNLOAD) }
-    val tabs = listOf("下载 (${toDownload.size})", "删除 (${toDelete.size})")
-    var selectedTab by remember { mutableIntStateOf(0) }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("同步预览") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回"
-                        )
+            Column {
+                TopAppBar(
+                    title = { Text("同步预览") },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "返回"
+                            )
+                        }
                     }
+                )
+                TabRow(selectedTabIndex = if (syncMode == SyncMode.DOWNLOAD) 0 else 1) {
+                    Tab(
+                        selected = syncMode == SyncMode.DOWNLOAD,
+                        onClick = { viewModel.setSyncMode(SyncMode.DOWNLOAD) },
+                        text = { Text("下载") }
+                    )
+                    Tab(
+                        selected = syncMode == SyncMode.DELETE,
+                        onClick = { viewModel.setSyncMode(SyncMode.DELETE) },
+                        text = { Text("删除") }
+                    )
                 }
-            )
+            }
         },
         bottomBar = {
             BottomAppBar(
                 containerColor = MaterialTheme.colorScheme.surface
             ) {
-                Spacer(modifier = Modifier.weight(1f))
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    FilterChip(
-                        selected = syncMode == SyncMode.DOWNLOAD,
-                        onClick = { syncMode = SyncMode.DOWNLOAD },
-                        label = { Text("下载") }
-                    )
-                    FilterChip(
-                        selected = syncMode == SyncMode.DELETE,
-                        onClick = { syncMode = SyncMode.DELETE },
-                        label = { Text("删除") }
-                    )
-                }
-                Spacer(modifier = Modifier.weight(1f))
-                TextButton(onClick = onBack) {
-                    Text("取消")
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                if (syncMode == SyncMode.DOWNLOAD) {
-                    Button(
-                        onClick = { viewModel.startSync() },
-                        enabled = !isSyncing && toDownload.isNotEmpty()
-                    ) {
-                        Text("确认下载")
+                    TextButton(onClick = onBack) {
+                        Text("取消")
                     }
-                } else {
-                    Button(
-                        onClick = onNavigateToDeletePreview,
-                        enabled = !isSyncing
-                    ) {
-                        Text("去删除预览")
+                    Spacer(modifier = Modifier.width(8.dp))
+                    if (!previewLoaded) {
+                        Button(
+                            onClick = { viewModel.loadPreview() },
+                            enabled = !isLoading && !isSyncing && !isDeleting
+                        ) {
+                            if (isLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            } else {
+                                Text("预览")
+                            }
+                        }
+                    } else {
+                        if (syncMode == SyncMode.DOWNLOAD) {
+                            Button(
+                                onClick = { viewModel.startSync() },
+                                enabled = !isSyncing && toDownload.isNotEmpty()
+                            ) {
+                                Text("确认下载")
+                            }
+                        } else {
+                            Button(
+                                onClick = { viewModel.startDelete() },
+                                enabled = !isDeleting && toDelete.isNotEmpty(),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.error
+                                )
+                            ) {
+                                Text("确认删除")
+                            }
+                        }
                     }
+                    Spacer(modifier = Modifier.width(16.dp))
                 }
-                Spacer(modifier = Modifier.width(16.dp))
             }
         },
     ) { paddingValues ->
@@ -101,7 +123,7 @@ fun SyncPreviewScreen(
                     CircularProgressIndicator()
                 }
             }
-            error != null && toDownload.isEmpty() && toDelete.isEmpty() -> {
+            error != null && !previewLoaded -> {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -128,7 +150,7 @@ fun SyncPreviewScreen(
                     }
                 }
             }
-            toDownload.isEmpty() && toDelete.isEmpty() -> {
+            !previewLoaded -> {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -140,13 +162,13 @@ fun SyncPreviewScreen(
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = "完成",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(48.dp)
+                            imageVector = Icons.Default.PlayCircleOutline,
+                            contentDescription = "提示",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "本地文件已是最新",
+                            text = "按下方预览按钮查看同步内容",
+                            style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -163,40 +185,33 @@ fun SyncPreviewScreen(
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
-                    SummaryCard(
-                        downloadCount = toDownload.size,
-                        downloadSize = viewModel.totalDownloadSize,
-                        deleteCount = toDelete.size,
-                        deleteSize = viewModel.totalDeleteSize
-                    )
-                    if (toDelete.isNotEmpty()) {
-                        WarningCard(deleteCount = toDelete.size)
+                    if (syncMode == SyncMode.DOWNLOAD) {
+                        SyncDownloadSummaryCard(
+                            downloadCount = toDownload.size,
+                            downloadSize = viewModel.totalDownloadSize,
+                            deleteCount = toDelete.size,
+                            deleteSize = viewModel.totalDeleteSize
+                        )
+                    } else {
+                        SyncDeleteSummaryCard(
+                            count = toDelete.size,
+                            totalSize = viewModel.totalDeleteSize
+                        )
                     }
-                    TabRow(selectedTabIndex = selectedTab) {
-                        tabs.forEachIndexed { index, title ->
-                            Tab(
-                                selected = selectedTab == index,
-                                onClick = { selectedTab = index },
-                                text = { Text(title) }
-                            )
-                        }
+                    if (syncMode == SyncMode.DOWNLOAD && toDelete.isNotEmpty()) {
+                        SyncDeleteWarningCard()
                     }
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(vertical = 8.dp)
                     ) {
-                        when (selectedTab) {
-                            0 -> items(toDownload, key = { it.relativePath }) { action ->
-                                SyncActionItem(
-                                    action = action,
-                                    isDownload = true
-                                )
+                        if (syncMode == SyncMode.DOWNLOAD) {
+                            items(toDownload, key = { it.relativePath }) { action ->
+                                SyncActionItem(action = action, isDownload = true)
                             }
-                            1 -> items(toDelete, key = { it.relativePath }) { action ->
-                                SyncActionItem(
-                                    action = action,
-                                    isDownload = false
-                                )
+                        } else {
+                            items(toDelete, key = { it.relativePath }) { action ->
+                                SyncActionItem(action = action, isDownload = false)
                             }
                         }
                     }
@@ -209,7 +224,7 @@ fun SyncPreviewScreen(
 enum class SyncMode { DOWNLOAD, DELETE }
 
 @Composable
-private fun SummaryCard(
+private fun SyncDownloadSummaryCard(
     downloadCount: Int,
     downloadSize: Long,
     deleteCount: Int,
@@ -225,10 +240,6 @@ private fun SummaryCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "同步摘要",
-                style = MaterialTheme.typography.titleMedium
-            )
-            Text(
                 text = "将下载 $downloadCount 个文件 (${formatFileSize(downloadSize)})，删除 $deleteCount 个本地文件 (${formatFileSize(deleteSize)})",
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -237,7 +248,29 @@ private fun SummaryCard(
 }
 
 @Composable
-private fun WarningCard(deleteCount: Int) {
+private fun SyncDeleteSummaryCard(
+    count: Int,
+    totalSize: Long
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "$count 个喜欢的文件将从本地和远端同时删除 (${formatFileSize(totalSize)})",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+    }
+}
+
+@Composable
+private fun SyncDeleteWarningCard() {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -257,7 +290,7 @@ private fun WarningCard(deleteCount: Int) {
                 tint = MaterialTheme.colorScheme.error
             )
             Text(
-                text = "注意：$deleteCount 个本地文件将被删除！",
+                text = "此操作不可恢复！删除后文件将从本地和远端永久移除",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onErrorContainer
             )

@@ -32,6 +32,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
+import kotlinx.coroutines.delay
 import java.io.File
 
 @Composable
@@ -49,6 +50,10 @@ fun PlayerScreen(
 
     var showControls by remember { mutableStateOf(true) }
     var currentVideoId by remember { mutableStateOf(videoItemId) }
+
+    // Reactive time display — polls exoPlayer position/duration
+    var currentPosition by remember { mutableLongStateOf(0L) }
+    var currentDuration by remember { mutableLongStateOf(0L) }
 
     val window = activity.window
     DisposableEffect(Unit) {
@@ -112,6 +117,14 @@ fun PlayerScreen(
             activity.requestedOrientation = it
         }
     }
+    // Reactive time polling
+    LaunchedEffect(exoPlayer) {
+        while (true) {
+            currentPosition = exoPlayer.currentPosition.coerceAtLeast(0)
+            currentDuration = exoPlayer.duration.coerceAtLeast(0)
+            delay(200L)
+        }
+    }
     DisposableEffect(Unit) {
         onDispose {
             viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
@@ -156,7 +169,7 @@ fun PlayerScreen(
     }
     fun doExit() {
         viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
-        exoPlayer.release()
+        exoPlayer.stop() // Clear video surface before navigation to avoid black frame
         onExit()
     }
     fun switchToVideo(newId: Long) {
@@ -260,17 +273,21 @@ fun PlayerScreen(
                         )
                     }
                     Text(
-                        text = "${formatTime(exoPlayer.currentPosition)} / ${formatTime(exoPlayer.duration.coerceAtLeast(0))}",
+                        text = "${formatTime(currentPosition)} / ${formatTime(currentDuration)}",
                         color = Color.White.copy(alpha = 0.7f),
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.labelSmall
                     )
+                    // Next button: exit player when at last video in folder
                     IconButton(
                         onClick = {
                             val nextId = viewModel.getNextVideoId()
-                            if (nextId != null) switchToVideo(nextId)
-                        },
-                        enabled = currentIdx >= 0 && currentIdx < allVideoIds.size - 1
+                            if (nextId != null) {
+                                switchToVideo(nextId)
+                            } else {
+                                doExit()
+                            }
+                        }
                     ) {
                         Icon(
                             imageVector = Icons.Default.SkipNext,
@@ -296,4 +313,3 @@ private fun formatTime(ms: Long): String {
         "%d:%02d".format(minutes, seconds)
     }
 }
-

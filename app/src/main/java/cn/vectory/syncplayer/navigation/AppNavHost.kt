@@ -14,8 +14,6 @@ import cn.vectory.syncplayer.settings.SettingsScreen
 import cn.vectory.syncplayer.settings.SettingsViewModel
 import cn.vectory.syncplayer.sync.SyncPreviewScreen
 import cn.vectory.syncplayer.sync.SyncPreviewViewModel
-import cn.vectory.syncplayer.sync.DeletePreviewScreen
-import cn.vectory.syncplayer.sync.DeletePreviewViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
 import android.net.Uri
 
@@ -103,17 +101,6 @@ fun AppNavHost() {
             SyncPreviewScreen(
                 viewModel = viewModel,
                 onBack = { navController.popBackStack() },
-                onNavigateToDeletePreview = {
-                    navController.navigate(Route.DeletePreview.route)
-                }
-            )
-        }
-
-        composable(Route.DeletePreview.route) {
-            val viewModel: DeletePreviewViewModel = hiltViewModel()
-            DeletePreviewScreen(
-                viewModel = viewModel,
-                onBack = { navController.popBackStack() }
             )
         }
     }

@@ -11,6 +11,7 @@ import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.ServerConfigRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.player.PlayerNavigationStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
@@ -136,6 +137,16 @@ class BrowserViewModel @Inject constructor(
 
     fun setFilter(filter: BrowseFilter) {
         _filter.value = filter
+    }
+
+    fun getFolderVideoIds(): List<Long> {
+        return browseItems.value
+            .filter { !it.isDirectory && it.videoItemId != null && isVideoFile(it.name) }
+            .mapNotNull { it.videoItemId }
+    }
+
+    fun setFolderVideoIdsForNavigation(ids: List<Long>) {
+        PlayerNavigationStore.folderVideoIds = ids
     }
 
     fun toggleFavorite(videoItemId: Long) {

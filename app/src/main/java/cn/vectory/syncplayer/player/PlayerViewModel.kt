@@ -16,6 +16,14 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * Temporary store for passing folder-scoped video IDs from BrowserScreen to PlayerScreen.
+ * Set by BrowserViewModel before navigation, Read by PlayerViewModel on init.
+ */
+object PlayerNavigationStore {
+    var folderVideoIds: List<Long> = emptyList()
+}
+
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
@@ -47,12 +55,17 @@ class PlayerViewModel @Inject constructor(
         } catch (_: Exception) {
             OrientationPreference.FOLLOW_VIDEO
         }
-        loadAllVideoIds()
+        loadFolderVideoIds()
     }
 
-    private fun loadAllVideoIds() {
-        viewModelScope.launch {
-            _allVideoIds.value = videoRepository.getAllIdsSorted()
+    private fun loadFolderVideoIds() {
+        val ids = PlayerNavigationStore.folderVideoIds
+        if (ids.isNotEmpty()) {
+            _allVideoIds.value = ids
+        } else {
+            viewModelScope.launch {
+                _allVideoIds.value = videoRepository.getAllIdsSorted()
+            }
         }
     }
 
