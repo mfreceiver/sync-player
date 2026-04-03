@@ -88,6 +88,7 @@ class BrowserViewModel @Inject constructor(
                     width = video.width,
                     height = video.height,
                     bitrate = video.bitrate,
+                    frameRate = video.frameRate,
                     thumbnailPath = video.thumbnailPath,
                     playbackPosition = record?.position ?: 0,
                     playbackDuration = record?.duration ?: 0,

@@ -35,7 +35,7 @@ fun SyncPreviewScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("同步预览") },
+                title = { Text("下载预览") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -72,7 +72,7 @@ fun SyncPreviewScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                     }
-                    Text("确认同步")
+                    Text("确认下载")
                 }
                 Spacer(modifier = Modifier.width(16.dp))
             }
@@ -246,7 +246,7 @@ private fun SummaryCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "同步摘要",
+                text = "下载摘要",
                 style = MaterialTheme.typography.titleMedium
             )
             Text(

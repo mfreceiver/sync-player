@@ -21,6 +21,8 @@ class PlaybackRepository @Inject constructor(
 
     fun getFavoritesFlow(): Flow<List<PlaybackRecordEntity>> = playbackRecordDao.getFavoritesFlow()
 
+    suspend fun getFavorites(): List<PlaybackRecordEntity> = playbackRecordDao.getFavorites()
+
     suspend fun upsert(record: PlaybackRecordEntity) = playbackRecordDao.upsert(record)
 
     suspend fun saveProgress(videoItemId: Long, position: Long, duration: Long) {

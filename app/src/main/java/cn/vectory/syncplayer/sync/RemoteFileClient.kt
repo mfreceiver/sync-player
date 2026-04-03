@@ -14,4 +14,5 @@ interface RemoteFileClient {
         localFile: File,
         onProgress: ((transferred: Long, total: Long) -> Unit)? = null
     ): Boolean
+    suspend fun deleteFile(remotePath: String): Boolean
 }

@@ -169,4 +169,21 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
             false
         }
     }
+
+    override suspend fun deleteFile(remotePath: String): Boolean = withContext(Dispatchers.IO) {
+        val ctx = cifsContext ?: return@withContext false
+        try {
+            val smbUrl = if (subPath.isNotEmpty()) {
+                "smb://$currentHost/$shareName/$subPath/$remotePath"
+            } else {
+                "smb://$currentHost/$shareName/$remotePath"
+            }
+            val smbFile = SmbFile(smbUrl, ctx)
+            if (!smbFile.exists()) return@withContext false
+            smbFile.delete()
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
 }

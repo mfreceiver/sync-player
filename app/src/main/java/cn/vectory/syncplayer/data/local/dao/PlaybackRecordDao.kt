@@ -18,6 +18,9 @@ interface PlaybackRecordDao {
     @Query("SELECT * FROM playback_record WHERE isFavorite = 1 ORDER BY lastPlayedTime DESC")
     fun getFavoritesFlow(): Flow<List<PlaybackRecordEntity>>
 
+    @Query("SELECT * FROM playback_record WHERE isFavorite = 1")
+    suspend fun getFavorites(): List<PlaybackRecordEntity>
+
     @Upsert
     suspend fun upsert(record: PlaybackRecordEntity)
 

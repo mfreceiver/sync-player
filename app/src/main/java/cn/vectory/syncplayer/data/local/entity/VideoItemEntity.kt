@@ -19,6 +19,7 @@ data class VideoItemEntity(
     val width: Int? = null,
     val height: Int? = null,
     val bitrate: Long? = null,
+    val frameRate: Float? = null,
     val thumbnailPath: String? = null,
     val dateSynced: Long = System.currentTimeMillis(),
     val remoteModifiedTime: Long? = null

@@ -14,6 +14,7 @@ data class BrowseItem(
     val width: Int? = null,
     val height: Int? = null,
     val bitrate: Long? = null,
+    val frameRate: Float? = null,
     val thumbnailPath: String? = null,
     val playbackPosition: Long = 0,
     val playbackDuration: Long = 0,

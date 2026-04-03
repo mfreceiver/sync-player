@@ -8,8 +8,9 @@ import cn.vectory.syncplayer.data.local.AppDatabase
 import cn.vectory.syncplayer.data.local.dao.PlaybackRecordDao
 import cn.vectory.syncplayer.data.local.dao.ServerConfigDao
 import cn.vectory.syncplayer.data.local.dao.SyncLogDao
-import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao
+import cn.vectory.syncplayer.data.local.dao.VideoMetadataCacheDao
+import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -43,6 +44,9 @@ object DatabaseModule {
 
     @Provides
     fun provideSyncLogDao(db: AppDatabase): SyncLogDao = db.syncLogDao()
+
+    @Provides
+    fun provideVideoMetadataCacheDao(db: AppDatabase): VideoMetadataCacheDao = db.videoMetadataCacheDao()
 
     @Provides
     @Singleton

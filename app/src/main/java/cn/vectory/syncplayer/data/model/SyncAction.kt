@@ -13,5 +13,6 @@ data class SyncAction(
 enum class SyncActionType {
     DOWNLOAD,       // Remote has, local missing or different
     DELETE_LOCAL,   // Local has, remote missing
+    DELETE_BOTH,    // Delete from both local and remote
     SKIP            // Both identical, no action needed
 }

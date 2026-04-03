@@ -148,4 +148,15 @@ class SftpFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context)
             false
         }
     }
+
+    override suspend fun deleteFile(remotePath: String): Boolean = withContext(Dispatchers.IO) {
+        val sftp = sftpClient ?: return@withContext false
+        try {
+            val fullRemotePath = if (remoteBasePath.isNotEmpty()) "$remoteBasePath/$remotePath" else remotePath
+            sftp.rm(fullRemotePath)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
 }

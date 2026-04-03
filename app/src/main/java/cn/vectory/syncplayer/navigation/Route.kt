@@ -11,4 +11,5 @@ sealed class Route(val route: String) {
     }
     data object Settings : Route("settings")
     data object SyncPreview : Route("sync_preview")
+    data object DeletePreview : Route("delete_preview")
 }
