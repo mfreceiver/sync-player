@@ -6,11 +6,16 @@ import cn.vectory.syncplayer.data.model.ServerConfig
 import cn.vectory.syncplayer.sync.RemoteFileClient
 import jcifs.context.BaseContext
 import jcifs.smb.NtlmPasswordAuthenticator
+import jcifs.smb.SmbAuthException
+import jcifs.smb.SmbException
 import jcifs.smb.SmbFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.Properties
 
 class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) : RemoteFileClient {
@@ -21,7 +26,34 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
     // Sub-path under the share, e.g. for config.remotePath = "/Scan_share/test" -> "test"
     private var subPath: String = ""
 
-    override suspend fun connect(config: ServerConfig): Boolean = withContext(Dispatchers.IO) {
+    /**
+     * Translate common SMB/network exceptions into descriptive Chinese error messages.
+     */
+    private fun smbErrorMessage(e: Exception, host: String): String {
+        return when (e) {
+            is UnknownHostException -> "无法解析主机地址: $host"
+            is ConnectException -> "连接被拒绝，请检查主机地址 ${host}:445 是否可达"
+            is SocketTimeoutException -> "连接超时，请检查网络连接和主机地址 ${host}"
+            is SmbAuthException -> "SMB认证失败，请检查用户名和密码 (${e.message})"
+            is SmbException -> {
+                val msg = e.message.orEmpty()
+                when {
+                    msg.contains("bad network name", ignoreCase = true) ||
+                    msg.contains("share", ignoreCase = true) ||
+                    msg.contains("not found", ignoreCase = true) ->
+                        "无法访问共享文件夹，请检查路径是否正确 ($msg)"
+                    msg.contains("access denied", ignoreCase = true) ->
+                        "SMB访问被拒绝，请检查用户权限 ($msg)"
+                    msg.contains("logon failure", ignoreCase = true) ->
+                        "SMB登录失败，请检查用户名和密码 ($msg)"
+                    else -> "SMB错误: ${e.javaClass.simpleName}: $msg"
+                }
+            }
+            else -> "SMB连接失败: ${e.javaClass.simpleName}: ${e.message}"
+        }
+    }
+
+    override suspend fun connect(config: ServerConfig): Unit = withContext(Dispatchers.IO) {
         try {
             val props = Properties()
             props.setProperty("jcifs.smb.client.minVersion", "SMB202")
@@ -46,10 +78,9 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
             }
             val smbFile = SmbFile(smbUrl, cifsContext)
             smbFile.listFiles()
-            true
         } catch (e: Exception) {
             cifsContext = null
-            false
+            throw Exception(smbErrorMessage(e, config.host), e)
         }
     }
 
@@ -58,34 +89,37 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
     }
 
     override suspend fun testConnection(config: ServerConfig): Boolean {
-        val result = connect(config)
-        disconnect()
-        return result
+        try {
+            connect(config)
+            disconnect()
+            return true
+        } catch (e: Exception) {
+            disconnect()
+            throw e
+        }
     }
 
     override suspend fun listFiles(path: String): List<RemoteFile> = withContext(Dispatchers.IO) {
-        val ctx = cifsContext ?: return@withContext emptyList()
-        try {
-            val result = mutableListOf<RemoteFile>()
-            val pathParts = path.trim('/').split("/")
-            val share = pathParts.firstOrNull() ?: ""
-            val remoteSubPath = pathParts.drop(1).joinToString("/")
+        val ctx = cifsContext ?: throw Exception("SMB未连接，请先执行connect()")
+        val result = mutableListOf<RemoteFile>()
+        val pathParts = path.trim('/').split("/")
+        val share = pathParts.firstOrNull() ?: ""
+        val remoteSubPath = pathParts.drop(1).joinToString("/")
 
-            // Use full remote subPath context to determine base for relative extraction
-            val smbUrl = if (remoteSubPath.isNotEmpty()) {
-                "smb://$currentHost/$share/$remoteSubPath/"
-            } else {
-                "smb://$currentHost/$share/"
-            }
-
-            val dir = SmbFile(smbUrl, ctx)
-            if (!dir.exists() || !dir.isDirectory) return@withContext emptyList()
-
-            listFilesRecursive(ctx, dir, share, remoteSubPath, result)
-            result
-        } catch (e: Exception) {
-            emptyList()
+        // Use full remote subPath context to determine base for relative extraction
+        val smbUrl = if (remoteSubPath.isNotEmpty()) {
+            "smb://$currentHost/$share/$remoteSubPath/"
+        } else {
+            "smb://$currentHost/$share/"
         }
+
+        val dir = SmbFile(smbUrl, ctx)
+        if (!dir.exists() || !dir.isDirectory) throw Exception(
+            "远程路径不存在或不是目录: $path"
+        )
+
+        listFilesRecursive(ctx, dir, share, remoteSubPath, result)
+        result
     }
 
     private fun listFilesRecursive(
@@ -137,7 +171,7 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
         localFile: File,
         onProgress: ((transferred: Long, total: Long) -> Unit)?
     ): Boolean = withContext(Dispatchers.IO) {
-        val ctx = cifsContext ?: return@withContext false
+        val ctx = cifsContext ?: throw Exception("SMB未连接，请先执行connect()")
         try {
             val smbUrl = if (subPath.isNotEmpty()) {
                 "smb://$currentHost/$shareName/$subPath/$remotePath"
@@ -145,7 +179,7 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
                 "smb://$currentHost/$shareName/$remotePath"
             }
             val smbFile = SmbFile(smbUrl, ctx)
-            if (!smbFile.exists()) return@withContext false
+            if (!smbFile.exists()) throw Exception("远程文件不存在: $remotePath")
 
             val totalSize = smbFile.contentLength.toLong()
             localFile.parentFile?.mkdirs()
@@ -166,12 +200,15 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
             true
         } catch (e: Exception) {
             if (localFile.exists()) localFile.delete()
-            false
+            if (e is jcifs.smb.SmbException) {
+                throw Exception("下载失败 $remotePath: ${smbErrorMessage(e, currentHost)}", e)
+            }
+            throw Exception("下载失败 $remotePath: ${e.message}", e)
         }
     }
 
     override suspend fun deleteFile(remotePath: String): Boolean = withContext(Dispatchers.IO) {
-        val ctx = cifsContext ?: return@withContext false
+        val ctx = cifsContext ?: throw Exception("SMB未连接，请先执行connect()")
         try {
             val smbUrl = if (subPath.isNotEmpty()) {
                 "smb://$currentHost/$shareName/$subPath/$remotePath"
@@ -183,7 +220,7 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
             smbFile.delete()
             true
         } catch (e: Exception) {
-            false
+            throw Exception("删除远程文件失败 $remotePath: ${e.message}", e)
         }
     }
 }

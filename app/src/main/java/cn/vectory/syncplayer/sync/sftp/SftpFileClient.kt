@@ -7,20 +7,34 @@ import cn.vectory.syncplayer.sync.RemoteFileClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
-import net.schmizz.sshj.sftp.RemoteResourceInfo
 import net.schmizz.sshj.sftp.SFTPClient
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
+import net.schmizz.sshj.userauth.UserAuthException
 import java.io.File
 import java.io.FileOutputStream
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 
 class SftpFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) : RemoteFileClient {
 
     private var sshClient: SSHClient? = null
     private var sftpClient: SFTPClient? = null
-    // Base remote path on the server, e.g. "/Scan_share/test" -> "/Scan_share/test" (we store without trailing slash)
     private var remoteBasePath: String = ""
 
-    override suspend fun connect(config: ServerConfig): Boolean = withContext(Dispatchers.IO) {
+    private fun sftpErrorMessage(e: Exception, host: String): String {
+        return when (e) {
+            is UnknownHostException -> "无法解析主机地址: $host"
+            is ConnectException -> "连接被拒绝，请检查主机地址和端口"
+            is SocketTimeoutException -> "连接超时，请检查网络连接和主机地址 ${host}"
+            is UserAuthException -> "SSH认证失败，请检查用户名和密码 (${e.message})"
+            is net.schmizz.sshj.transport.TransportException ->
+                "SSH连接错误: ${e.message}"
+            else -> "SFTP连接失败: ${e.javaClass.simpleName}: ${e.message}"
+        }
+    }
+
+    override suspend fun connect(config: ServerConfig): Unit = withContext(Dispatchers.IO) {
         try {
             val client = SSHClient()
             client.addHostKeyVerifier(PromiscuousVerifier())
@@ -29,13 +43,11 @@ class SftpFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context)
 
             sshClient = client
             sftpClient = client.newSFTPClient()
-            // store the base remote path for later use (download/builds of full path)
             remoteBasePath = (config.remotePath ?: "").trim()
-            true
         } catch (e: Exception) {
             sshClient = null
             sftpClient = null
-            false
+            throw Exception(sftpErrorMessage(e, config.host), e)
         }
     }
 
@@ -50,29 +62,27 @@ class SftpFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context)
     }
 
     override suspend fun testConnection(config: ServerConfig): Boolean {
-        val result = connect(config)
-        if (result) {
+        try {
+            connect(config)
+            val sftp = sftpClient ?: throw Exception("SFTP客户端初始化失败")
             try {
-                val sftp = sftpClient ?: return false
                 sftp.ls(config.remotePath)
-            } catch (_: Exception) {
-                disconnect()
-                return false
+            } catch (e: Exception) {
+                throw Exception("远程路径不可访问: ${config.remotePath} (${e.message})", e)
             }
+            disconnect()
+            return true
+        } catch (e: Exception) {
+            disconnect()
+            throw e
         }
-        disconnect()
-        return result
     }
 
     override suspend fun listFiles(path: String): List<RemoteFile> = withContext(Dispatchers.IO) {
-        val sftp = sftpClient ?: return@withContext emptyList()
-        try {
-            val result = mutableListOf<RemoteFile>()
-            listFilesRecursive(sftp, path, path, result)
-            result
-        } catch (e: Exception) {
-            emptyList()
-        }
+        val sftp = sftpClient ?: throw Exception("SFTP未连接，请先执行connect()")
+        val result = mutableListOf<RemoteFile>()
+        listFilesRecursive(sftp, path, path, result)
+        result
     }
 
     private fun listFilesRecursive(
@@ -117,9 +127,8 @@ class SftpFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context)
         localFile: File,
         onProgress: ((transferred: Long, total: Long) -> Unit)?
     ): Boolean = withContext(Dispatchers.IO) {
-        val sftp = sftpClient ?: return@withContext false
+        val sftp = sftpClient ?: throw Exception("SFTP未连接，请先执行connect()")
         try {
-            // Prepend remoteBasePath to the requested path to form the full path on the server
             val fullRemotePath = if (remoteBasePath.isNotEmpty()) "$remoteBasePath/$remotePath" else remotePath
             val attrs = sftp.stat(fullRemotePath)
             val totalSize = attrs.size
@@ -145,18 +154,18 @@ class SftpFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context)
             true
         } catch (e: Exception) {
             if (localFile.exists()) localFile.delete()
-            false
+            throw Exception("下载失败 $remotePath: ${e.message}", e)
         }
     }
 
     override suspend fun deleteFile(remotePath: String): Boolean = withContext(Dispatchers.IO) {
-        val sftp = sftpClient ?: return@withContext false
+        val sftp = sftpClient ?: throw Exception("SFTP未连接，请先执行connect()")
         try {
             val fullRemotePath = if (remoteBasePath.isNotEmpty()) "$remoteBasePath/$remotePath" else remotePath
             sftp.rm(fullRemotePath)
             true
         } catch (e: Exception) {
-            false
+            throw Exception("删除远程文件失败 $remotePath: ${e.message}", e)
         }
     }
 }

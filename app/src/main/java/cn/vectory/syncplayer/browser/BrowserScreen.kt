@@ -215,60 +215,71 @@ fun BrowserScreen(
                 )
             }
         ) { paddingValues ->
-            if (!hasConfig) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        Text(
-                            text = "请先配置服务器",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+            ) {
+                items(
+                    items = browseItems,
+                    key = { it.relativePath }
+                ) { item ->
+                    if (item.isDirectory) {
+                        FolderItem(
+                            item = item,
+                            onClick = { viewModel.setFolder(item.relativePath) }
                         )
-                        Button(onClick = onNavigateToServerConfig) {
-                            Text("去设置")
-                        }
+                    } else {
+                        FileItem(
+                            item = item,
+                            onClick = {
+                                if (isVideoFile(item.name)) {
+                                    viewModel.setFolderVideoIdsForNavigation(viewModel.getFolderVideoIds())
+                                    onNavigateToPlayer(item.videoItemId!!)
+                                } else {
+                                    Toast.makeText(context, "该文件无法播放", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            onLongClick = { showContextMenu = item }
+                        )
                     }
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 72.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    )
                 }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues)
-                ) {
-                    items(
-                        items = browseItems,
-                        key = { it.relativePath }
-                    ) { item ->
-                        if (item.isDirectory) {
-                            FolderItem(
-                                item = item,
-                                onClick = { viewModel.setFolder(item.relativePath) }
-                            )
-                        } else {
-                            FileItem(
-                                item = item,
-                                onClick = {
-                                    if (isVideoFile(item.name)) {
-                                        viewModel.setFolderVideoIdsForNavigation(viewModel.getFolderVideoIds())
-                                        onNavigateToPlayer(item.videoItemId!!)
-                                    } else {
-                                        Toast.makeText(context, "该文件无法播放", Toast.LENGTH_SHORT).show()
+
+                if (browseItems.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .fillParentMaxHeight()
+                                .padding(vertical = 64.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FolderOpen,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                    modifier = Modifier.size(48.dp)
+                                )
+                                Text(
+                                    text = if (!hasConfig) "尚未配置同步服务器" else "当前目录为空",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                if (!hasConfig) {
+                                    Button(onClick = onNavigateToServerConfig) {
+                                        Text("去配置")
                                     }
-                                },
-                                onLongClick = { showContextMenu = item }
-                            )
+                                }
+                            }
                         }
-                        HorizontalDivider(
-                            modifier = Modifier.padding(start = 72.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                        )
                     }
                 }
             }

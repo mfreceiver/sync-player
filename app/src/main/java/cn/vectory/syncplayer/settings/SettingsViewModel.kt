@@ -131,8 +131,8 @@ class SettingsViewModel @Inject constructor(
                     SyncProtocol.SMB -> smbFileClient
                     SyncProtocol.SFTP -> sftpFileClient
                 }
-                val success = client.testConnection(config)
-                _testResult.value = if (success) "连接成功" else "连接失败"
+                client.testConnection(config)
+                _testResult.value = "连接成功"
             } catch (e: Exception) {
                 _testResult.value = "连接失败: ${e.message}"
             } finally {
