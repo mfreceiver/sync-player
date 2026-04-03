@@ -14,6 +14,8 @@ import cn.vectory.syncplayer.settings.SettingsScreen
 import cn.vectory.syncplayer.settings.SettingsViewModel
 import cn.vectory.syncplayer.sync.SyncPreviewScreen
 import cn.vectory.syncplayer.sync.SyncPreviewViewModel
+import cn.vectory.syncplayer.sync.DeletePreviewScreen
+import cn.vectory.syncplayer.sync.DeletePreviewViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
 import android.net.Uri
 
@@ -37,6 +39,9 @@ fun AppNavHost() {
                 },
                 onNavigateToSyncPreview = {
                     navController.navigate(Route.SyncPreview.route)
+                },
+                onNavigateToFolder = { folderPath ->
+                    navController.navigate(Route.BrowserFolder.create(folderPath))
                 }
             )
         }
@@ -63,6 +68,9 @@ fun AppNavHost() {
                 },
                 onNavigateUp = {
                     navController.popBackStack()
+                },
+                onNavigateToFolder = { subFolderPath ->
+                    navController.navigate(Route.BrowserFolder.create(subFolderPath))
                 }
             )
         }
@@ -93,6 +101,17 @@ fun AppNavHost() {
         composable(Route.SyncPreview.route) {
             val viewModel: SyncPreviewViewModel = hiltViewModel()
             SyncPreviewScreen(
+                viewModel = viewModel,
+                onBack = { navController.popBackStack() },
+                onNavigateToDeletePreview = {
+                    navController.navigate(Route.DeletePreview.route)
+                }
+            )
+        }
+
+        composable(Route.DeletePreview.route) {
+            val viewModel: DeletePreviewViewModel = hiltViewModel()
+            DeletePreviewScreen(
                 viewModel = viewModel,
                 onBack = { navController.popBackStack() }
             )

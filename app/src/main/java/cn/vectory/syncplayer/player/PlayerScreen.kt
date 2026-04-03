@@ -95,9 +95,13 @@ fun PlayerScreen(
         val mediaItem = MediaItem.fromUri(Uri.fromFile(file))
         exoPlayer.setMediaItem(mediaItem)
         exoPlayer.prepare()
-        val savedPos = viewModel.getSavedPosition()
-        if (savedPos > 0) {
-            exoPlayer.seekTo(savedPos)
+        val record = viewModel.playbackRecord.value
+        val isCompleted = record?.isCompleted == true
+        if (!isCompleted) {
+            val savedPos = viewModel.getSavedPosition()
+            if (savedPos > 0) {
+                exoPlayer.seekTo(savedPos)
+            }
         }
         val orientation = viewModel.resolveOrientation(item.width, item.height)
         activity.requestedOrientation = orientation

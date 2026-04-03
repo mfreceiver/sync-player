@@ -39,7 +39,8 @@ fun BrowserScreen(
     onNavigateToPlayer: (videoItemId: Long) -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToSyncPreview: () -> Unit,
-    onNavigateUp: (() -> Unit)? = null
+    onNavigateUp: (() -> Unit)? = null,
+    onNavigateToFolder: ((folderPath: String) -> Unit)? = null
 ) {
     val browseItems by viewModel.browseItems.collectAsState()
     val hasConfig by viewModel.hasConfig.collectAsState()
@@ -191,7 +192,13 @@ fun BrowserScreen(
                     if (item.isDirectory) {
                         FolderItem(
                             item = item,
-                            onClick = { viewModel.setFolder(item.relativePath) }
+                            onClick = {
+                                if (onNavigateToFolder != null) {
+                                    onNavigateToFolder(item.relativePath)
+                                } else {
+                                    viewModel.setFolder(item.relativePath)
+                                }
+                            }
                         )
                     } else {
                         FileItem(
@@ -326,10 +333,8 @@ private fun FileItem(
             item.isCompleted -> {
                 Spacer(Modifier.width(8.dp))
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.CheckCircle,
-                        contentDescription = "已完成",
-                        tint = MaterialTheme.colorScheme.primary,
+                    ProgressRing(
+                        progress = 1f,
                         modifier = Modifier.size(32.dp)
                     )
                     if (item.isFavorite) {

@@ -14,13 +14,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import cn.vectory.syncplayer.data.model.SyncAction
-import cn.vectory.syncplayer.data.model.SyncProgress
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SyncPreviewScreen(
     viewModel: SyncPreviewViewModel = hiltViewModel(),
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigateToDeletePreview: () -> Unit = {}
 ) {
     val toDownload by viewModel.toDownload.collectAsState()
     val toDelete by viewModel.toDelete.collectAsState()
@@ -28,14 +28,14 @@ fun SyncPreviewScreen(
     val error by viewModel.error.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
     val progress by viewModel.progress.collectAsState()
-
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var syncMode by remember { mutableStateOf(SyncMode.DOWNLOAD) }
     val tabs = listOf("下载 (${toDownload.size})", "删除 (${toDelete.size})")
+    var selectedTab by remember { mutableIntStateOf(0) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("下载预览") },
+                title = { Text("同步预览") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -48,35 +48,47 @@ fun SyncPreviewScreen(
         },
         bottomBar = {
             BottomAppBar(
-                containerColor = MaterialTheme.colorScheme.surface,
+                containerColor = MaterialTheme.colorScheme.surface
             ) {
                 Spacer(modifier = Modifier.weight(1f))
-                TextButton(
-                    onClick = onBack,
-                    enabled = !isSyncing
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    FilterChip(
+                        selected = syncMode == SyncMode.DOWNLOAD,
+                        onClick = { syncMode = SyncMode.DOWNLOAD },
+                        label = { Text("下载") }
+                    )
+                    FilterChip(
+                        selected = syncMode == SyncMode.DELETE,
+                        onClick = { syncMode = SyncMode.DELETE },
+                        label = { Text("删除") }
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                TextButton(onClick = onBack) {
                     Text("取消")
                 }
                 Spacer(modifier = Modifier.width(8.dp))
-                Button(
-                    onClick = {
-                        viewModel.startSync()
-                    },
-                    enabled = !isSyncing && (toDownload.isNotEmpty() || toDelete.isNotEmpty())
-                ) {
-                    if (isSyncing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+                if (syncMode == SyncMode.DOWNLOAD) {
+                    Button(
+                        onClick = { viewModel.startSync() },
+                        enabled = !isSyncing && toDownload.isNotEmpty()
+                    ) {
+                        Text("确认下载")
                     }
-                    Text("确认下载")
+                } else {
+                    Button(
+                        onClick = onNavigateToDeletePreview,
+                        enabled = !isSyncing
+                    ) {
+                        Text("去删除预览")
+                    }
                 }
                 Spacer(modifier = Modifier.width(16.dp))
             }
-        }
+        },
     ) { paddingValues ->
         when {
             isLoading -> {
@@ -86,20 +98,9 @@ fun SyncPreviewScreen(
                         .padding(paddingValues),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        CircularProgressIndicator()
-                        Text(
-                            text = "正在扫描文件...",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    CircularProgressIndicator()
                 }
             }
-
             error != null && toDownload.isEmpty() && toDelete.isEmpty() -> {
                 Box(
                     modifier = Modifier
@@ -119,7 +120,6 @@ fun SyncPreviewScreen(
                         )
                         Text(
                             text = error ?: "未知错误",
-                            style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.error
                         )
                         Button(onClick = { viewModel.loadPreview() }) {
@@ -128,7 +128,6 @@ fun SyncPreviewScreen(
                     }
                 }
             }
-
             toDownload.isEmpty() && toDelete.isEmpty() -> {
                 Box(
                     modifier = Modifier
@@ -148,13 +147,11 @@ fun SyncPreviewScreen(
                         )
                         Text(
                             text = "本地文件已是最新",
-                            style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             }
-
             else -> {
                 Column(
                     modifier = Modifier
@@ -163,36 +160,18 @@ fun SyncPreviewScreen(
                 ) {
                     if (isSyncing) {
                         LinearProgressIndicator(
-                            progress = { 
-                                if (progress.totalFiles > 0) {
-                                    progress.completedFiles.toFloat() / progress.totalFiles.toFloat()
-                                } else 0f
-                            },
                             modifier = Modifier.fillMaxWidth()
                         )
-                        if (progress.currentFileName.isNotEmpty()) {
-                            Text(
-                                text = progress.currentFileName,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                            )
-                        }
                     }
-
                     SummaryCard(
                         downloadCount = toDownload.size,
                         downloadSize = viewModel.totalDownloadSize,
                         deleteCount = toDelete.size,
                         deleteSize = viewModel.totalDeleteSize
                     )
-
                     if (toDelete.isNotEmpty()) {
                         WarningCard(deleteCount = toDelete.size)
                     }
-
                     TabRow(selectedTabIndex = selectedTab) {
                         tabs.forEachIndexed { index, title ->
                             Tab(
@@ -202,7 +181,6 @@ fun SyncPreviewScreen(
                             )
                         }
                     }
-
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(vertical = 8.dp)
@@ -214,7 +192,6 @@ fun SyncPreviewScreen(
                                     isDownload = true
                                 )
                             }
-
                             1 -> items(toDelete, key = { it.relativePath }) { action ->
                                 SyncActionItem(
                                     action = action,
@@ -228,6 +205,8 @@ fun SyncPreviewScreen(
         }
     }
 }
+
+enum class SyncMode { DOWNLOAD, DELETE }
 
 @Composable
 private fun SummaryCard(
@@ -246,7 +225,7 @@ private fun SummaryCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "下载摘要",
+                text = "同步摘要",
                 style = MaterialTheme.typography.titleMedium
             )
             Text(
@@ -329,7 +308,7 @@ private fun formatFileSize(bytes: Long): String {
     return when {
         bytes >= 1024L * 1024 * 1024 -> "%.1f GB".format(bytes / (1024.0 * 1024 * 1024))
         bytes >= 1024L * 1024 -> "%.0f MB".format(bytes / (1024.0 * 1024))
-        bytes >= 1024L -> "%.0f KB".format(bytes / 1024.0)
+        bytes >= 1024L -> "%.1f KB".format(bytes / 1024.0)
         else -> "$bytes B"
     }
 }
