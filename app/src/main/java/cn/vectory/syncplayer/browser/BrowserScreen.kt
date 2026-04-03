@@ -70,7 +70,7 @@ fun BrowserScreen(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet {
+            ModalDrawerSheet(modifier = Modifier.fillMaxWidth(0.6f)) {
                 Spacer(Modifier.height(16.dp))
                 Text(
                     text = "Sync Player",
@@ -153,7 +153,7 @@ fun BrowserScreen(
                         Box {
                             IconButton(onClick = { showSortMenu = true }) {
                                 Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.Sort,
+                                    imageVector = Icons.Default.Reorder,
                                     contentDescription = "排序筛选"
                                 )
                             }

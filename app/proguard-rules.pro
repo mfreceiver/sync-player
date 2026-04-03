@@ -1,6 +1,7 @@
-# Add project specific ProGuard rules here.
 -keep class jcifs.** { *; }
 -keep class net.schmizz.** { *; }
+-keep class org.bouncycastle.** { *; }
 -dontwarn jcifs.**
 -dontwarn net.schmizz.**
+-dontwarn org.bouncycastle.**
 -dontwarn sun.security.x509.X509Key

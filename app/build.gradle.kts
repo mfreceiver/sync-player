@@ -30,8 +30,8 @@ android {
         applicationId = "cn.vectory.syncplayer"
         minSdk = 34
         targetSdk = 35
-        versionCode = 4
-        versionName = "4.0.0"
+        versionCode = 5
+        versionName = "5.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -110,6 +110,9 @@ dependencies {
 
     // SMB
     implementation(libs.jcifs.ng)
+
+    // BouncyCastle (MD4 provider for jcifs-ng NTLM auth)
+    implementation(libs.bouncycastle.provider)
 
     // SFTP
     implementation(libs.sshj)

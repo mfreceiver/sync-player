@@ -13,6 +13,7 @@ room = "2.7.0"
 media3 = "1.6.0"
 jcifs = "2.1.10"
 sshj = "0.39.0"
+bouncycastle = "1.80"
 security-crypto = "1.1.0-alpha06"
 coroutines = "1.10.1"
 
@@ -41,6 +42,7 @@ media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "medi
 media3-common = { group = "androidx.media3", name = "media3-common", version.ref = "media3" }
 jcifs-ng = { group = "eu.agno3.jcifs", name = "jcifs-ng", version.ref = "jcifs" }
 sshj = { group = "com.hierynomus", name = "sshj", version.ref = "sshj" }
+bouncycastle-provider = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "security-crypto" }
 coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
 coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
