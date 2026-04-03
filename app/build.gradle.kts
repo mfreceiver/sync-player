@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "com.mfreceiver.syncplayer"
+    namespace = "cn.vectory.syncplayer"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.mfreceiver.syncplayer"
+        applicationId = "cn.vectory.syncplayer"
         minSdk = 34
         targetSdk = 35
         versionCode = 1
