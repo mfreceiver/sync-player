@@ -10,12 +10,13 @@ import cn.vectory.syncplayer.browser.BrowserScreen
 import cn.vectory.syncplayer.browser.BrowserViewModel
 import cn.vectory.syncplayer.player.PlayerScreen
 import cn.vectory.syncplayer.player.PlayerViewModel
-import cn.vectory.syncplayer.settings.SettingsScreen
+import cn.vectory.syncplayer.settings.ServerConfigScreen
+import cn.vectory.syncplayer.settings.PlaybackSettingsScreen
+import cn.vectory.syncplayer.settings.AboutScreen
 import cn.vectory.syncplayer.settings.SettingsViewModel
 import cn.vectory.syncplayer.sync.SyncPreviewScreen
 import cn.vectory.syncplayer.sync.SyncPreviewViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
-import android.net.Uri
 
 @Composable
 fun AppNavHost() {
@@ -32,43 +33,17 @@ fun AppNavHost() {
                 onNavigateToPlayer = { videoItemId ->
                     navController.navigate(Route.Player.create(videoItemId))
                 },
-                onNavigateToSettings = {
-                    navController.navigate(Route.Settings.route)
+                onNavigateToServerConfig = {
+                    navController.navigate(Route.ServerConfig.route)
                 },
                 onNavigateToSyncPreview = {
                     navController.navigate(Route.SyncPreview.route)
                 },
-                onNavigateToFolder = { folderPath ->
-                    navController.navigate(Route.BrowserFolder.create(folderPath))
-                }
-            )
-        }
-
-        composable(
-            route = Route.BrowserFolder.route,
-            arguments = listOf(
-                navArgument("folderPath") { type = NavType.StringType }
-            )
-        ) { backStackEntry ->
-            val folderPath = Uri.decode(backStackEntry.arguments?.getString("folderPath") ?: "")
-            val viewModel: BrowserViewModel = hiltViewModel()
-            BrowserScreen(
-                viewModel = viewModel,
-                currentFolder = folderPath,
-                onNavigateToPlayer = { videoItemId ->
-                    navController.navigate(Route.Player.create(videoItemId))
+                onNavigateToPlaybackSettings = {
+                    navController.navigate(Route.PlaybackSettings.route)
                 },
-                onNavigateToSettings = {
-                    navController.navigate(Route.Settings.route)
-                },
-                onNavigateToSyncPreview = {
-                    navController.navigate(Route.SyncPreview.route)
-                },
-                onNavigateUp = {
-                    navController.popBackStack()
-                },
-                onNavigateToFolder = { subFolderPath ->
-                    navController.navigate(Route.BrowserFolder.create(subFolderPath))
+                onNavigateToAbout = {
+                    navController.navigate(Route.About.route)
                 }
             )
         }
@@ -88,9 +63,9 @@ fun AppNavHost() {
             )
         }
 
-        composable(Route.Settings.route) {
+        composable(Route.ServerConfig.route) {
             val viewModel: SettingsViewModel = hiltViewModel()
-            SettingsScreen(
+            ServerConfigScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() }
             )
@@ -101,6 +76,22 @@ fun AppNavHost() {
             SyncPreviewScreen(
                 viewModel = viewModel,
                 onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable(Route.PlaybackSettings.route) {
+            val viewModel: SettingsViewModel = hiltViewModel()
+            PlaybackSettingsScreen(
+                viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Route.About.route) {
+            val viewModel: SettingsViewModel = hiltViewModel()
+            AboutScreen(
+                viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() }
             )
         }
     }

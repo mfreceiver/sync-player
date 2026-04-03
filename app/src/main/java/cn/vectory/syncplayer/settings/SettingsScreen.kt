@@ -19,6 +19,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import cn.vectory.syncplayer.BuildConfig
 import cn.vectory.syncplayer.data.model.OrientationPreference
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
@@ -234,7 +235,7 @@ fun SettingsScreen(
                         Spacer(Modifier.height(12.dp))
                         ListItem(
                             headlineContent = { Text("应用版本") },
-                            trailingContent = { Text("1.0.0") }
+                            trailingContent = { Text(BuildConfig.VERSION_NAME) }
                         )
                         ListItem(
                             headlineContent = { Text("上次同步") },

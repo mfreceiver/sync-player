@@ -11,9 +11,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,8 +30,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import cn.vectory.syncplayer.data.model.BrowseItem
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -40,20 +41,23 @@ fun BrowserScreen(
     viewModel: BrowserViewModel = hiltViewModel(),
     currentFolder: String = "",
     onNavigateToPlayer: (videoItemId: Long) -> Unit,
-    onNavigateToSettings: () -> Unit,
+    onNavigateToServerConfig: () -> Unit,
     onNavigateToSyncPreview: () -> Unit,
-    onNavigateUp: (() -> Unit)? = null,
-    onNavigateToFolder: ((folderPath: String) -> Unit)? = null
+    onNavigateToPlaybackSettings: () -> Unit,
+    onNavigateToAbout: () -> Unit,
 ) {
     val browseItems by viewModel.browseItems.collectAsState()
     val hasConfig by viewModel.hasConfig.collectAsState()
     val sortMode by viewModel.sortMode.collectAsState()
     val filter by viewModel.filter.collectAsState()
     val folder by viewModel.currentFolder.collectAsState()
-    
+
     var showContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
     var showSortMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
+
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(currentFolder) {
         viewModel.setFolder(currentFolder)
@@ -63,170 +67,209 @@ fun BrowserScreen(
         viewModel.navigateUp()
     }
 
-    Scaffold(
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(
-                        text = if (folder.isEmpty()) "Sync Player" else folder.substringAfterLast('/'),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
-                navigationIcon = {
-                    if (folder.isNotEmpty() || onNavigateUp != null) {
-                        IconButton(onClick = {
-                            if (onNavigateUp != null) {
-                                onNavigateUp()
-                            } else {
-                                viewModel.navigateUp()
-                            }
-                        }) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "返回"
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    Box {
-                        IconButton(onClick = { showSortMenu = true }) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.Sort,
-                                contentDescription = "排序筛选"
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = showSortMenu,
-                            onDismissRequest = { showSortMenu = false }
-                        ) {
-                            Text(
-                                "排序",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                            )
-                            DropdownMenuItem(
-                                text = { Text("按文件名 ↑") },
-                                onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_ASC); showSortMenu = false },
-                                trailingIcon = { if (sortMode == BrowserViewModel.SortMode.FILENAME_ASC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("按文件名 ↓") },
-                                onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_DESC); showSortMenu = false },
-                                trailingIcon = { if (sortMode == BrowserViewModel.SortMode.FILENAME_DESC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("按时长 ↑") },
-                                onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_ASC); showSortMenu = false },
-                                trailingIcon = { if (sortMode == BrowserViewModel.SortMode.DURATION_ASC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("按时长 ↓") },
-                                onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_DESC); showSortMenu = false },
-                                trailingIcon = { if (sortMode == BrowserViewModel.SortMode.DURATION_DESC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                            )
-                            HorizontalDivider()
-                            Text(
-                                "筛选",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                            )
-                            DropdownMenuItem(
-                                text = { Text("全部") },
-                                onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.ALL); showSortMenu = false },
-                                trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.ALL) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("仅视频") },
-                                onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.VIDEO_ONLY); showSortMenu = false },
-                                trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.VIDEO_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("仅喜欢") },
-                                onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.FAVORITES_ONLY); showSortMenu = false },
-                                trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.FAVORITES_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                            )
-                        }
-                    }
-                    IconButton(onClick = onNavigateToSyncPreview) {
-                        Icon(
-                            imageVector = Icons.Default.Sync,
-                            contentDescription = "同步"
-                        )
-                    }
-                    IconButton(onClick = onNavigateToSettings) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "设置"
-                        )
-                    }
-                }
-            )
-        }
-    ) { paddingValues ->
-        if (!hasConfig) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    Text(
-                        text = "请先配置服务器",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Button(onClick = onNavigateToSettings) {
-                        Text("去设置")
-                    }
-                }
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    text = "Sync Player",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp)
+                )
+                HorizontalDivider()
+                Spacer(Modifier.height(8.dp))
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.Dns, contentDescription = null) },
+                    label = { Text("服务器配置") },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onNavigateToServerConfig()
+                    },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.Sync, contentDescription = null) },
+                    label = { Text("文件同步") },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onNavigateToSyncPreview()
+                    },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.PlayCircleOutline, contentDescription = null) },
+                    label = { Text("播放设置") },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onNavigateToPlaybackSettings()
+                    },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.Info, contentDescription = null) },
+                    label = { Text("关于") },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onNavigateToAbout()
+                    },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-            ) {
-                items(
-                    items = browseItems,
-                    key = { it.relativePath }
-                ) { item ->
-                    if (item.isDirectory) {
-                        FolderItem(
-                            item = item,
-                            onClick = {
-                                if (onNavigateToFolder != null) {
-                                    onNavigateToFolder(item.relativePath)
-                                } else {
-                                    viewModel.setFolder(item.relativePath)
-                                }
+        }
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                            Icon(
+                                imageVector = Icons.Default.Menu,
+                                contentDescription = "菜单"
+                            )
+                        }
+                    },
+                    title = {
+                        Column {
+                            Text(
+                                text = "Sync Player",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = if (folder.isEmpty()) "/" else folder,
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    actions = {
+                        Box {
+                            IconButton(onClick = { showSortMenu = true }) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.Sort,
+                                    contentDescription = "排序筛选"
+                                )
                             }
+                            DropdownMenu(
+                                expanded = showSortMenu,
+                                onDismissRequest = { showSortMenu = false }
+                            ) {
+                                Text(
+                                    "排序",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("按文件名 ↑") },
+                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_ASC); showSortMenu = false },
+                                    trailingIcon = { if (sortMode == BrowserViewModel.SortMode.FILENAME_ASC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("按文件名 ↓") },
+                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_DESC); showSortMenu = false },
+                                    trailingIcon = { if (sortMode == BrowserViewModel.SortMode.FILENAME_DESC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("按时长 ↑") },
+                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_ASC); showSortMenu = false },
+                                    trailingIcon = { if (sortMode == BrowserViewModel.SortMode.DURATION_ASC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("按时长 ↓") },
+                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_DESC); showSortMenu = false },
+                                    trailingIcon = { if (sortMode == BrowserViewModel.SortMode.DURATION_DESC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                                )
+                                HorizontalDivider()
+                                Text(
+                                    "筛选",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("全部") },
+                                    onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.ALL); showSortMenu = false },
+                                    trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.ALL) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("仅视频") },
+                                    onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.VIDEO_ONLY); showSortMenu = false },
+                                    trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.VIDEO_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("仅喜欢") },
+                                    onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.FAVORITES_ONLY); showSortMenu = false },
+                                    trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.FAVORITES_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                                )
+                            }
+                        }
+                    }
+                )
+            }
+        ) { paddingValues ->
+            if (!hasConfig) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Text(
+                            text = "请先配置服务器",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    } else {
-                        FileItem(
-                            item = item,
-                            onClick = {
-                                if (isVideoFile(item.name)) {
-                                    viewModel.setFolderVideoIdsForNavigation(viewModel.getFolderVideoIds())
-                                    onNavigateToPlayer(item.videoItemId!!)
-                                } else {
-                                    Toast.makeText(context, "该文件无法播放", Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            onLongClick = { showContextMenu = item }
+                        Button(onClick = onNavigateToServerConfig) {
+                            Text("去设置")
+                        }
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues)
+                ) {
+                    items(
+                        items = browseItems,
+                        key = { it.relativePath }
+                    ) { item ->
+                        if (item.isDirectory) {
+                            FolderItem(
+                                item = item,
+                                onClick = { viewModel.setFolder(item.relativePath) }
+                            )
+                        } else {
+                            FileItem(
+                                item = item,
+                                onClick = {
+                                    if (isVideoFile(item.name)) {
+                                        viewModel.setFolderVideoIdsForNavigation(viewModel.getFolderVideoIds())
+                                        onNavigateToPlayer(item.videoItemId!!)
+                                    } else {
+                                        Toast.makeText(context, "该文件无法播放", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                onLongClick = { showContextMenu = item }
+                            )
+                        }
+                        HorizontalDivider(
+                            modifier = Modifier.padding(start = 72.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
                         )
                     }
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = 72.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                    )
                 }
             }
         }
@@ -322,25 +365,26 @@ private fun FileItem(
                 .size(40.dp)
                 .clip(RoundedCornerShape(4.dp))
         )
-        
+
         Spacer(Modifier.width(12.dp))
-        
+
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = item.name,
+                text = item.name.substringBeforeLast('.'),
                 style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            
+
             val metadata = buildMetadataLine(
                 duration = item.duration,
                 width = item.width,
                 height = item.height,
-                bitrate = item.bitrate
+                bitrate = item.bitrate,
+                extension = item.name.substringAfterLast('.', "").lowercase()
             )
             if (metadata.isNotEmpty()) {
                 Spacer(Modifier.height(2.dp))
@@ -353,7 +397,7 @@ private fun FileItem(
                 )
             }
         }
-        
+
         when {
             item.isCompleted -> {
                 Spacer(Modifier.width(8.dp))
@@ -415,7 +459,7 @@ private fun Thumbnail(
 ) {
     val context = LocalContext.current
     var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-    
+
     LaunchedEffect(thumbnailPath) {
         thumbnailPath?.let { path ->
             try {
@@ -425,7 +469,7 @@ private fun Thumbnail(
             }
         }
     }
-    
+
     if (bitmap != null) {
         androidx.compose.foundation.Image(
             painter = BitmapPainter(bitmap!!.asImageBitmap()),
@@ -455,11 +499,11 @@ private fun ProgressRing(
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
     val trackColor = MaterialTheme.colorScheme.surfaceVariant
-    
+
     Canvas(modifier = modifier) {
         val stroke = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
         val radius = (size.minDimension - stroke.width) / 2
-        
+
         drawArc(
             color = trackColor,
             startAngle = 0f,
@@ -472,7 +516,7 @@ private fun ProgressRing(
             ),
             size = Size(radius * 2, radius * 2)
         )
-        
+
         if (progress > 0f) {
             drawArc(
                 color = primaryColor,
@@ -494,47 +538,43 @@ private fun buildMetadataLine(
     duration: Long?,
     width: Int?,
     height: Int?,
-    bitrate: Long?
+    bitrate: Long?,
+    extension: String
 ): String {
     val parts = mutableListOf<String>()
-    
+
     duration?.let { ms ->
         if (ms > 0) {
             parts.add(formatDuration(ms))
         }
     }
-    
+
     if (width != null && height != null && width > 0 && height > 0) {
         parts.add("${width}×${height}")
     }
-    
+
     bitrate?.let { bps ->
         if (bps > 0) {
             val mbps = bps / 1_000_000.0
             parts.add(if (mbps >= 1.0) "%.1fMbps".format(mbps) else "%.0fKbps".format(bps / 1000.0))
         }
     }
-    
-    return parts.joinToString(" · ")
-}
 
-private fun formatFileSize(bytes: Long): String {
-    return when {
-        bytes >= 1024L * 1024 * 1024 -> "%.1f GB".format(bytes / (1024.0 * 1024 * 1024))
-        bytes >= 1024L * 1024 -> "%.0f MB".format(bytes / (1024.0 * 1024))
-        bytes >= 1024L -> "%.0f KB".format(bytes / 1024.0)
-        else -> "$bytes B"
+    if (extension.isNotEmpty()) {
+        parts.add(extension.uppercase())
     }
+
+    return parts.joinToString(" · ")
 }
 
 private fun formatDuration(ms: Long?): String {
     if (ms == null || ms <= 0) return ""
-    
+
     val totalSeconds = ms / 1000
     val hours = totalSeconds / 3600
     val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60
-    
+
     return if (hours > 0) {
         "%d:%02d:%02d".format(hours, minutes, seconds)
     } else {

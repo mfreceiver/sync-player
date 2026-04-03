@@ -32,9 +32,10 @@ class GesturePlayerView @JvmOverloads constructor(
     var gestureListener: GestureListener? = null
     var speedMultiplier: Float = 2.0f
     var videoDuration: Long = 0L
+    var currentPosition: Long = 0L
     private var isLongPressing = false
     private var isSeeking = false
-    private var seekAccumulatedMs = 0L
+    private var seekOffsetMs = 0L
     private var touchStartX = 0f
     private var touchStartY = 0f
     private var isInLeftHalf = false
@@ -80,14 +81,13 @@ class GesturePlayerView @JvmOverloads constructor(
             if (e1 == null) return false
             if (isLongPressing) return false
 
-            val absDx = abs(distanceX)
-            val absDy = abs(distanceY)
-
             val dxFromStart = e2.x - touchStartX
             val dyFromStart = e2.y - touchStartY
+            val absDxFromStart = abs(dxFromStart)
+            val absDyFromStart = abs(dyFromStart)
 
             if (!isSeeking && !isAdjustingVertical) {
-                if (absDy > absDx && absDy > 20) {
+                if (absDyFromStart > absDxFromStart && absDyFromStart > 20) {
                     isAdjustingVertical = true
                     isInLeftHalf = e1.x < width / 2f
                     if (isInLeftHalf) {
@@ -95,16 +95,17 @@ class GesturePlayerView @JvmOverloads constructor(
                         initialBrightness = window?.attributes?.screenBrightness ?: 0.5f
                         if (initialBrightness < 0) initialBrightness = 0.5f
                     }
-                } else if (absDx > absDy && absDx > 30) {
+                } else if (absDxFromStart > absDyFromStart && absDxFromStart > 30) {
                     isSeeking = true
-                    seekAccumulatedMs = 0L
+                    seekOffsetMs = 0L
                 }
             }
 
             if (isSeeking) {
-                seekAccumulatedMs += (-distanceX * 100).toLong()
-                val sign = if (seekAccumulatedMs >= 0) "▶" else "◀"
-                showOverlay("$sign ${formatSeekOffset(seekAccumulatedMs)}")
+                seekOffsetMs = (dxFromStart * 100L)
+                val targetMs = (currentPosition + seekOffsetMs)
+                    .coerceIn(0, videoDuration.coerceAtLeast(0))
+                showOverlay(formatTimeMs(targetMs))
                 return true
             }
 
@@ -145,12 +146,14 @@ class GesturePlayerView @JvmOverloads constructor(
                     hideOverlay()
                 }
                 if (isSeeking) {
-                    if (videoDuration > 0) {
-                        seekAccumulatedMs = seekAccumulatedMs.coerceIn(-videoDuration, videoDuration)
+                    val clampedOffset = if (videoDuration > 0) {
+                        seekOffsetMs.coerceIn(-currentPosition, videoDuration - currentPosition)
+                    } else {
+                        seekOffsetMs
                     }
-                    gestureListener?.onSeekTo(seekAccumulatedMs)
+                    gestureListener?.onSeekTo(clampedOffset)
                     isSeeking = false
-                    seekAccumulatedMs = 0L
+                    seekOffsetMs = 0L
                     hideOverlay()
                 }
                 isAdjustingVertical = false
@@ -184,10 +187,15 @@ class GesturePlayerView @JvmOverloads constructor(
         overlayHideJob?.cancel()
         overlayText.visibility = GONE
     }
-    private fun formatSeekOffset(ms: Long): String {
-        val totalSeconds = abs(ms) / 1000
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-        return "%d:%02d".format(minutes, seconds)
+    private fun formatTimeMs(ms: Long): String {
+        val totalSeconds = (ms / 1000).coerceAtLeast(0)
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return if (hours > 0) {
+            "%d:%02d:%02d".format(hours, minutes, seconds)
+        } else {
+            "%d:%02d".format(minutes, seconds)
+        }
     }
 }

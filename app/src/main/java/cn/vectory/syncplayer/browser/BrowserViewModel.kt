@@ -38,10 +38,10 @@ class BrowserViewModel @Inject constructor(
     private val _currentFolder = MutableStateFlow("")
     val currentFolder: StateFlow<String> = _currentFolder.asStateFlow()
 
-    private val _sortMode = MutableStateFlow(SortMode.FILENAME_ASC)
+    private val _sortMode = MutableStateFlow(globalSortMode)
     val sortMode: StateFlow<SortMode> = _sortMode.asStateFlow()
 
-    private val _filter = MutableStateFlow(BrowseFilter.ALL)
+    private val _filter = MutableStateFlow(globalFilter)
     val filter: StateFlow<BrowseFilter> = _filter.asStateFlow()
 
     val hasConfig: StateFlow<Boolean> = serverConfigRepository.getConfigFlow()
@@ -132,11 +132,18 @@ class BrowserViewModel @Inject constructor(
     }
 
     fun setSortMode(mode: SortMode) {
+        globalSortMode = mode
         _sortMode.value = mode
     }
 
     fun setFilter(filter: BrowseFilter) {
+        globalFilter = filter
         _filter.value = filter
+    }
+
+    companion object {
+        private var globalSortMode = SortMode.FILENAME_ASC
+        private var globalFilter = BrowseFilter.ALL
     }
 
     fun getFolderVideoIds(): List<Long> {
