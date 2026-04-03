@@ -25,6 +25,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
@@ -46,6 +49,26 @@ fun PlayerScreen(
 
     var showControls by remember { mutableStateOf(true) }
     var currentVideoId by remember { mutableStateOf(videoItemId) }
+
+    val window = activity.window
+    DisposableEffect(Unit) {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        onDispose {
+            WindowCompat.setDecorFitsSystemWindows(window, true)
+            val restoreController = WindowCompat.getInsetsController(window, window.decorView)
+            restoreController.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+    LaunchedEffect(showControls) {
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        if (showControls) {
+            insetsController.show(WindowInsetsCompat.Type.systemBars())
+        } else {
+            insetsController.hide(WindowInsetsCompat.Type.systemBars())
+        }
+    }
 
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {

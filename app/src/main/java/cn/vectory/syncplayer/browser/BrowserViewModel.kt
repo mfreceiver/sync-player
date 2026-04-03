@@ -26,16 +26,22 @@ class BrowserViewModel @Inject constructor(
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
-    enum class SortOrder {
-        ASCENDING,
-        DESCENDING
+    enum class SortMode {
+        FILENAME_ASC, FILENAME_DESC, DURATION_ASC, DURATION_DESC
+    }
+
+    enum class BrowseFilter {
+        ALL, FAVORITES_ONLY
     }
 
     private val _currentFolder = MutableStateFlow("")
     val currentFolder: StateFlow<String> = _currentFolder.asStateFlow()
 
-    private val _sortOrder = MutableStateFlow(SortOrder.ASCENDING)
-    val sortOrder: StateFlow<SortOrder> = _sortOrder.asStateFlow()
+    private val _sortMode = MutableStateFlow(SortMode.FILENAME_ASC)
+    val sortMode: StateFlow<SortMode> = _sortMode.asStateFlow()
+
+    private val _filter = MutableStateFlow(BrowseFilter.ALL)
+    val filter: StateFlow<BrowseFilter> = _filter.asStateFlow()
 
     val hasConfig: StateFlow<Boolean> = serverConfigRepository.getConfigFlow()
         .map { it != null }
@@ -46,15 +52,17 @@ class BrowserViewModel @Inject constructor(
 
     val browseItems: StateFlow<List<BrowseItem>> = combine(
         _currentFolder,
-        _sortOrder,
+        _sortMode,
+        _filter,
         playbackRecords
-    ) { folder, order, records ->
-        buildBrowseItems(folder, order, records)
+    ) { folder, mode, filterVal, records ->
+        buildBrowseItems(folder, mode, filterVal, records)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private suspend fun buildBrowseItems(
         folder: String,
-        order: SortOrder,
+        mode: SortMode,
+        filterVal: BrowseFilter,
         records: List<PlaybackRecordEntity>
     ): List<BrowseItem> {
         val folders = videoRepository.getSubFolders(folder).first()
@@ -88,11 +96,18 @@ class BrowserViewModel @Inject constructor(
                 )
             }
 
-        val allItems = folders + videos
-        return when (order) {
-            SortOrder.ASCENDING -> allItems.sortedBy { it.name.lowercase() }
-            SortOrder.DESCENDING -> allItems.sortedByDescending { it.name.lowercase() }
+        val filteredVideos = when (filterVal) {
+            BrowseFilter.ALL -> videos
+            BrowseFilter.FAVORITES_ONLY -> videos.filter { it.isFavorite }
         }
+        val sortedFolders = folders.sortedBy { it.name.lowercase() }
+        val sortedVideos = when (mode) {
+            SortMode.FILENAME_ASC -> filteredVideos.sortedBy { it.name.lowercase() }
+            SortMode.FILENAME_DESC -> filteredVideos.sortedByDescending { it.name.lowercase() }
+            SortMode.DURATION_ASC -> filteredVideos.sortedBy { it.duration ?: 0L }
+            SortMode.DURATION_DESC -> filteredVideos.sortedByDescending { it.duration ?: 0L }
+        }
+        return sortedFolders + sortedVideos
     }
 
     fun setFolder(folder: String) {
@@ -113,11 +128,12 @@ class BrowserViewModel @Inject constructor(
         return true
     }
 
-    fun toggleSortOrder() {
-        _sortOrder.value = when (_sortOrder.value) {
-            SortOrder.ASCENDING -> SortOrder.DESCENDING
-            SortOrder.DESCENDING -> SortOrder.ASCENDING
-        }
+    fun setSortMode(mode: SortMode) {
+        _sortMode.value = mode
+    }
+
+    fun setFilter(filter: BrowseFilter) {
+        _filter.value = filter
     }
 
     fun toggleFavorite(videoItemId: Long) {

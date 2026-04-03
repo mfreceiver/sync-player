@@ -2,6 +2,7 @@ package cn.vectory.syncplayer.browser
 
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
@@ -42,13 +43,19 @@ fun BrowserScreen(
 ) {
     val browseItems by viewModel.browseItems.collectAsState()
     val hasConfig by viewModel.hasConfig.collectAsState()
-    val sortOrder by viewModel.sortOrder.collectAsState()
+    val sortMode by viewModel.sortMode.collectAsState()
+    val filter by viewModel.filter.collectAsState()
     val folder by viewModel.currentFolder.collectAsState()
     
     var showContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
+    var showSortMenu by remember { mutableStateOf(false) }
 
     LaunchedEffect(currentFolder) {
         viewModel.setFolder(currentFolder)
+    }
+
+    BackHandler(enabled = folder.isNotEmpty()) {
+        viewModel.navigateUp()
     }
 
     Scaffold(
@@ -78,11 +85,61 @@ fun BrowserScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.toggleSortOrder() }) {
-                        Icon(
-                            imageVector = Icons.Default.Sort,
-                            contentDescription = if (sortOrder == BrowserViewModel.SortOrder.ASCENDING) "升序" else "降序"
-                        )
+                    Box {
+                        IconButton(onClick = { showSortMenu = true }) {
+                            Icon(
+                                imageVector = Icons.Default.Sort,
+                                contentDescription = "排序筛选"
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showSortMenu,
+                            onDismissRequest = { showSortMenu = false }
+                        ) {
+                            Text(
+                                "排序",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                            )
+                            DropdownMenuItem(
+                                text = { Text("按文件名 ↑") },
+                                onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_ASC); showSortMenu = false },
+                                trailingIcon = { if (sortMode == BrowserViewModel.SortMode.FILENAME_ASC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("按文件名 ↓") },
+                                onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_DESC); showSortMenu = false },
+                                trailingIcon = { if (sortMode == BrowserViewModel.SortMode.FILENAME_DESC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("按时长 ↑") },
+                                onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_ASC); showSortMenu = false },
+                                trailingIcon = { if (sortMode == BrowserViewModel.SortMode.DURATION_ASC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("按时长 ↓") },
+                                onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_DESC); showSortMenu = false },
+                                trailingIcon = { if (sortMode == BrowserViewModel.SortMode.DURATION_DESC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                            )
+                            HorizontalDivider()
+                            Text(
+                                "筛选",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                            )
+                            DropdownMenuItem(
+                                text = { Text("全部") },
+                                onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.ALL); showSortMenu = false },
+                                trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.ALL) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("仅喜欢") },
+                                onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.FAVORITES_ONLY); showSortMenu = false },
+                                trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.FAVORITES_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                            )
+                        }
                     }
                     IconButton(onClick = onNavigateToSyncPreview) {
                         Icon(
@@ -230,8 +287,7 @@ private fun FileItem(
         Thumbnail(
             thumbnailPath = item.thumbnailPath,
             modifier = Modifier
-                .width(56.dp)
-                .height(56.dp)
+                .size(40.dp)
                 .clip(RoundedCornerShape(4.dp))
         )
         
@@ -283,7 +339,7 @@ private fun FileItem(
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier
                                 .size(14.dp)
-                                .align(Alignment.TopEnd)
+                                .align(Alignment.Center)
                         )
                     }
                 }
@@ -303,7 +359,7 @@ private fun FileItem(
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier
                                 .size(14.dp)
-                                .align(Alignment.TopEnd)
+                                .align(Alignment.Center)
                         )
                     }
                 }
