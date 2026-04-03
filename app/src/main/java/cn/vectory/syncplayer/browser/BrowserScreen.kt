@@ -11,6 +11,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -89,7 +91,7 @@ fun BrowserScreen(
                     Box {
                         IconButton(onClick = { showSortMenu = true }) {
                             Icon(
-                                imageVector = Icons.Default.Sort,
+                                imageVector = Icons.AutoMirrored.Filled.Sort,
                                 contentDescription = "排序筛选"
                             )
                         }
@@ -134,6 +136,11 @@ fun BrowserScreen(
                                 text = { Text("全部") },
                                 onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.ALL); showSortMenu = false },
                                 trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.ALL) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("仅视频") },
+                                onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.VIDEO_ONLY); showSortMenu = false },
+                                trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.VIDEO_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                             )
                             DropdownMenuItem(
                                 text = { Text("仅喜欢") },
@@ -252,26 +259,34 @@ private fun FolderItem(
     item: BrowseItem,
     onClick: () -> Unit
 ) {
-    ListItem(
-        headlineContent = {
-            Text(
-                text = item.name,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        },
-        leadingContent = {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(40.dp),
+            contentAlignment = Alignment.Center
+        ) {
             Icon(
                 imageVector = Icons.Default.Folder,
                 contentDescription = "文件夹",
                 tint = Color(0xFFFFB300),
                 modifier = Modifier.size(40.dp)
             )
-        },
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(onClick = onClick)
-    )
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        Text(
+            text = item.name,
+            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -293,6 +308,7 @@ private fun FileItem(
     ) {
         Thumbnail(
             thumbnailPath = item.thumbnailPath,
+            isVideo = isVideoFile(item.name),
             modifier = Modifier
                 .size(40.dp)
                 .clip(RoundedCornerShape(4.dp))
@@ -385,6 +401,7 @@ private fun FileItem(
 @Composable
 private fun Thumbnail(
     thumbnailPath: String?,
+    isVideo: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -413,8 +430,8 @@ private fun Thumbnail(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Default.Movie,
-                contentDescription = "视频",
+                imageVector = if (isVideo) Icons.Default.Movie else Icons.AutoMirrored.Filled.InsertDriveFile,
+                contentDescription = if (isVideo) "视频" else "文件",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                 modifier = Modifier.size(32.dp)
             )
@@ -514,4 +531,13 @@ private fun formatDuration(ms: Long?): String {
     } else {
         "%d:%02d".format(minutes, seconds)
     }
+}
+
+private val VIDEO_EXTENSIONS = setOf(
+    "mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "ts", "m4v", "3gp", "mpeg", "mpg"
+)
+
+private fun isVideoFile(fileName: String): Boolean {
+    val ext = fileName.substringAfterLast('.', "").lowercase()
+    return ext in VIDEO_EXTENSIONS
 }

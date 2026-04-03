@@ -31,7 +31,7 @@ class BrowserViewModel @Inject constructor(
     }
 
     enum class BrowseFilter {
-        ALL, FAVORITES_ONLY
+        ALL, VIDEO_ONLY, FAVORITES_ONLY
     }
 
     private val _currentFolder = MutableStateFlow("")
@@ -99,6 +99,7 @@ class BrowserViewModel @Inject constructor(
 
         val filteredVideos = when (filterVal) {
             BrowseFilter.ALL -> videos
+            BrowseFilter.VIDEO_ONLY -> videos.filter { isVideoFile(it.name) }
             BrowseFilter.FAVORITES_ONLY -> videos.filter { it.isFavorite }
         }
         val sortedFolders = folders.sortedBy { it.name.lowercase() }
@@ -155,15 +156,47 @@ class BrowserViewModel @Inject constructor(
                 file
             )
 
+            val mimeType = getMimeType(video.fileName)
             val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "video/*"
+                type = mimeType
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
-            val chooserIntent = Intent.createChooser(intent, "分享视频")
+            val chooserIntent = Intent.createChooser(intent, "分享文件")
             chooserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(chooserIntent)
         }
+    }
+}
+
+private val VIDEO_EXTENSIONS = setOf(
+    "mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "ts", "m4v", "3gp", "mpeg", "mpg"
+)
+
+private fun isVideoFile(fileName: String): Boolean {
+    val ext = fileName.substringAfterLast('.', "").lowercase()
+    return ext in VIDEO_EXTENSIONS
+}
+
+private fun getMimeType(fileName: String): String {
+    val ext = fileName.substringAfterLast('.', "").lowercase()
+    return when (ext) {
+        in VIDEO_EXTENSIONS -> "video/*"
+        "jpg", "jpeg" -> "image/jpeg"
+        "png" -> "image/png"
+        "gif" -> "image/gif"
+        "bmp" -> "image/bmp"
+        "webp" -> "image/webp"
+        "mp3" -> "audio/mpeg"
+        "flac" -> "audio/flac"
+        "wav" -> "audio/wav"
+        "aac" -> "audio/aac"
+        "ogg" -> "audio/ogg"
+        "srt" -> "text/plain"
+        "ass" -> "text/plain"
+        "nfo" -> "text/plain"
+        "txt" -> "text/plain"
+        else -> "application/octet-stream"
     }
 }
