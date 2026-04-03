@@ -30,7 +30,9 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.delay
 import java.io.File
@@ -178,6 +180,22 @@ fun PlayerScreen(
         currentVideoId = newId
         viewModel.loadVideo(newId)
         showControls = true
+    }
+    DisposableEffect(exoPlayer) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) {
+                    val nextId = viewModel.getNextVideoId()
+                    if (nextId != null) {
+                        switchToVideo(nextId)
+                    } else {
+                        doExit()
+                    }
+                }
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose { exoPlayer.removeListener(listener) }
     }
     BackHandler { doExit() }
     Box(

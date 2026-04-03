@@ -4,7 +4,7 @@ sealed class Route(val route: String) {
     data object Browser : Route("browser")
     data object BrowserFolder : Route("browser/{folderPath}") {
         fun create(folderPath: String): String =
-            "browser/${android.net.Uri.encode(folderPath, "/")}"
+            "browser/${android.net.Uri.encode(folderPath)}"
     }
     data object Player : Route("player/{videoItemId}") {
         fun create(videoItemId: Long): String = "player/$videoItemId"
