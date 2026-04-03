@@ -102,7 +102,7 @@ class GesturePlayerView @JvmOverloads constructor(
             }
 
             if (isSeeking) {
-                seekOffsetMs = (dxFromStart * 100L)
+                seekOffsetMs = (dxFromStart * 100f).toLong()
                 val targetMs = (currentPosition + seekOffsetMs)
                     .coerceIn(0, videoDuration.coerceAtLeast(0))
                 showOverlay(formatTimeMs(targetMs))

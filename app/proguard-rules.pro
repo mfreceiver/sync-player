@@ -3,3 +3,4 @@
 -keep class net.schmizz.** { *; }
 -dontwarn jcifs.**
 -dontwarn net.schmizz.**
+-dontwarn sun.security.x509.X509Key
