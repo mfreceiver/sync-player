@@ -1,0 +1,4 @@
+error: src refspec dev2 does not match any
+error: src refspec push does not match any
+error: src refspec origin does not match any
+error: failed to push some refs to 'https://git.vectory.cn:18443/mfreceiver/sync-player.git'
