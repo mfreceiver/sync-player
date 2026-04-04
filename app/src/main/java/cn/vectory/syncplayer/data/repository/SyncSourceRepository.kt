@@ -1,31 +1,71 @@
-package cn.vectory.syncplayer.data.local.dao
+package cn.vectory.syncplayer.data.repository
 
-import androidx.room.Dao
-import androidx.room.Query
-import androidx.room.Upsert
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import cn.vectory.syncplayer.data.local.dao.SyncSourceDao
 import cn.vectory.syncplayer.data.local.entity.SyncSourceEntity
+import cn.vectory.syncplayer.data.model.SyncSource
+import cn.vectory.syncplayer.data.model.SyncProtocol
 import kotlinx.coroutines.flow.Flow
-
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class SyncSourceRepository @Inject constructor(
     private val syncSourceDao: SyncSourceDao,
-    private val encryptedPassword: String
-    private val createdAt: Long = System.currentTimeMillis()
+    private val masterKey: MasterKey,
+    private val encryptedPrefs: EncryptedSharedPreferences
 ) {
-    private val encryptedPassword: String): String {
-        return android.util.Base64.encodeToString(
+    fun getAllFlow(): Flow<List<SyncSource>> =
+        syncSourceDao.getAllFlow().map { list -> list.map { it.toDomain() } }
+
+    suspend fun getAll(): List<SyncSource> =
+        syncSourceDao.getAll().map { it.toDomain() }
+
+    suspend fun getById(id: Long): SyncSource? =
+        syncSourceDao.getById(id)?.toDomain()
+
+    suspend fun getRelationCount(sourceId: Long): Int =
+        syncSourceDao.getRelationCount(sourceId)
+
+    suspend fun save(source: SyncSource): Long {
+        val entity = SyncSourceEntity(
+            id = source.id,
+            name = source.name,
+            protocol = source.protocol.name,
+            host = source.host,
+            port = source.port,
+            username = source.username,
+            encryptedPassword = encryptPassword(source.password)
+        )
+        return syncSourceDao.upsert(entity)
+    }
+
+    suspend fun delete(id: Long) {
+        syncSourceDao.deleteById(id)
+    }
+
+    private fun SyncSourceEntity.toDomain() = SyncSource(
+        id = id,
+        name = name,
+        protocol = SyncProtocol.valueOf(protocol),
+        host = host,
+        port = port,
+        username = username,
+        password = decryptPassword(encryptedPassword),
+        createdAt = createdAt
+    )
+
+    private fun encryptPassword(password: String): String =
+        android.util.Base64.encodeToString(
             password.toByteArray(Charsets.UTF_8),
             android.util.Base64.NO_WRAP
         )
-    }
 
-    private fun decryptPassword(encrypted: String): String {
-        return String(
+    private fun decryptPassword(encrypted: String): String =
+        String(
             android.util.Base64.decode(encrypted, android.util.Base64.NO_WRAP),
             Charsets.UTF_8
         )
-    }
 }
