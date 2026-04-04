@@ -8,9 +8,21 @@ import cn.vectory.syncplayer.data.local.AppDatabase
 import cn.vectory.syncplayer.data.local.dao.PlaybackRecordDao
 import cn.vectory.syncplayer.data.local.dao.ServerConfigDao
 import cn.vectory.syncplayer.data.local.dao.SyncLogDao
+import cn.vectory.syncplayer.data.local.dao.SyncSourceDao
+import cn.vectory.syncplayer.data.local.dao.SyncRelationDao
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao
 import cn.vectory.syncplayer.data.local.dao.VideoMetadataCacheDao
+import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
+import cn.vectory.syncplayer.data.local.entity.ServerConfigEntity
+import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
+import cn.vectory.syncplayer.data.local.entity.SyncSourceEntity
+import cn.vectory.syncplayer.data.local.entity.SyncRelationEntity
+import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
+import cn.vectory.syncplayer.data.local.entity.VideoMetadataCacheEntity
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
+
+import cn.vectory.syncplayer.data.repository.SyncRelationRepository
+import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -37,6 +49,12 @@ object DatabaseModule {
     fun provideServerConfigDao(db: AppDatabase): ServerConfigDao = db.serverConfigDao()
 
     @Provides
+    fun provideSyncSourceDao(db: AppDatabase): SyncSourceDao = db.syncSourceDao()
+
+    @Provides
+    fun provideSyncRelationDao(db: AppDatabase): SyncRelationDao = db.syncRelationDao()
+
+    @Provides
     fun provideVideoItemDao(db: AppDatabase): VideoItemDao = db.videoItemDao()
 
     @Provides
@@ -52,6 +70,25 @@ object DatabaseModule {
     @Singleton
     fun provideSyncLogRepository(db: AppDatabase): SyncLogRepository {
         return SyncLogRepository(db.syncLogDao())
+    }
+
+    @Provides
+    @Singleton
+    fun provideSyncSourceRepository(
+        syncSourceDao: SyncSourceDao,
+        masterKey: MasterKey,
+        encryptedPrefs: EncryptedSharedPreferences
+    ): SyncSourceRepository {
+        return SyncSourceRepository(syncSourceDao, masterKey, encryptedPrefs)
+    }
+
+    @Provides
+    @Singleton
+    fun provideSyncRelationRepository(
+        syncRelationDao: SyncRelationDao,
+        syncSourceDao: SyncSourceDao
+    ): SyncRelationRepository {
+        return SyncRelationRepository(syncRelationDao, syncSourceDao)
     }
 
     @Provides

@@ -24,6 +24,9 @@ class VideoRepository @Inject constructor(
 
     suspend fun getAll(): List<VideoItemEntity> = videoItemDao.getAll()
 
+    suspend fun getBySyncRelationId(relationId: Long): List<VideoItemEntity> =
+        videoItemDao.getBySyncRelationId(relationId)
+
     suspend fun upsert(item: VideoItemEntity): Long = videoItemDao.upsert(item)
 
     suspend fun upsertAll(items: List<VideoItemEntity>) = videoItemDao.upsertAll(items)
@@ -36,4 +39,6 @@ class VideoRepository @Inject constructor(
     suspend fun deleteAll() = videoItemDao.deleteAll()
 
     suspend fun getAllIdsSorted(): List<Long> = videoItemDao.getAllIdsSorted()
+
+    suspend fun getBySyncRelationId(relationId: Long): List<VideoItemEntity> = videoItemDao.getBySyncRelationId(relationId)
 }

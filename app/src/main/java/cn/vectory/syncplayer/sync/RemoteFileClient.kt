@@ -2,13 +2,16 @@ package cn.vectory.syncplayer.sync
 
 import cn.vectory.syncplayer.data.model.RemoteFile
 import cn.vectory.syncplayer.data.model.ServerConfig
+import cn.vectory.syncplayer.data.model.SyncSource
 import java.io.File
 
 interface RemoteFileClient {
     suspend fun connect(config: ServerConfig)
+    suspend fun connect(source: SyncSource, remotePath: String)
     suspend fun disconnect()
     suspend fun testConnection(config: ServerConfig): Boolean
     suspend fun listFiles(path: String): List<RemoteFile>
+    suspend fun listDirectories(path: String): List<RemoteFile>
     suspend fun downloadFile(
         remotePath: String,
         localFile: File,

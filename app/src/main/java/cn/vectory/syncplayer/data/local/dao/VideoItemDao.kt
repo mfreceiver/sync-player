@@ -47,6 +47,9 @@ interface VideoItemDao {
     @Query("SELECT * FROM video_item")
     suspend fun getAll(): List<VideoItemEntity>
 
+    @Query("SELECT * FROM video_item WHERE syncRelationId = :relationId")
+    suspend fun getBySyncRelationId(relationId: Long): List<VideoItemEntity>
+
     @Upsert
     suspend fun upsert(item: VideoItemEntity): Long
 
@@ -62,6 +65,5 @@ interface VideoItemDao {
     @Query("DELETE FROM video_item")
     suspend fun deleteAll()
 
-    @Query("SELECT id FROM video_item ORDER BY fileName ASC")
-    suspend fun getAllIdsSorted(): List<Long>
+    suspend fun getBySyncRelationId(relationId: Long): List<VideoItemEntity>    suspend fun getAllIdsSorted(): List<Long>
 }
