@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.sync
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.model.SyncAction
@@ -15,8 +16,11 @@ import javax.inject.Inject
 @HiltViewModel
 class DeletePreviewViewModel @Inject constructor(
     private val syncEngine: SyncEngine,
-    private val playbackRepository: PlaybackRepository
+    private val playbackRepository: PlaybackRepository,
+    savedStateHandle: SavedStateHandle
 ) : ViewModel() {
+
+    private val relationId: Long = savedStateHandle.get<Long>("relationId") ?: 0L
 
     private val _toDelete = MutableStateFlow<List<SyncAction>>(emptyList())
     val toDelete: StateFlow<List<SyncAction>> = _toDelete.asStateFlow()
@@ -41,7 +45,7 @@ class DeletePreviewViewModel @Inject constructor(
             _isLoading.value = true
             _error.value = null
             try {
-                val (actions, errorMsg) = syncEngine.dryRunDelete()
+                val (actions, errorMsg) = syncEngine.dryRunDelete(relationId)
                 if (errorMsg != null) {
                     _error.value = errorMsg
                 }
@@ -58,7 +62,7 @@ class DeletePreviewViewModel @Inject constructor(
         viewModelScope.launch {
             _isDeleting.value = true
             try {
-                syncEngine.executeDelete(_toDelete.value)
+                syncEngine.executeDelete(relationId, _toDelete.value)
             } catch (e: Exception) {
                 _error.value = "删除失败: ${e.message}"
             } finally {

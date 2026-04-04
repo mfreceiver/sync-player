@@ -7,10 +7,12 @@ import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProgress
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
+import cn.vectory.syncplayer.data.model.SyncRelation
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
-import cn.vectory.syncplayer.data.repository.ServerConfigRepository
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.data.repository.SyncSourceRepository
+import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -25,7 +27,8 @@ import javax.inject.Singleton
 
 @Singleton
 class SyncEngine @Inject constructor(
-    private val serverConfigRepository: ServerConfigRepository,
+    private val syncSourceRepository: SyncSourceRepository,
+    private val syncRelationRepository: SyncRelationRepository,
     private val videoRepository: VideoRepository,
     private val playbackRepository: PlaybackRepository,
     private val syncLogRepository: SyncLogRepository,
@@ -38,28 +41,28 @@ class SyncEngine @Inject constructor(
     private val _progress = MutableStateFlow(SyncProgress())
     val progress: StateFlow<SyncProgress> = _progress.asStateFlow()
 
-    private val syncRootDir: File
-        get() = File(context.filesDir, "synced").also { it.mkdirs() }
+    private fun getLocalSyncRoot(relation: SyncRelation): File =
+        File(context.filesDir, relation.localBasePath).also { it.mkdirs() }
 
     private fun getClient(protocol: SyncProtocol): RemoteFileClient = when (protocol) {
         SyncProtocol.SMB -> smbFileClient
         SyncProtocol.SFTP -> sftpFileClient
     }
 
-    suspend fun dryRun(): Pair<List<SyncAction>, List<SyncAction>> {
-        val config = serverConfigRepository.getConfig()
-            ?: return Pair(emptyList(), emptyList())
+    suspend fun dryRun(relationId: Long): Pair<List<SyncAction>, List<SyncAction>> {
+        val relation = syncRelationRepository.getById(relationId) ?: return Pair(emptyList(), emptyList())
+        val source = syncSourceRepository.getById(relation.syncSourceId) ?: return Pair(emptyList(), emptyList())
+        val client = getClient(source.protocol)
 
-        val client = getClient(config.protocol)
         _progress.value = SyncProgress(phase = SyncPhase.SCANNING)
 
         val toDownload = mutableListOf<SyncAction>()
         val toDelete = mutableListOf<SyncAction>()
 
         try {
-            client.connect(config)
-            val remoteFiles = client.listFiles(config.remotePath)
-            val localVideos = videoRepository.getAll()
+            client.connect(source, relation.remotePath)
+            val remoteFiles = client.listFiles(relation.remotePath)
+            val localVideos = videoRepository.getBySyncRelationId(relationId)
             val localMap = localVideos.associateBy { it.relativePath }
 
             for (remoteFile in remoteFiles) {
@@ -133,11 +136,13 @@ class SyncEngine @Inject constructor(
     }
 
     suspend fun executeSync(
+        relationId: Long,
         toDownload: List<SyncAction>,
         toDelete: List<SyncAction>
     ): Boolean {
-        val config = serverConfigRepository.getConfig() ?: return false
-        val client = getClient(config.protocol)
+        val relation = syncRelationRepository.getById(relationId) ?: return false
+        val source = syncSourceRepository.getById(relation.syncSourceId) ?: return false
+        val client = getClient(source.protocol)
 
         val totalActions = toDownload.size + toDelete.size
         var completedActions = 0
@@ -150,7 +155,7 @@ class SyncEngine @Inject constructor(
         )
 
         try {
-            client.connect(config)
+            client.connect(source, relation.remotePath)
 
             for (action in toDownload) {
                 _progress.value = _progress.value.copy(
@@ -159,7 +164,8 @@ class SyncEngine @Inject constructor(
                     totalBytes = toDownload.sumOf { it.fileSize }
                 )
 
-                val localFile = File(syncRootDir, action.relativePath)
+                val localRoot = getLocalSyncRoot(relation)
+                val localFile = File(localRoot, action.relativePath)
                 val success = client.downloadFile(action.relativePath, localFile) { transferred, total ->
                     _progress.value = _progress.value.copy(
                         transferredBytes = totalBytesTransferred + transferred,
@@ -175,15 +181,14 @@ class SyncEngine @Inject constructor(
                         localAbsolutePath = localFile.absolutePath,
                         fileSize = action.fileSize,
                         remoteModifiedTime = action.remoteModifiedTime,
-                        dateSynced = System.currentTimeMillis()
+                        dateSynced = System.currentTimeMillis(),
+                        syncRelationId = relationId
                     )
                     videoRepository.upsert(entity)
-                    
                     val savedEntity = videoRepository.getByRelativePath(action.relativePath)
                     if (savedEntity != null) {
                         videoMetadataExtractor.extractAndSave(savedEntity)
                     }
-                    
                     syncLogRepository.log(
                         action = "DOWNLOAD",
                         relativePath = action.relativePath,
@@ -213,7 +218,8 @@ class SyncEngine @Inject constructor(
                 )
 
                 videoRepository.deleteByRelativePath(action.relativePath)
-                val localFile = File(syncRootDir, action.relativePath)
+                val localRoot = getLocalSyncRoot(relation)
+                val localFile = File(localRoot, action.relativePath)
                 if (localFile.exists()) localFile.delete()
                 
                 syncLogRepository.log(
@@ -234,16 +240,14 @@ class SyncEngine @Inject constructor(
                 transferredBytes = totalBytesTransferred
             )
 
-            serverConfigRepository.updateLastSync(
-                "成功：下载 ${toDownload.size} 个，删除 ${toDelete.size} 个"
-            )
+            syncRelationRepository.updateLastSync(relationId, "成功：下载 ${toDownload.size} 个，删除 ${toDelete.size} 个")
             return true
         } catch (e: Exception) {
             _progress.value = SyncProgress(
                 isRunning = false,
                 phase = SyncPhase.FAILED
             )
-            serverConfigRepository.updateLastSync("同步失败: ${e.message}")
+            syncRelationRepository.updateLastSync(relationId, "同步失败: ${e.message}")
             syncLogRepository.log(
                 action = "SYNC",
                 relativePath = "",
@@ -261,23 +265,23 @@ class SyncEngine @Inject constructor(
         _progress.value = SyncProgress()
     }
 
-    suspend fun dryRunDelete(): Pair<List<SyncAction>, String?> {
-        val config = serverConfigRepository.getConfig()
-            ?: return Pair(emptyList(), "未配置服务器")
-
-        val client = getClient(config.protocol)
+    suspend fun dryRunDelete(relationId: Long): Pair<List<SyncAction>, String?> {
+        val relation = syncRelationRepository.getById(relationId) ?: return Pair(emptyList(), "未找到关联")
+        val source = syncSourceRepository.getById(relation.syncSourceId) ?: return Pair(emptyList(), "未找到来源")
+        val client = getClient(source.protocol)
         _progress.value = SyncProgress(phase = SyncPhase.SCANNING)
 
         val toDelete = mutableListOf<SyncAction>()
 
         try {
-            client.connect(config)
-            val remoteFiles = client.listFiles(config.remotePath)
+            client.connect(source, relation.remotePath)
+            val remoteFiles = client.listFiles(relation.remotePath)
             val remoteMap = remoteFiles.filter { !it.isDirectory }.associateBy { it.path }
 
             val favorites = playbackRepository.getFavorites()
+            val localVideos = videoRepository.getBySyncRelationId(relationId)
             for (favorite in favorites) {
-                val videoItem = videoRepository.getById(favorite.videoItemId) ?: continue
+                val videoItem = localVideos.find { it.id == favorite.videoItemId } ?: continue
                 val localFile = File(videoItem.localAbsolutePath)
                 if (!localFile.exists()) continue
 
@@ -302,9 +306,10 @@ class SyncEngine @Inject constructor(
         }
     }
 
-    suspend fun executeDelete(actions: List<SyncAction>): Boolean {
-        val config = serverConfigRepository.getConfig() ?: return false
-        val client = getClient(config.protocol)
+    suspend fun executeDelete(relationId: Long, actions: List<SyncAction>): Boolean {
+        val relation = syncRelationRepository.getById(relationId) ?: return false
+        val source = syncSourceRepository.getById(relation.syncSourceId) ?: return false
+        val client = getClient(source.protocol)
 
         val totalActions = actions.size
         var completedActions = 0
@@ -316,7 +321,7 @@ class SyncEngine @Inject constructor(
         )
 
         try {
-            client.connect(config)
+            client.connect(source, relation.remotePath)
 
             for (action in actions) {
                 _progress.value = _progress.value.copy(
@@ -357,16 +362,14 @@ class SyncEngine @Inject constructor(
                 totalFiles = totalActions
             )
 
-            serverConfigRepository.updateLastSync(
-                "成功：删除 ${actions.size} 个文件"
-            )
+            syncRelationRepository.updateLastSync(relationId, "成功：删除 ${actions.size} 个文件")
             return true
         } catch (e: Exception) {
             _progress.value = SyncProgress(
                 isRunning = false,
                 phase = SyncPhase.FAILED
             )
-            serverConfigRepository.updateLastSync("删除失败: ${e.message}")
+            syncRelationRepository.updateLastSync(relationId, "删除失败: ${e.message}")
             syncLogRepository.log(
                 action = "DELETE_BOTH",
                 relativePath = "",

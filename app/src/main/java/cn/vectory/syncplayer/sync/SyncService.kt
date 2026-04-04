@@ -37,9 +37,11 @@ class SyncService : Service() {
             return START_NOT_STICKY
         }
 
+        val relationId = intent?.getLongExtra(EXTRA_RELATION_ID, 0L) ?: 0L
+
         syncJob?.cancel()
         syncJob = serviceScope.launch {
-            val (toDownload, toDelete) = syncEngine.dryRun()
+            val (toDownload, toDelete) = syncEngine.dryRun(relationId)
 
             _syncProgress.value = SyncProgress(
                 isRunning = true,
@@ -47,7 +49,7 @@ class SyncService : Service() {
                 totalFiles = toDownload.size + toDelete.size
             )
 
-            syncEngine.executeSync(toDownload, toDelete)
+            syncEngine.executeSync(relationId, toDownload, toDelete)
 
             _syncProgress.value = syncEngine.progress.value
             SyncNotificationHelper.updateNotification(this@SyncService, _syncProgress.value)
@@ -91,9 +93,11 @@ class SyncService : Service() {
 
     companion object {
         const val ACTION_CANCEL = "cn.vectory.syncplayer.ACTION_CANCEL_SYNC"
+        const val EXTRA_RELATION_ID = "relationId"
 
-        fun start(context: Context) {
+        fun start(context: Context, relationId: Long = 0L) {
             val intent = Intent(context, SyncService::class.java)
+            intent.putExtra(EXTRA_RELATION_ID, relationId)
             context.startForegroundService(intent)
         }
 
