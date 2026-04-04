@@ -6,6 +6,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import androidx.navigation.navOptions
 import cn.vectory.syncplayer.browser.BrowserScreen
 import cn.vectory.syncplayer.browser.BrowserViewModel
 import cn.vectory.syncplayer.player.PlayerScreen
@@ -33,22 +34,29 @@ fun AppNavHost() {
     ) {
         composable(Route.Browser.route) {
             val viewModel: BrowserViewModel = hiltViewModel()
+            val drawerNavOptions = navOptions {
+                popUpTo(Route.Browser.route) { inclusive = false }
+                launchSingleTop = true
+            }
             BrowserScreen(
                 viewModel = viewModel,
                 onNavigateToPlayer = { videoItemId ->
                     navController.navigate(Route.Player.create(videoItemId))
                 },
                 onNavigateToSyncSourceList = {
-                    navController.navigate(Route.SyncSourceList.route)
+                    navController.navigate(Route.SyncSourceList.route, drawerNavOptions)
                 },
                 onNavigateToSyncRelationList = {
-                    navController.navigate(Route.SyncRelationList.route)
+                    navController.navigate(Route.SyncRelationList.route, drawerNavOptions)
                 },
                 onNavigateToPlaybackSettings = {
-                    navController.navigate(Route.PlaybackSettings.route)
+                    navController.navigate(Route.PlaybackSettings.route, drawerNavOptions)
                 },
                 onNavigateToAbout = {
-                    navController.navigate(Route.About.route)
+                    navController.navigate(Route.About.route, drawerNavOptions)
+                },
+                onNavigateToSyncPreview = { relationId ->
+                    navController.navigate(Route.SyncPreview.create(relationId))
                 }
             )
         }

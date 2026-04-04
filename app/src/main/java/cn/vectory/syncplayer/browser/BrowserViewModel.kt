@@ -54,8 +54,18 @@ class BrowserViewModel @Inject constructor(
     private val playbackRecords = playbackRepository.getAllFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    private val basePaths = syncRelationRepository.getAllBasePathsFlow()
+    private val basePaths = syncRelationRepository.getAllWithSourceFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val basePathToRelationId = basePaths.map { list ->
+        list.associate { it.relation.localBasePath to it.relation.id }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    val currentRelationId: StateFlow<Long?> = combine(_currentFolder, basePathToRelationId) { folder, pathMap ->
+        pathMap.entries.firstOrNull { (basePath, _) ->
+            folder == basePath || folder.startsWith("$basePath/")
+        }?.value
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val browseItems: StateFlow<List<BrowseItem>> = combine(
         _currentFolder,
@@ -63,8 +73,9 @@ class BrowserViewModel @Inject constructor(
         _filter,
         playbackRecords,
         basePaths
-    ) { folder, mode, filterVal, records, bases ->
-        buildBrowseItems(folder, mode, filterVal, records, bases.toSet())
+    ) { folder, mode, filterVal, records, relations ->
+        val baseDirSet = relations.map { it.relation.localBasePath }.toSet()
+        buildBrowseItems(folder, mode, filterVal, records, baseDirSet)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private suspend fun buildBrowseItems(

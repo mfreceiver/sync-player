@@ -45,6 +45,7 @@ fun BrowserScreen(
     onNavigateToSyncRelationList: () -> Unit,
     onNavigateToPlaybackSettings: () -> Unit,
     onNavigateToAbout: () -> Unit,
+    onNavigateToSyncPreview: (relationId: Long) -> Unit,
 ) {
     val browseItems by viewModel.browseItems.collectAsState()
     val hasConfig by viewModel.hasConfig.collectAsState()
@@ -52,6 +53,7 @@ fun BrowserScreen(
     val filter by viewModel.filter.collectAsState()
     val folder by viewModel.currentFolder.collectAsState()
     val error by viewModel.error.collectAsState()
+    val currentRelationId by viewModel.currentRelationId.collectAsState()
 
     var showContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
     var showSortMenu by remember { mutableStateOf(false) }
@@ -153,6 +155,14 @@ fun BrowserScreen(
                         }
                     },
                     actions = {
+                        if (currentRelationId != null) {
+                            IconButton(onClick = { onNavigateToSyncPreview(currentRelationId!!) }) {
+                                Icon(
+                                    imageVector = Icons.Default.Sync,
+                                    contentDescription = "同步"
+                                )
+                            }
+                        }
                         IconButton(onClick = { showCreateFolderDialog = true }) {
                             Icon(
                                 imageVector = Icons.Default.CreateNewFolder,
@@ -162,7 +172,7 @@ fun BrowserScreen(
                         Box {
                             IconButton(onClick = { showSortMenu = true }) {
                                 Icon(
-                                    imageVector = Icons.Default.Reorder,
+                                    imageVector = Icons.AutoMirrored.Filled.Sort,
                                     contentDescription = "排序筛选"
                                 )
                             }
