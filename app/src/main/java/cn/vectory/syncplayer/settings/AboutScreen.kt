@@ -22,7 +22,6 @@ fun AboutScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
     onNavigateBack: () -> Unit
 ) {
-    val lastSyncTime by viewModel.lastSyncTime.collectAsStateWithLifecycle()
     val syncLogs by viewModel.syncLogs.collectAsStateWithLifecycle()
 
     var logViewerExpanded by remember { mutableStateOf(false) }
@@ -55,10 +54,6 @@ fun AboutScreen(
                         ListItem(
                             headlineContent = { Text("应用版本") },
                             trailingContent = { Text(BuildConfig.VERSION_NAME) }
-                        )
-                        ListItem(
-                            headlineContent = { Text("上次同步") },
-                            trailingContent = { Text(lastSyncTime ?: "从未同步") }
                         )
                     }
                 }

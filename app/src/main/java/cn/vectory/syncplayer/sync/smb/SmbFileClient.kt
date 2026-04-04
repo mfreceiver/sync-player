@@ -2,7 +2,6 @@ package cn.vectory.syncplayer.sync.smb
 
 import android.content.Context
 import cn.vectory.syncplayer.data.model.RemoteFile
-import cn.vectory.syncplayer.data.model.ServerConfig
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.sync.RemoteFileClient
 import jcifs.context.BaseContext
@@ -50,35 +49,6 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
         }
     }
 
-    override suspend fun connect(config: ServerConfig): Unit = withContext(Dispatchers.IO) {
-        try {
-            val props = Properties()
-            props.setProperty("jcifs.smb.client.minVersion", "SMB202")
-            props.setProperty("jcifs.smb.client.maxVersion", "SMB311")
-            props.setProperty("jcifs.smb.client.responseTimeout", "30000")
-            props.setProperty("jcifs.smb.client.soTimeout", "30000")
-
-            val bc = BaseContext(jcifs.config.PropertyConfiguration(props))
-            val authenticator = NtlmPasswordAuthenticator(null, config.username, config.password)
-            cifsContext = bc.withCredentials(authenticator)
-            currentHost = config.host
-
-            val pathParts = config.remotePath.trim('/').split("/")
-            shareName = pathParts.firstOrNull() ?: ""
-            subPath = pathParts.drop(1).joinToString("/")
-            val smbUrl = if (subPath.isNotEmpty()) {
-                "smb://${config.host}/${shareName}/${subPath}/"
-            } else {
-                "smb://${config.host}/${shareName}/"
-            }
-            val smbFile = SmbFile(smbUrl, cifsContext)
-            smbFile.listFiles()
-        } catch (e: Exception) {
-            cifsContext = null
-            throw Exception(smbErrorMessage(e, config.host), e)
-        }
-    }
-
     override suspend fun connect(source: SyncSource, remotePath: String): Unit = withContext(Dispatchers.IO) {
         try {
             val props = Properties()
@@ -108,17 +78,6 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
 
     override suspend fun disconnect() {
         cifsContext = null
-    }
-
-    override suspend fun testConnection(config: ServerConfig): Boolean {
-        try {
-            connect(config)
-            disconnect()
-            return true
-        } catch (e: Exception) {
-            disconnect()
-            throw e
-        }
     }
 
     override suspend fun testConnection(source: SyncSource, remotePath: String): Boolean {

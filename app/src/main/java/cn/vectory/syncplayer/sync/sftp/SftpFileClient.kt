@@ -2,7 +2,6 @@ package cn.vectory.syncplayer.sync.sftp
 
 import android.content.Context
 import cn.vectory.syncplayer.data.model.RemoteFile
-import cn.vectory.syncplayer.data.model.ServerConfig
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.sync.RemoteFileClient
 import kotlinx.coroutines.Dispatchers
@@ -31,21 +30,6 @@ class SftpFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context)
             else -> "SFTP连接失败: ${e.javaClass.simpleName}: ${e.message}"
         }
     }
-    override suspend fun connect(config: ServerConfig): Unit = withContext(Dispatchers.IO) {
-        try {
-            val client = SSHClient()
-            client.addHostKeyVerifier(PromiscuousVerifier())
-            client.connect(config.host, config.port)
-            client.authPassword(config.username, config.password)
-            sshClient = client
-            sftpClient = client.newSFTPClient()
-            remoteBasePath = (config.remotePath ?: "").trim()
-        } catch (e: Exception) {
-            sshClient = null
-            sftpClient = null
-            throw Exception(sftpErrorMessage(e, config.host), e)
-        }
-    }
     override suspend fun connect(source: SyncSource, remotePath: String): Unit = withContext(Dispatchers.IO) {
         try {
             val client = SSHClient()
@@ -69,22 +53,6 @@ class SftpFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context)
         }
         sftpClient = null
         sshClient = null
-    }
-    override suspend fun testConnection(config: ServerConfig): Boolean {
-        try {
-            connect(config)
-            val sftp = sftpClient ?: throw Exception("SFTP客户端初始化失败")
-            try {
-                sftp.ls(config.remotePath)
-            } catch (e: Exception) {
-                throw Exception("远程路径不可访问: ${config.remotePath} (${e.message})", e)
-            }
-            disconnect()
-            return true
-        } catch (e: Exception) {
-            disconnect()
-            throw e
-        }
     }
     override suspend fun testConnection(source: SyncSource, remotePath: String): Boolean {
         try {

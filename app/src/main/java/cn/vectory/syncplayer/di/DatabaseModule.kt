@@ -6,14 +6,12 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import cn.vectory.syncplayer.data.local.AppDatabase
 import cn.vectory.syncplayer.data.local.dao.PlaybackRecordDao
-import cn.vectory.syncplayer.data.local.dao.ServerConfigDao
 import cn.vectory.syncplayer.data.local.dao.SyncLogDao
 import cn.vectory.syncplayer.data.local.dao.SyncSourceDao
 import cn.vectory.syncplayer.data.local.dao.SyncRelationDao
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao
 import cn.vectory.syncplayer.data.local.dao.VideoMetadataCacheDao
 import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
-import cn.vectory.syncplayer.data.local.entity.ServerConfigEntity
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
 import cn.vectory.syncplayer.data.local.entity.SyncSourceEntity
 import cn.vectory.syncplayer.data.local.entity.SyncRelationEntity
@@ -44,9 +42,6 @@ object DatabaseModule {
         ).fallbackToDestructiveMigration()
             .build()
     }
-
-    @Provides
-    fun provideServerConfigDao(db: AppDatabase): ServerConfigDao = db.serverConfigDao()
 
     @Provides
     fun provideSyncSourceDao(db: AppDatabase): SyncSourceDao = db.syncSourceDao()
