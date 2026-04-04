@@ -9,7 +9,7 @@ import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
-import cn.vectory.syncplayer.data.repository.ServerConfigRepository
+import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.player.PlayerNavigationStore
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -23,7 +23,7 @@ import javax.inject.Inject
 class BrowserViewModel @Inject constructor(
     private val videoRepository: VideoRepository,
     private val playbackRepository: PlaybackRepository,
-    private val serverConfigRepository: ServerConfigRepository,
+    private val syncRelationRepository: SyncRelationRepository,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -44,35 +44,45 @@ class BrowserViewModel @Inject constructor(
     private val _filter = MutableStateFlow(globalFilter)
     val filter: StateFlow<BrowseFilter> = _filter.asStateFlow()
 
-    val hasConfig: StateFlow<Boolean> = serverConfigRepository.getConfigFlow()
-        .map { it != null }
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+
+    val hasConfig: StateFlow<Boolean> = syncRelationRepository.getAllWithSourceFlow()
+        .map { it.isNotEmpty() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     private val playbackRecords = playbackRepository.getAllFlow()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val basePaths = syncRelationRepository.getAllBasePathsFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val browseItems: StateFlow<List<BrowseItem>> = combine(
         _currentFolder,
         _sortMode,
         _filter,
-        playbackRecords
-    ) { folder, mode, filterVal, records ->
-        buildBrowseItems(folder, mode, filterVal, records)
+        playbackRecords,
+        basePaths
+    ) { folder, mode, filterVal, records, bases ->
+        buildBrowseItems(folder, mode, filterVal, records, bases.toSet())
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private suspend fun buildBrowseItems(
         folder: String,
         mode: SortMode,
         filterVal: BrowseFilter,
-        records: List<PlaybackRecordEntity>
+        records: List<PlaybackRecordEntity>,
+        baseDirSet: Set<String>
     ): List<BrowseItem> {
         val folders = videoRepository.getSubFolders(folder).first()
             .map { folderName ->
+                val fullPath = if (folder.isEmpty()) folderName else "$folder/$folderName"
                 BrowseItem(
                     videoItemId = null,
                     name = folderName,
-                    relativePath = if (folder.isEmpty()) folderName else "$folder/$folderName",
-                    isDirectory = true
+                    relativePath = fullPath,
+                    isDirectory = true,
+                    isSyncBaseDir = baseDirSet.contains(fullPath)
                 )
             }
 
@@ -139,6 +149,53 @@ class BrowserViewModel @Inject constructor(
     fun setFilter(filter: BrowseFilter) {
         globalFilter = filter
         _filter.value = filter
+    }
+
+    fun createFolder(parentPath: String, folderName: String) {
+        viewModelScope.launch {
+            val newDir = if (parentPath.isEmpty()) {
+                File(context.filesDir, folderName)
+            } else {
+                File(File(context.filesDir, parentPath), folderName)
+            }
+            if (newDir.exists()) {
+                _error.value = "文件夹已存在"
+                return@launch
+            }
+            if (!newDir.mkdirs()) {
+                _error.value = "创建文件夹失败"
+                return@launch
+            }
+            _currentFolder.value = _currentFolder.value
+        }
+    }
+
+    fun deleteFolder(path: String) {
+        viewModelScope.launch {
+            val dir = File(context.filesDir, path)
+            val isBase = syncRelationRepository.getByLocalBasePath(path) != null
+            if (isBase) {
+                _error.value = "同步基目录不能删除，请先删除对应的同步关系"
+                return@launch
+            }
+            if (!dir.exists() || !dir.isDirectory) {
+                _error.value = "文件夹不存在"
+                return@launch
+            }
+            if (dir.listFiles()?.isNotEmpty() == true) {
+                _error.value = "文件夹不为空，无法删除"
+                return@launch
+            }
+            if (!dir.delete()) {
+                _error.value = "删除文件夹失败"
+                return@launch
+            }
+            _currentFolder.value = _currentFolder.value
+        }
+    }
+
+    fun clearError() {
+        _error.value = null
     }
 
     companion object {

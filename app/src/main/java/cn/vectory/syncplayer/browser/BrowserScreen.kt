@@ -41,8 +41,8 @@ fun BrowserScreen(
     viewModel: BrowserViewModel = hiltViewModel(),
     currentFolder: String = "",
     onNavigateToPlayer: (videoItemId: Long) -> Unit,
-    onNavigateToServerConfig: () -> Unit,
-    onNavigateToSyncPreview: () -> Unit,
+    onNavigateToSyncSourceList: () -> Unit,
+    onNavigateToSyncRelationList: () -> Unit,
     onNavigateToPlaybackSettings: () -> Unit,
     onNavigateToAbout: () -> Unit,
 ) {
@@ -51,9 +51,12 @@ fun BrowserScreen(
     val sortMode by viewModel.sortMode.collectAsState()
     val filter by viewModel.filter.collectAsState()
     val folder by viewModel.currentFolder.collectAsState()
+    val error by viewModel.error.collectAsState()
 
     var showContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
     var showSortMenu by remember { mutableStateOf(false) }
+    var showCreateFolderDialog by remember { mutableStateOf(false) }
+    var showFolderContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
     val context = LocalContext.current
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -81,21 +84,21 @@ fun BrowserScreen(
                 Spacer(Modifier.height(8.dp))
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.Dns, contentDescription = null) },
-                    label = { Text("服务器配置") },
+                    label = { Text("同步源管理") },
                     selected = false,
                     onClick = {
                         scope.launch { drawerState.close() }
-                        onNavigateToServerConfig()
+                        onNavigateToSyncSourceList()
                     },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )
                 NavigationDrawerItem(
-                    icon = { Icon(Icons.Default.Sync, contentDescription = null) },
-                    label = { Text("文件同步") },
+                    icon = { Icon(Icons.Default.Link, contentDescription = null) },
+                    label = { Text("同步关系管理") },
                     selected = false,
                     onClick = {
                         scope.launch { drawerState.close() }
-                        onNavigateToSyncPreview()
+                        onNavigateToSyncRelationList()
                     },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )
@@ -150,6 +153,12 @@ fun BrowserScreen(
                         }
                     },
                     actions = {
+                        IconButton(onClick = { showCreateFolderDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Default.CreateNewFolder,
+                                contentDescription = "新建文件夹"
+                            )
+                        }
                         Box {
                             IconButton(onClick = { showSortMenu = true }) {
                                 Icon(
@@ -227,7 +236,8 @@ fun BrowserScreen(
                     if (item.isDirectory) {
                         FolderItem(
                             item = item,
-                            onClick = { viewModel.setFolder(item.relativePath) }
+                            onClick = { viewModel.setFolder(item.relativePath) },
+                            onLongClick = { showFolderContextMenu = item }
                         )
                     } else {
                         FileItem(
@@ -269,15 +279,10 @@ fun BrowserScreen(
                                     modifier = Modifier.size(48.dp)
                                 )
                                 Text(
-                                    text = if (!hasConfig) "尚未配置同步服务器" else "当前目录为空",
+                                    text = "当前目录为空",
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                if (!hasConfig) {
-                                    Button(onClick = onNavigateToServerConfig) {
-                                        Text("去配置")
-                                    }
-                                }
                             }
                         }
                     }
@@ -314,18 +319,87 @@ fun BrowserScreen(
             }
         )
     }
+
+    showFolderContextMenu?.let { item ->
+        AlertDialog(
+            onDismissRequest = { showFolderContextMenu = null },
+            title = { Text(item.name) },
+            confirmButton = {
+                TextButton(onClick = { showFolderContextMenu = null }) {
+                    Text("取消")
+                }
+            },
+            dismissButton = {
+                if (!item.isSyncBaseDir) {
+                    TextButton(
+                        onClick = {
+                            viewModel.deleteFolder(item.relativePath)
+                            showFolderContextMenu = null
+                        }
+                    ) {
+                        Text("删除", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        )
+    }
+
+    if (showCreateFolderDialog) {
+        var folderName by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showCreateFolderDialog = false },
+            title = { Text("新建文件夹") },
+            text = {
+                OutlinedTextField(
+                    value = folderName,
+                    onValueChange = { folderName = it },
+                    label = { Text("文件夹名称") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (folderName.isNotBlank()) {
+                            viewModel.createFolder(folder, folderName.trim())
+                            showCreateFolderDialog = false
+                        }
+                    },
+                    enabled = folderName.isNotBlank()
+                ) {
+                    Text("创建")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateFolderDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    error?.let {
+        LaunchedEffect(it) {
+            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+            viewModel.clearError()
+        }
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FolderItem(
     item: BrowseItem,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -339,6 +413,16 @@ private fun FolderItem(
                 tint = Color(0xFFFFB300),
                 modifier = Modifier.size(40.dp)
             )
+            if (item.isSyncBaseDir) {
+                Icon(
+                    imageVector = Icons.Default.Cloud,
+                    contentDescription = "同步基目录",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .size(14.dp)
+                        .align(Alignment.BottomEnd)
+                )
+            }
         }
 
         Spacer(Modifier.width(12.dp))
