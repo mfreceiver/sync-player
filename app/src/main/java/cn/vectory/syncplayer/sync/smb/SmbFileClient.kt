@@ -44,6 +44,7 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
                     msg.contains("logon failure", ignoreCase = true) ->
                         "SMB登录失败，请检查用户名和密码 ($msg)"
                     else -> "SMB错误: ${e.javaClass.simpleName}: $msg"
+                }
             }
             else -> "SMB连接失败: ${e.javaClass.simpleName}: ${e.message}"
         }
@@ -188,10 +189,54 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
         }
         result
     }
+    private fun listFilesRecursive(
+        ctx: jcifs.CIFSContext,
+        dir: SmbFile,
+        share: String,
+        remoteBasePath: String,
+        result: MutableList<RemoteFile>
+    ) {
+        val children = try {
+            dir.listFiles() ?: return
+        } catch (e: Exception) {
+            return
+        }
+
+        for (child in children) {
+            try {
+                if (child.isDirectory) {
+                    listFilesRecursive(ctx, child, share, remoteBasePath, result)
+                } else {
+                    val relPath = extractRelativePath(child.url.toString(), share, remoteBasePath)
+                    result.add(
+                        RemoteFile(
+                            path = relPath,
+                            name = child.name,
+                            isDirectory = false,
+                            size = child.contentLength.toLong(),
+                            lastModified = child.lastModified
+                        )
+                    )
+                }
+            } catch (_: Exception) { }
+        }
+    }
+
+    private fun extractRelativePath(smbUrl: String, share: String, remoteBasePath: String): String {
+        val marker = if (remoteBasePath.isNotEmpty()) {
+            "/$share/$remoteBasePath/"
+        } else {
+            "/$share/"
+        }
+        val idx = smbUrl.indexOf(marker)
+        if (idx < 0) return smbUrl.substringAfterLast('/')
+        return smbUrl.substring(idx + marker.length).trimEnd('/')
+    }
+
     override suspend fun downloadFile(
         remotePath: String,
         localFile: File,
-        onProgress: ((transferred: Long, total: Long) -> Unit)? = null
+        onProgress: ((transferred: Long, total: Long) -> Unit)?
     ): Boolean = withContext(Dispatchers.IO) {
         val ctx = cifsContext ?: throw Exception("SMB未连接，请先执行connect()")
         try {

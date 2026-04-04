@@ -164,7 +164,7 @@ class SftpFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context)
     override suspend fun downloadFile(
         remotePath: String,
         localFile: File,
-        onProgress: ((transferred: Long, total: Long) -> Unit)? = null
+        onProgress: ((transferred: Long, total: Long) -> Unit)?
     ): Boolean = withContext(Dispatchers.IO) {
         val sftp = sftpClient ?: throw Exception("SFTP未连接，请先执行connect()")
         try {

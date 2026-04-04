@@ -20,7 +20,7 @@ interface SyncSourceDao {
     @Query("SELECT COUNT(*) FROM sync_relation WHERE syncSourceId = :sourceId")
     suspend fun getRelationCount(sourceId: Long): Int
 
-    @Insert
+    @Upsert
     suspend fun upsert(source: SyncSourceEntity): Long
 
     @Query("DELETE FROM sync_source WHERE id = :id")

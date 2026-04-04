@@ -33,7 +33,7 @@ interface SyncRelationDao {
     @Query("SELECT localBasePath FROM sync_relation")
     fun getAllBasePathsFlow(): Flow<List<String>>
 
-    @Insert(entity = SyncRelationEntity): Long
+    @Upsert
     suspend fun upsert(relation: SyncRelationEntity): Long
 
     @Query("DELETE FROM sync_relation WHERE id = :id")

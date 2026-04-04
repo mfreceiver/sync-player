@@ -39,6 +39,4 @@ class VideoRepository @Inject constructor(
     suspend fun deleteAll() = videoItemDao.deleteAll()
 
     suspend fun getAllIdsSorted(): List<Long> = videoItemDao.getAllIdsSorted()
-
-    suspend fun getBySyncRelationId(relationId: Long): List<VideoItemEntity> = videoItemDao.getBySyncRelationId(relationId)
 }
