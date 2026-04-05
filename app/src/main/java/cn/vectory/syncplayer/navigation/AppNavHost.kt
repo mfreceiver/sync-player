@@ -81,13 +81,13 @@ fun AppNavHost(debugLogger: DebugLogger) {
             PlayerScreen(
                 viewModel = viewModel,
                 videoItemId = videoItemId,
-                onExit = { navController.popBackStack() }
+                onExit = { navController.popBackStack(Route.Browser.route, inclusive = false) }
             )
         }
 
         composable(Route.SyncSourceList.route) {
             SyncSourceListScreen(
-                onNavigateBack = { navController.popBackStack() },
+                onNavigateBack = { navController.popBackStack(Route.Browser.route, inclusive = false) },
                 onNavigateToEdit = { sourceId ->
                     navController.navigate(Route.SyncSourceEdit.create(sourceId))
                 },
@@ -104,13 +104,13 @@ fun AppNavHost(debugLogger: DebugLogger) {
             )
         ) {
             SyncSourceEditScreen(
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack(Route.Browser.route, inclusive = false) }
             )
         }
 
         composable(Route.SyncRelationList.route) {
             SyncRelationListScreen(
-                onNavigateBack = { navController.popBackStack() },
+                onNavigateBack = { navController.popBackStack(Route.Browser.route, inclusive = false) },
                 onNavigateToEdit = { relationId ->
                     navController.navigate(Route.SyncRelationEdit.create(relationId))
                 },
@@ -133,7 +133,7 @@ fun AppNavHost(debugLogger: DebugLogger) {
             )
         ) {
             SyncRelationEditScreen(
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack(Route.Browser.route, inclusive = false) }
             )
         }
 
@@ -146,7 +146,7 @@ fun AppNavHost(debugLogger: DebugLogger) {
             val viewModel: SyncPreviewViewModel = hiltViewModel()
             SyncPreviewScreen(
                 viewModel = viewModel,
-                onBack = { navController.popBackStack() },
+                onBack = { navController.popBackStack(Route.Browser.route, inclusive = false) },
             )
         }
 
@@ -159,7 +159,7 @@ fun AppNavHost(debugLogger: DebugLogger) {
             val viewModel: DeletePreviewViewModel = hiltViewModel()
             DeletePreviewScreen(
                 viewModel = viewModel,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack(Route.Browser.route, inclusive = false) }
             )
         }
 
@@ -167,7 +167,7 @@ fun AppNavHost(debugLogger: DebugLogger) {
             val viewModel: SettingsViewModel = hiltViewModel()
             PlaybackSettingsScreen(
                 viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack(Route.Browser.route, inclusive = false) }
             )
         }
 
@@ -175,7 +175,7 @@ fun AppNavHost(debugLogger: DebugLogger) {
             val viewModel: SettingsViewModel = hiltViewModel()
             AboutScreen(
                 viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack(Route.Browser.route, inclusive = false) }
             )
         }
     }
