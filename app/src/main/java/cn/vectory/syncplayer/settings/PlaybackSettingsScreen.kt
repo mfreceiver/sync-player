@@ -10,6 +10,10 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.data.model.OrientationPreference
+import android.content.Intent
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.FileProvider
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -19,6 +23,9 @@ fun PlaybackSettingsScreen(
 ) {
     val longPressSpeed by viewModel.longPressSpeed.collectAsStateWithLifecycle()
     val orientationPreference by viewModel.orientationPreference.collectAsStateWithLifecycle()
+    val debugMode by viewModel.debugMode.collectAsStateWithLifecycle()
+    val previousSummary by viewModel.previousSessionSummary.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -70,6 +77,66 @@ fun PlaybackSettingsScreen(
                             onClick = { viewModel.setOrientationPreference(OrientationPreference.FOLLOW_SYSTEM) },
                             label = { Text("按照系统方向") }
                         )
+                    }
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("调试模式", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                if (debugMode) "调试模式已启用" else "调试模式已关闭",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            if (!debugMode) {
+                                Text(
+                                    previousSummary,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Switch(
+                            checked = debugMode,
+                            onCheckedChange = { enabled ->
+                                if (enabled) viewModel.enableDebugMode() else viewModel.disableDebugMode()
+                            }
+                        )
+                    }
+                    if (!debugMode && previousSummary != "无上次调试记录") {
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = {
+                                val file = viewModel.exportPreviousLog()
+                                if (file != null && file.exists()) {
+                                    val uri = FileProvider.getUriForFile(
+                                        context,
+                                        "${context.packageName}.fileprovider",
+                                        file
+                                    )
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(shareIntent, "导出调试日志"))
+                                } else {
+                                    Toast.makeText(context, "无日志可导出", Toast.LENGTH_SHORT).show()
+                                }
+                            }) {
+                                Text("导出日志")
+                            }
+                            TextButton(onClick = { viewModel.clearPreviousLog() }) {
+                                Text("删除日志", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
                     }
                 }
             }

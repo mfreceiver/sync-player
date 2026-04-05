@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import cn.vectory.syncplayer.data.model.BrowseItem
 import kotlinx.coroutines.launch
+import cn.vectory.syncplayer.debug.DebugLogger
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -46,6 +47,7 @@ fun BrowserScreen(
     onNavigateToPlaybackSettings: () -> Unit,
     onNavigateToAbout: () -> Unit,
     onNavigateToSyncPreview: (relationId: Long) -> Unit,
+    debugLogger: DebugLogger,
 ) {
     val browseItems by viewModel.browseItems.collectAsState()
     val hasConfig by viewModel.hasConfig.collectAsState()
@@ -68,7 +70,12 @@ fun BrowserScreen(
         viewModel.setFolder(currentFolder)
     }
 
+    LaunchedEffect(Unit) {
+        debugLogger.log("Compose", "BrowserScreen composed")
+    }
+
     BackHandler(enabled = folder.isNotEmpty()) {
+        debugLogger.log("Nav", "Navigate up from folder: $folder")
         viewModel.navigateUp()
     }
 
@@ -129,9 +136,12 @@ fun BrowserScreen(
     ) {
         Scaffold(
             topBar = {
-                TopAppBar(
-                    navigationIcon = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                    TopAppBar(
+                        navigationIcon = {
+                        IconButton(onClick = {
+                            debugLogger.log("Drawer", "Opening drawer, folder=$folder")
+                            scope.launch { drawerState.open() }
+                        }) {
                             Icon(
                                 imageVector = Icons.Default.Menu,
                                 contentDescription = "菜单"
@@ -156,21 +166,30 @@ fun BrowserScreen(
                     },
                     actions = {
                         if (currentRelationId != null) {
-                            IconButton(onClick = { onNavigateToSyncPreview(currentRelationId!!) }) {
+                            IconButton(onClick = {
+                                debugLogger.log("Click", "Sync button clicked, relationId=$currentRelationId")
+                                onNavigateToSyncPreview(currentRelationId!!)
+                            }) {
                                 Icon(
                                     imageVector = Icons.Default.Sync,
                                     contentDescription = "同步"
                                 )
                             }
                         }
-                        IconButton(onClick = { showCreateFolderDialog = true }) {
+                        IconButton(onClick = {
+                            debugLogger.log("Click", "Create folder dialog opened")
+                            showCreateFolderDialog = true
+                        }) {
                             Icon(
                                 imageVector = Icons.Default.CreateNewFolder,
                                 contentDescription = "新建文件夹"
                             )
                         }
                         Box {
-                            IconButton(onClick = { showSortMenu = true }) {
+                            IconButton(onClick = {
+                                debugLogger.log("Click", "Sort menu opened")
+                                showSortMenu = true
+                            }) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.Sort,
                                     contentDescription = "排序筛选"
@@ -188,22 +207,22 @@ fun BrowserScreen(
                                 )
                                 DropdownMenuItem(
                                     text = { Text("按文件名 ↑") },
-                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_ASC); showSortMenu = false },
+                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_ASC); debugLogger.log("Click","Sort: FILENAME_ASC"); showSortMenu = false },
                                     trailingIcon = { if (sortMode == BrowserViewModel.SortMode.FILENAME_ASC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("按文件名 ↓") },
-                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_DESC); showSortMenu = false },
+                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_DESC); debugLogger.log("Click","Sort: FILENAME_DESC"); showSortMenu = false },
                                     trailingIcon = { if (sortMode == BrowserViewModel.SortMode.FILENAME_DESC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("按时长 ↑") },
-                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_ASC); showSortMenu = false },
+                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_ASC); debugLogger.log("Click","Sort: DURATION_ASC"); showSortMenu = false },
                                     trailingIcon = { if (sortMode == BrowserViewModel.SortMode.DURATION_ASC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("按时长 ↓") },
-                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_DESC); showSortMenu = false },
+                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_DESC); debugLogger.log("Click","Sort: DURATION_DESC"); showSortMenu = false },
                                     trailingIcon = { if (sortMode == BrowserViewModel.SortMode.DURATION_DESC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                                 HorizontalDivider()
@@ -215,17 +234,17 @@ fun BrowserScreen(
                                 )
                                 DropdownMenuItem(
                                     text = { Text("全部") },
-                                    onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.ALL); showSortMenu = false },
+                                    onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.ALL); debugLogger.log("Click","Filter: ALL"); showSortMenu = false },
                                     trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.ALL) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("仅视频") },
-                                    onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.VIDEO_ONLY); showSortMenu = false },
+                                    onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.VIDEO_ONLY); debugLogger.log("Click","Filter: VIDEO_ONLY"); showSortMenu = false },
                                     trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.VIDEO_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("仅喜欢") },
-                                    onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.FAVORITES_ONLY); showSortMenu = false },
+                                    onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.FAVORITES_ONLY); debugLogger.log("Click","Filter: FAVORITES_ONLY"); showSortMenu = false },
                                     trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.FAVORITES_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                             }
@@ -246,13 +265,17 @@ fun BrowserScreen(
                     if (item.isDirectory) {
                         FolderItem(
                             item = item,
-                            onClick = { viewModel.setFolder(item.relativePath) },
+                            onClick = {
+                                debugLogger.log("Click", "Open folder: ${item.relativePath}")
+                                viewModel.setFolder(item.relativePath)
+                            },
                             onLongClick = { showFolderContextMenu = item }
                         )
                     } else {
                         FileItem(
                             item = item,
                             onClick = {
+                                debugLogger.log("Click", "Open file: ${item.name}")
                                 if (isVideoFile(item.name)) {
                                     viewModel.setFolderVideoIdsForNavigation(viewModel.getFolderVideoIds())
                                     onNavigateToPlayer(item.videoItemId!!)

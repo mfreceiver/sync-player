@@ -2,4 +2,5 @@
 <paths>
     <files-path name="synced_videos" path="synced/" />
     <cache-path name="thumbnails" path="thumbnails/" />
+    <cache-path name="debug_export" path="." />
 </paths>

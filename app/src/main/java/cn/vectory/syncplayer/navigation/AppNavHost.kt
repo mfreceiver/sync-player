@@ -1,6 +1,8 @@
 package cn.vectory.syncplayer.navigation
 
 import androidx.compose.runtime.Composable
+import cn.vectory.syncplayer.debug.DebugLogger
+import androidx.compose.runtime.LaunchedEffect
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -25,8 +27,14 @@ import cn.vectory.syncplayer.sync.DeletePreviewViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
 
 @Composable
-fun AppNavHost() {
+fun AppNavHost(debugLogger: DebugLogger) {
     val navController = rememberNavController()
+
+    LaunchedEffect(Unit) {
+        navController.addOnDestinationChangedListener { _, destination, _ ->
+            debugLogger.log("Nav", "Navigate to: ${destination.route}")
+        }
+    }
 
     NavHost(
         navController = navController,
@@ -58,6 +66,7 @@ fun AppNavHost() {
                 onNavigateToSyncPreview = { relationId ->
                     navController.navigate(Route.SyncPreview.create(relationId))
                 }
+            , debugLogger = debugLogger
             )
         }
 
