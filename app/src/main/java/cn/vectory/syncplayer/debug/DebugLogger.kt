@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -34,6 +35,10 @@ class DebugLogger @Inject constructor(
     private val buffer = ConcurrentLinkedQueue<String>()
     private val _enabled = MutableStateFlow(false)
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
+
+    private val _logLines = MutableStateFlow<List<String>>(emptyList())
+    val logLines: StateFlow<List<String>> = _logLines.asStateFlow()
+    private val maxLogLines = 1000
 
     private var currentLogFile: File? = null
     private var previousLogFile: File? = null
@@ -71,6 +76,7 @@ class DebugLogger @Inject constructor(
         flush()
         flushJob?.cancel()
         flushJob = null
+        _logLines.value = emptyList()
     }
 
     fun log(tag: String, message: String) {
@@ -80,7 +86,20 @@ class DebugLogger @Inject constructor(
             val time = sdf.format(Date())
             val line = "$time | ${Thread.currentThread().name} | $tag | $message"
             buffer.add(line)
+            val current = _logLines.value
+            _logLines.value = if (current.size >= maxLogLines) {
+                current.takeLast(maxLogLines - 1) + line
+            } else {
+                current + line
+            }
         } catch (_: Exception) {
+        }
+    }
+
+    suspend fun getPreviousLogContent(): List<String> {
+        val file = previousLogFile ?: return emptyList()
+        return withContext(Dispatchers.IO) {
+            try { file.readLines() } catch (_: Exception) { emptyList() }
         }
     }
 

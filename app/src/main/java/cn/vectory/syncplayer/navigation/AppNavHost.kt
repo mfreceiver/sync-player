@@ -24,6 +24,7 @@ import cn.vectory.syncplayer.sync.SyncPreviewScreen
 import cn.vectory.syncplayer.sync.SyncPreviewViewModel
 import cn.vectory.syncplayer.sync.DeletePreviewScreen
 import cn.vectory.syncplayer.sync.DeletePreviewViewModel
+import cn.vectory.syncplayer.debug.DebugLogScreen
 import androidx.hilt.navigation.compose.hiltViewModel
 
 @Composable
@@ -167,6 +168,16 @@ fun AppNavHost(debugLogger: DebugLogger) {
             val viewModel: SettingsViewModel = hiltViewModel()
             PlaybackSettingsScreen(
                 viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack(Route.Browser.route, inclusive = false) },
+                onNavigateToDebugLog = {
+                    navController.navigate(Route.DebugLog.route)
+                }
+            )
+        }
+
+        composable(Route.DebugLog.route) {
+            DebugLogScreen(
+                debugLogger = debugLogger,
                 onNavigateBack = { navController.popBackStack(Route.Browser.route, inclusive = false) }
             )
         }

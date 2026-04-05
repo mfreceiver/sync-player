@@ -20,7 +20,8 @@ import androidx.core.content.FileProvider
 @Composable
 fun PlaybackSettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onNavigateToDebugLog: () -> Unit = {}
 ) {
     val longPressSpeed by viewModel.longPressSpeed.collectAsStateWithLifecycle()
     val orientationPreference by viewModel.orientationPreference.collectAsStateWithLifecycle()
@@ -114,6 +115,9 @@ fun PlaybackSettingsScreen(
                     if (!debugMode && previousSummary != "无上次调试记录") {
                         Spacer(Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = onNavigateToDebugLog) {
+                                Text("查看日志")
+                            }
                             OutlinedButton(onClick = {
                                 val file = viewModel.exportPreviousLog()
                                 if (file != null && file.exists()) {

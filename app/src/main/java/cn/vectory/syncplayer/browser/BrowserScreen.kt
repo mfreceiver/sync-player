@@ -102,8 +102,8 @@ fun BrowserScreen(
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )
                 NavigationDrawerItem(
-                    icon = { Icon(Icons.Default.Link, contentDescription = null) },
-                    label = { Text("同步关系管理") },
+                    icon = { Icon(Icons.Default.Sync, contentDescription = null) },
+                    label = { Text("同步") },
                     selected = false,
                     onClick = {
                         scope.launch { drawerState.close() }

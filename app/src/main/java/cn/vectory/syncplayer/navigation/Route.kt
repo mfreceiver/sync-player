@@ -22,5 +22,6 @@ sealed class Route(val route: String) {
         fun create(relationId: Long): String = "delete_preview/$relationId"
     }
     data object PlaybackSettings : Route("playback_settings")
+    data object DebugLog : Route("debug_log")
     data object About : Route("about")
 }
