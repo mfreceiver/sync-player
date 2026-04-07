@@ -77,6 +77,11 @@ class SyncPreviewViewModel @Inject constructor(
             _error.value = null
             try {
                 syncEngine.executeSync(relationId, _toDownload.value, _toDelete.value)
+                // Auto-refresh preview to show actual sync results
+                syncEngine.resetProgress()
+                val (downloads, deletes) = syncEngine.dryRun(relationId)
+                _toDownload.value = downloads
+                _toDelete.value = deletes
             } catch (e: Exception) {
                 _error.value = "同步失败: ${e.message}"
             } finally {

@@ -72,37 +72,52 @@ fun SyncPreviewScreen(
                         Text("取消")
                     }
                     Spacer(modifier = Modifier.width(8.dp))
-                    if (!previewLoaded) {
-                        Button(
-                            onClick = { viewModel.loadPreview() },
-                            enabled = !isLoading && !isSyncing && !isDeleting
-                        ) {
-                            if (isLoading) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            } else {
-                                Text("预览")
-                            }
-                        }
-                    } else {
-                        if (syncMode == SyncMode.DOWNLOAD) {
-                            Button(
-                                onClick = { viewModel.startSync() },
-                                enabled = !isSyncing && toDownload.isNotEmpty()
-                            ) {
-                                Text("确认下载")
-                            }
+                    Button(
+                        onClick = { viewModel.loadPreview() },
+                        enabled = !isLoading && !isSyncing && !isDeleting
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                         } else {
-                            Button(
-                                onClick = { viewModel.startDelete() },
-                                enabled = !isDeleting && toDelete.isNotEmpty(),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.error
-                                )
-                            ) {
+                            Text("预览")
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            if (syncMode == SyncMode.DOWNLOAD) {
+                                viewModel.startSync()
+                            } else {
+                                viewModel.startDelete()
+                            }
+                        },
+                        enabled = previewLoaded && !isSyncing && !isDeleting,
+                        colors = if (syncMode == SyncMode.DELETE) {
+                            ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error
+                            )
+                        } else {
+                            ButtonDefaults.buttonColors()
+                        }
+                    ) {
+                        if (isSyncing || isDeleting) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = if (syncMode == SyncMode.DOWNLOAD) {
+                                    MaterialTheme.colorScheme.onSurface
+                                } else {
+                                    MaterialTheme.colorScheme.onError
+                                }
+                            )
+                        } else {
+                            if (syncMode == SyncMode.DOWNLOAD) {
+                                Text("确认下载")
+                            } else {
                                 Text("确认删除")
                             }
                         }

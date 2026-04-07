@@ -42,11 +42,23 @@ class SyncEngine @Inject constructor(
     val progress: StateFlow<SyncProgress> = _progress.asStateFlow()
 
     private fun getLocalSyncRoot(relation: SyncRelation): File =
-        File(context.filesDir, relation.localBasePath).also { it.mkdirs() }
+        File(context.filesDir, relation.localBasePath.trimStart('/')).also { it.mkdirs() }
 
     private fun getClient(protocol: SyncProtocol): RemoteFileClient = when (protocol) {
         SyncProtocol.SMB -> smbFileClient
         SyncProtocol.SFTP -> sftpFileClient
+    }
+
+    private fun toLocalRelativePath(basePath: String, remoteRelPath: String): String {
+        return if (basePath.isNotEmpty()) "$basePath/$remoteRelPath" else remoteRelPath
+    }
+
+    private fun toPathUnderBase(basePath: String, localRelPath: String): String {
+        return if (basePath.isNotEmpty() && localRelPath.startsWith("$basePath/")) {
+            localRelPath.removePrefix("$basePath/")
+        } else {
+            localRelPath
+        }
     }
 
     suspend fun dryRun(relationId: Long): Pair<List<SyncAction>, List<SyncAction>> {
@@ -67,8 +79,9 @@ class SyncEngine @Inject constructor(
 
             for (remoteFile in remoteFiles) {
                 if (remoteFile.isDirectory) continue
-                val relPath = remoteFile.path
-                val local = localMap[relPath]
+                val remoteRelPath = remoteFile.path
+                val localRelPath = toLocalRelativePath(relation.localBasePath, remoteRelPath)
+                val local = localMap[localRelPath]
                 val needsDownload = local == null ||
                     remoteFile.size != local.fileSize ||
                     remoteFile.lastModified != (local.remoteModifiedTime ?: 0)
@@ -76,14 +89,14 @@ class SyncEngine @Inject constructor(
                 if (needsDownload) {
                     val action = SyncAction(
                         type = SyncActionType.DOWNLOAD,
-                        relativePath = relPath,
+                        relativePath = remoteRelPath,
                         fileSize = remoteFile.size,
                         remoteModifiedTime = remoteFile.lastModified
                     )
                     toDownload.add(action)
                     syncLogRepository.log(
                         action = "DOWNLOAD",
-                        relativePath = relPath,
+                        relativePath = localRelPath,
                         status = "PENDING",
                         dryRun = true,
                         fileSize = remoteFile.size
@@ -91,7 +104,7 @@ class SyncEngine @Inject constructor(
                 } else {
                     syncLogRepository.log(
                         action = "SKIP",
-                        relativePath = relPath,
+                        relativePath = localRelPath,
                         status = "SKIPPED",
                         dryRun = true,
                         fileSize = remoteFile.size
@@ -99,9 +112,11 @@ class SyncEngine @Inject constructor(
                 }
             }
 
-            val remotePaths = remoteFiles.filter { !it.isDirectory }.map { it.path }.toSet()
+            val remoteLocalPaths = remoteFiles.filter { !it.isDirectory }.map {
+                toLocalRelativePath(relation.localBasePath, it.path)
+            }.toSet()
             for (localVideo in localVideos) {
-                if (localVideo.relativePath !in remotePaths) {
+                if (localVideo.relativePath !in remoteLocalPaths) {
                     val action = SyncAction(
                         type = SyncActionType.DELETE_LOCAL,
                         relativePath = localVideo.relativePath,
@@ -166,6 +181,7 @@ class SyncEngine @Inject constructor(
 
                 val localRoot = getLocalSyncRoot(relation)
                 val localFile = File(localRoot, action.relativePath)
+                val localRelPath = toLocalRelativePath(relation.localBasePath, action.relativePath)
                 val success = client.downloadFile(action.relativePath, localFile) { transferred, total ->
                     _progress.value = _progress.value.copy(
                         transferredBytes = totalBytesTransferred + transferred,
@@ -176,7 +192,7 @@ class SyncEngine @Inject constructor(
                 if (success) {
                     totalBytesTransferred += action.fileSize
                     val entity = VideoItemEntity(
-                        relativePath = action.relativePath,
+                        relativePath = localRelPath,
                         fileName = action.relativePath.substringAfterLast("/"),
                         localAbsolutePath = localFile.absolutePath,
                         fileSize = action.fileSize,
@@ -185,13 +201,13 @@ class SyncEngine @Inject constructor(
                         syncRelationId = relationId
                     )
                     videoRepository.upsert(entity)
-                    val savedEntity = videoRepository.getByRelativePath(action.relativePath)
+                    val savedEntity = videoRepository.getByRelativePath(localRelPath)
                     if (savedEntity != null) {
                         videoMetadataExtractor.extractAndSave(savedEntity)
                     }
                     syncLogRepository.log(
                         action = "DOWNLOAD",
-                        relativePath = action.relativePath,
+                        relativePath = localRelPath,
                         status = "SUCCESS",
                         dryRun = false,
                         fileSize = action.fileSize
@@ -199,7 +215,7 @@ class SyncEngine @Inject constructor(
                 } else {
                     syncLogRepository.log(
                         action = "DOWNLOAD",
-                        relativePath = action.relativePath,
+                        relativePath = localRelPath,
                         status = "FAILED",
                         dryRun = false,
                         fileSize = action.fileSize,
@@ -218,8 +234,10 @@ class SyncEngine @Inject constructor(
                 )
 
                 videoRepository.deleteByRelativePath(action.relativePath)
+                val physicalRelPath = toPathUnderBase(relation.localBasePath, action.relativePath)
                 val localRoot = getLocalSyncRoot(relation)
-                val localFile = File(localRoot, action.relativePath)
+ 
+                val localFile = File(localRoot, physicalRelPath)
                 if (localFile.exists()) localFile.delete()
                 
                 syncLogRepository.log(
@@ -285,7 +303,8 @@ class SyncEngine @Inject constructor(
                 val localFile = File(videoItem.localAbsolutePath)
                 if (!localFile.exists()) continue
 
-                val remoteFile = remoteMap[videoItem.relativePath]
+                val remoteRelPath = toPathUnderBase(relation.localBasePath, videoItem.relativePath)
+                val remoteFile = remoteMap[remoteRelPath]
                 if (remoteFile != null && remoteFile.size == videoItem.fileSize) {
                     val action = SyncAction(
                         type = SyncActionType.DELETE_BOTH,
@@ -343,7 +362,8 @@ class SyncEngine @Inject constructor(
                     videoRepository.deleteByRelativePath(action.relativePath)
                 }
 
-                client.deleteFile(action.relativePath)
+                val remoteRelPath = toPathUnderBase(relation.localBasePath, action.relativePath)
+                client.deleteFile(remoteRelPath)
 
                 syncLogRepository.log(
                     action = "DELETE_BOTH",
