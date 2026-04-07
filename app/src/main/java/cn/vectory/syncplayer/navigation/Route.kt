@@ -1,9 +1,16 @@
 package cn.vectory.syncplayer.navigation
 
+import android.net.Uri
+
 sealed class Route(val route: String) {
-    data object Browser : Route("browser")
-    data object Player : Route("player/{videoItemId}") {
-        fun create(videoItemId: Long): String = "player/$videoItemId"
+    data object Browser : Route("browser?folder={folder}") {
+        fun create(folder: String = ""): String =
+            if (folder.isEmpty()) "browser?folder=" else "browser?folder=${Uri.encode(folder)}"
+    }
+    data object Player : Route("player/{videoItemId}?returnFolder={returnFolder}") {
+        fun create(videoItemId: Long, returnFolder: String = ""): String =
+            if (returnFolder.isEmpty()) "player/$videoItemId?returnFolder="
+            else "player/$videoItemId?returnFolder=${Uri.encode(returnFolder)}"
     }
     data object SyncSourceList : Route("sync_source_list")
     data object SyncSourceEdit : Route("sync_source_edit/{sourceId}") {

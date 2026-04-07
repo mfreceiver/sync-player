@@ -41,7 +41,13 @@ fun AppNavHost(debugLogger: DebugLogger) {
         navController = navController,
         startDestination = Route.Browser.route
     ) {
-        composable(Route.Browser.route) {
+        composable(
+            route = Route.Browser.route,
+            arguments = listOf(
+                navArgument("folder") { type = NavType.StringType; defaultValue = "" }
+            )
+        ) { backStackEntry ->
+            val folder = backStackEntry.arguments?.getString("folder") ?: ""
             val viewModel: BrowserViewModel = hiltViewModel()
             val drawerNavOptions = navOptions {
                 popUpTo(Route.Browser.route) { inclusive = false }
@@ -49,8 +55,10 @@ fun AppNavHost(debugLogger: DebugLogger) {
             }
             BrowserScreen(
                 viewModel = viewModel,
+                currentFolder = folder,
                 onNavigateToPlayer = { videoItemId ->
-                    navController.navigate(Route.Player.create(videoItemId))
+                    val currentFolder = viewModel.currentFolder.value
+                    navController.navigate(Route.Player.create(videoItemId, currentFolder))
                 },
                 onNavigateToSyncSourceList = {
                     navController.navigate(Route.SyncSourceList.route, drawerNavOptions)
@@ -74,15 +82,25 @@ fun AppNavHost(debugLogger: DebugLogger) {
         composable(
             route = Route.Player.route,
             arguments = listOf(
-                navArgument("videoItemId") { type = NavType.LongType }
+                navArgument("videoItemId") { type = NavType.LongType },
+                navArgument("returnFolder") { type = NavType.StringType; defaultValue = "" }
             )
         ) { backStackEntry ->
             val videoItemId = backStackEntry.arguments?.getLong("videoItemId") ?: return@composable
+            val returnFolder = backStackEntry.arguments?.getString("returnFolder") ?: ""
             val viewModel: PlayerViewModel = hiltViewModel()
             PlayerScreen(
                 viewModel = viewModel,
                 videoItemId = videoItemId,
-                onExit = { navController.popBackStack(Route.Browser.route, inclusive = false) }
+                onExit = {
+                    navController.navigate(
+                        Route.Browser.create(returnFolder),
+                        navOptions {
+                            popUpTo(Route.Browser.route) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    )
+                }
             )
         }
 

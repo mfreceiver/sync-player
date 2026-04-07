@@ -67,7 +67,9 @@ fun BrowserScreen(
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(currentFolder) {
-        viewModel.setFolder(currentFolder)
+        if (viewModel.currentFolder.value.isEmpty()) {
+            viewModel.setFolder(currentFolder)
+        }
     }
 
     LaunchedEffect(Unit) {
