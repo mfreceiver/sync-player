@@ -143,7 +143,7 @@ class BrowserViewModel @Inject constructor(
             SortMode.DURATION_ASC -> filteredVideos.sortedBy { it.duration ?: 0L }
             SortMode.DURATION_DESC -> filteredVideos.sortedByDescending { it.duration ?: 0L }
         }
-        return sortedFolders + sortedVideos
+        return (sortedFolders + sortedVideos).distinctBy { it.relativePath }
     }
 
     fun setFolder(folder: String) {
