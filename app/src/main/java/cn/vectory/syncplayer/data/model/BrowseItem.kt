@@ -20,5 +20,6 @@ data class BrowseItem(
     val playbackDuration: Long = 0,
     val isCompleted: Boolean = false,
     val isFavorite: Boolean = false,
-    val isSyncBaseDir: Boolean = false
+    val isSyncBaseDir: Boolean = false,
+    val containsSyncBaseDir: Boolean = false
 )

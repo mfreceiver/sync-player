@@ -105,7 +105,8 @@ class BrowserViewModel @Inject constructor(
                 name = folderName,
                 relativePath = fullPath,
                 isDirectory = true,
-                isSyncBaseDir = baseDirSet.contains(fullPath)
+                isSyncBaseDir = baseDirSet.contains(fullPath),
+                containsSyncBaseDir = baseDirSet.any { it.startsWith("$fullPath/") }
             )
         }
 
@@ -201,18 +202,21 @@ class BrowserViewModel @Inject constructor(
                 _error.value = "同步基目录不能删除，请先删除对应的同步关系"
                 return@launch
             }
+            val allBasePaths = syncRelationRepository.getAllBasePaths()
+            val hasDescendantBase = allBasePaths.any { basePath ->
+                basePath.startsWith("$path/")
+            }
+            if (hasDescendantBase) {
+                _error.value = "文件夹内包含同步基目录，请先删除对应的同步关系"
+                return@launch
+            }
             if (!dir.exists() || !dir.isDirectory) {
                 _error.value = "文件夹不存在"
                 return@launch
             }
-            if (dir.listFiles()?.isNotEmpty() == true) {
-                _error.value = "文件夹不为空，无法删除"
-                return@launch
-            }
-            if (!dir.delete()) {
-                _error.value = "删除文件夹失败"
-                return@launch
-            }
+            videoRepository.deleteByFolderPath(path)
+            playbackRepository.deleteByFolderPath(path)
+            dir.deleteRecursively()
             _currentFolder.value = _currentFolder.value
         }
     }

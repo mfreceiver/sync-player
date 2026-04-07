@@ -28,6 +28,13 @@ interface PlaybackRecordDao {
     suspend fun deleteByVideoId(videoItemId: Long)
 
     @Query("""
+        DELETE FROM playback_record WHERE videoItemId IN (
+            SELECT id FROM video_item WHERE relativePath LIKE :folderPath || '/%'
+        )
+    """)
+    suspend fun deleteByFolderPath(folderPath: String)
+
+    @Query("""
         UPDATE playback_record 
         SET isCompleted = :completed 
         WHERE videoItemId = :videoItemId

@@ -11,11 +11,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -244,8 +244,8 @@ fun PlayerScreen(
                         val isFavorite = playbackRecord?.isFavorite ?: false
                         IconButton(onClick = { viewModel.toggleFavorite() }) {
                             Icon(
-                                imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                                contentDescription = if (isFavorite) "取消喜欢" else "喜欢",
+                                imageVector = if (isFavorite) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
+                                contentDescription = if (isFavorite) "取消预删除" else "预删除",
                                 tint = if (isFavorite) Color(0xFFFF4081) else Color.White
                             )
                         }

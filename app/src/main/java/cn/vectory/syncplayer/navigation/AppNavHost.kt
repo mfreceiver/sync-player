@@ -87,19 +87,12 @@ fun AppNavHost(debugLogger: DebugLogger) {
             )
         ) { backStackEntry ->
             val videoItemId = backStackEntry.arguments?.getLong("videoItemId") ?: return@composable
-            val returnFolder = backStackEntry.arguments?.getString("returnFolder") ?: ""
             val viewModel: PlayerViewModel = hiltViewModel()
             PlayerScreen(
                 viewModel = viewModel,
                 videoItemId = videoItemId,
                 onExit = {
-                    navController.navigate(
-                        Route.Browser.create(returnFolder),
-                        navOptions {
-                            popUpTo(Route.Browser.route) { inclusive = true }
-                            launchSingleTop = true
-                        }
-                    )
+                    navController.popBackStack(Route.Browser.route, inclusive = false)
                 }
             )
         }

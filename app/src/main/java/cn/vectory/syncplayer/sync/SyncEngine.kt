@@ -305,7 +305,7 @@ class SyncEngine @Inject constructor(
 
                 val remoteRelPath = toPathUnderBase(relation.localBasePath, videoItem.relativePath)
                 val remoteFile = remoteMap[remoteRelPath]
-                if (remoteFile != null && remoteFile.size == videoItem.fileSize) {
+                if (remoteFile != null) {
                     val action = SyncAction(
                         type = SyncActionType.DELETE_BOTH,
                         relativePath = videoItem.relativePath,

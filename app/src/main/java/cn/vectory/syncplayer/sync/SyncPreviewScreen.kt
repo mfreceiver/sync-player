@@ -11,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import cn.vectory.syncplayer.data.model.SyncAction
@@ -196,8 +197,13 @@ fun SyncPreviewScreen(
                         .padding(paddingValues)
                 ) {
                     if (isSyncing) {
-                        LinearProgressIndicator(
-                            modifier = Modifier.fillMaxWidth()
+                        SyncProgressCard(
+                            completedFiles = progress.completedFiles,
+                            totalFiles = progress.totalFiles,
+                            transferredBytes = progress.transferredBytes,
+                            totalBytes = progress.totalBytes,
+                            currentFileName = progress.currentFileName,
+                            currentFileProgress = progress.currentFileProgress
                         )
                     }
                     if (syncMode == SyncMode.DOWNLOAD) {
@@ -277,7 +283,7 @@ private fun SyncDeleteSummaryCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "$count 个喜欢的文件将从本地和远端同时删除 (${formatFileSize(totalSize)})",
+                text = "$count 个预删除文件将从本地和远端同时删除 (${formatFileSize(totalSize)})",
                 style = MaterialTheme.typography.bodyMedium
             )
         }
@@ -358,5 +364,97 @@ private fun formatFileSize(bytes: Long): String {
         bytes >= 1024L * 1024 -> "%.0f MB".format(bytes / (1024.0 * 1024))
         bytes >= 1024L -> "%.1f KB".format(bytes / 1024.0)
         else -> "$bytes B"
+    }
+}
+
+@Composable
+private fun SyncProgressCard(
+    completedFiles: Int,
+    totalFiles: Int,
+    transferredBytes: Long,
+    totalBytes: Long,
+    currentFileName: String,
+    currentFileProgress: Float
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            val overallProgress = if (totalFiles > 0) completedFiles.toFloat() / totalFiles else 0f
+            LinearProgressIndicator(
+                progress = { overallProgress },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                val remaining = totalFiles - completedFiles
+                Text(
+                    text = "已完成 $completedFiles / $totalFiles 个文件",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "剩余 $remaining 个",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "${formatFileSize(transferredBytes)} / ${formatFileSize(totalBytes)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (totalBytes > 0) {
+                    Text(
+                        text = "%.0f%%".format(transferredBytes.toDouble() / totalBytes * 100),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (currentFileName.isNotEmpty()) {
+                HorizontalDivider()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CircularProgressIndicator(
+                        progress = { currentFileProgress },
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Text(
+                        text = currentFileName.substringAfterLast('/'),
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (currentFileProgress > 0) {
+                        Text(
+                            text = "%.0f%%".format(currentFileProgress * 100),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+        }
     }
 }

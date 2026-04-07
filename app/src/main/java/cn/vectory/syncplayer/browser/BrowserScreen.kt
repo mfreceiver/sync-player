@@ -245,7 +245,7 @@ fun BrowserScreen(
                                     trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.VIDEO_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("仅喜欢") },
+                                    text = { Text("仅预删除") },
                                     onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.FAVORITES_ONLY); debugLogger.log("Click","Filter: FAVORITES_ONLY"); showSortMenu = false },
                                     trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.FAVORITES_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
@@ -373,7 +373,7 @@ fun BrowserScreen(
                 }
             },
             dismissButton = {
-                if (!item.isSyncBaseDir) {
+                if (!item.isSyncBaseDir && !item.containsSyncBaseDir) {
                     TextButton(
                         onClick = {
                             viewModel.deleteFolder(item.relativePath)

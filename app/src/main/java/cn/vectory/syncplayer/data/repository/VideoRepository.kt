@@ -38,5 +38,8 @@ class VideoRepository @Inject constructor(
 
     suspend fun deleteAll() = videoItemDao.deleteAll()
 
+    suspend fun deleteByFolderPath(folderPath: String) =
+        videoItemDao.deleteByFolderPath(folderPath)
+
     suspend fun getAllIdsSorted(): List<Long> = videoItemDao.getAllIdsSorted()
 }

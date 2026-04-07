@@ -75,4 +75,7 @@ class PlaybackRepository @Inject constructor(
 
     suspend fun deleteByVideoId(videoItemId: Long) =
         playbackRecordDao.deleteByVideoId(videoItemId)
+
+    suspend fun deleteByFolderPath(folderPath: String) =
+        playbackRecordDao.deleteByFolderPath(folderPath)
 }

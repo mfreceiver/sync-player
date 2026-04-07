@@ -90,7 +90,7 @@ fun DeletePreviewScreen(
                     ) {
                         CircularProgressIndicator()
                         Text(
-                            text = "正在扫描喜欢的文件...",
+                            text = "正在扫描预删除文件...",
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -216,7 +216,7 @@ private fun DeleteSummaryCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "$count 个喜欢的文件将从本地和远端同时删除 (${formatDeleteFileSize(totalSize)})",
+                text = "$count 个预删除文件将从本地和远端同时删除 (${formatDeleteFileSize(totalSize)})",
                 style = MaterialTheme.typography.bodyMedium
             )
         }

@@ -59,9 +59,18 @@ class SyncPreviewViewModel @Inject constructor(
             _previewLoaded.value = false
             try {
                 syncEngine.resetProgress()
-                val (downloads, deletes) = syncEngine.dryRun(relationId)
-                _toDownload.value = downloads
-                _toDelete.value = deletes
+                if (_syncMode.value == SyncMode.DELETE) {
+                    val (actions, errMsg) = syncEngine.dryRunDelete(relationId)
+                    if (errMsg != null) {
+                        _error.value = errMsg
+                    }
+                    _toDownload.value = emptyList()
+                    _toDelete.value = actions
+                } else {
+                    val (downloads, deletes) = syncEngine.dryRun(relationId)
+                    _toDownload.value = downloads
+                    _toDelete.value = deletes
+                }
                 _previewLoaded.value = true
             } catch (e: Exception) {
                 _error.value = "加载预览失败: ${e.message}"
