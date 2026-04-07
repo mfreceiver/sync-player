@@ -96,7 +96,7 @@ class BrowserViewModel @Inject constructor(
             ?.toSet()
             ?: emptySet()
 
-        val allFolderNames = (dbFolderNames + physicalFolderNames).sortedBy { it.lowercase() }
+        val allFolderNames = (dbFolderNames.toSet() + physicalFolderNames).sortedBy { it.lowercase() }
 
         val folders = allFolderNames.map { folderName ->
             val fullPath = if (folder.isEmpty()) folderName else "$folder/$folderName"

@@ -207,7 +207,7 @@ fun SyncRelationEditScreen(
 
     // Local browser dialog (multi-level)
     if (showLocalBrowser) {
-        var newFolderName by remember { mutableStateOf("") }
+        var showCreateFolderDialog by remember { mutableStateOf(false) }
 
         AlertDialog(
             onDismissRequest = { showLocalBrowser = false },
@@ -215,8 +215,9 @@ fun SyncRelationEditScreen(
             text = {
                 Column {
                     Text(
-                        "当前路径: /${currentLocalPath}",
-                        style = MaterialTheme.typography.bodySmall
+                        "当前路径: /${if (currentLocalPath.isEmpty()) "" else currentLocalPath}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(8.dp))
 
@@ -237,30 +238,18 @@ fun SyncRelationEditScreen(
                         }
                     }
 
-                    Spacer(Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedButton(
+                        onClick = { showCreateFolderDialog = true },
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        OutlinedTextField(
-                            value = newFolderName,
-                            onValueChange = { newFolderName = it },
-                            placeholder = { Text("新文件夹名", color = PlaceholderColor) },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true
+                        Icon(
+                            Icons.Filled.CreateNewFolder,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
                         )
-                        IconButton(
-                            onClick = {
-                                if (newFolderName.isNotBlank()) {
-                                    viewModel.createLocalFolder(newFolderName.trim())
-                                    newFolderName = ""
-                                }
-                            },
-                            enabled = newFolderName.isNotBlank()
-                        ) {
-                            Icon(Icons.Filled.CreateNewFolder, contentDescription = "新建")
-                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text("新建文件夹")
                     }
                 }
             },
@@ -278,5 +267,40 @@ fun SyncRelationEditScreen(
                 }
             }
         )
+
+        if (showCreateFolderDialog) {
+            var newFolderName by remember { mutableStateOf("") }
+            AlertDialog(
+                onDismissRequest = { showCreateFolderDialog = false },
+                title = { Text("新建文件夹") },
+                text = {
+                    OutlinedTextField(
+                        value = newFolderName,
+                        onValueChange = { newFolderName = it },
+                        label = { Text("文件夹名称") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            if (newFolderName.isNotBlank()) {
+                                viewModel.createLocalFolder(newFolderName.trim())
+                            }
+                            showCreateFolderDialog = false
+                        },
+                        enabled = newFolderName.isNotBlank()
+                    ) {
+                        Text("创建")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCreateFolderDialog = false }) {
+                        Text("取消")
+                    }
+                }
+            )
+        }
     }
 }
