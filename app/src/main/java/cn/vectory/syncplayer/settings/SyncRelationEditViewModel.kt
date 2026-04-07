@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.settings
 
+import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -12,6 +13,7 @@ import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -23,6 +25,7 @@ class SyncRelationEditViewModel @Inject constructor(
     private val syncSourceRepository: SyncSourceRepository,
     private val smbFileClient: SmbFileClient,
     private val sftpFileClient: SftpFileClient,
+    @ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -51,6 +54,9 @@ class SyncRelationEditViewModel @Inject constructor(
 
     private val _isBrowsingRemote = MutableStateFlow(false)
     val isBrowsingRemote = _isBrowsingRemote.asStateFlow()
+
+    private val _localDirectories = MutableStateFlow<List<String>>(emptyList())
+    val localDirectories = _localDirectories.asStateFlow()
 
     private val _isSaving = MutableStateFlow(false)
     val isSaving = _isSaving.asStateFlow()
@@ -87,7 +93,24 @@ class SyncRelationEditViewModel @Inject constructor(
     fun setLocalBasePath(value: String) {
         _localBasePath.value = value
     }
+    fun setRemotePath(value: String) {
+        _remotePath.value = value
+    }
     fun selectSource(id: Long) { _selectedSourceId.value = id }
+
+    fun browseLocalDirectories() {
+        val filesDir = context.filesDir
+        val dirs = filesDir.listFiles()
+            ?.filter { it.isDirectory }
+            ?.map { it.name }
+            ?.sorted()
+            ?: emptyList()
+        _localDirectories.value = dirs
+    }
+
+    fun selectLocalDirectory(name: String) {
+        _localBasePath.value = name
+    }
 
     fun browseRemote() {
         viewModelScope.launch {

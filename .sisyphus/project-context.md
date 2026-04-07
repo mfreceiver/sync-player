@@ -43,17 +43,22 @@ export JAVA_HOME=/home/mar/android-studio/jbr   # Android Studio bundled JBR (Op
 export ANDROID_HOME=/home/mar/android-sdk   # SDK: build-tools 35.0.x, platform android-35
 ```
 
+### Quick Compile Check (fast, no APK output)
+```bash
+# From project root /home/mar/sync-player
+JAVA_HOME=/home/mar/android-studio/jbr ANDROID_HOME=/home/mar/android-sdk ./gradlew compileDebugKotlin
+```
+
 ### Build Debug APK
 ```bash
 # From project root /home/mar/sync-player
-./gradlew assembleDebug --no-daemon
+JAVA_HOME=/home/mar/android-studio/jbr ANDROID_HOME=/home/mar/android-sdk ./gradlew assembleDebug --no-daemon
 # Output: app/build/outputs/apk/debug/app-debug.apk (~74MB)
 ```
 
 ### Build Release APK (signed)
 ```bash
-# Debug keystore password: android
-./gradlew assembleRelease --no-daemon
+JAVA_HOME=/home/mar/android-studio/jbr ANDROID_HOME=/home/mar/android-sdk ./gradlew assembleRelease --no-daemon
 # Output: app/build/outputs/apk/release/app-release-unsigned.apk
 
 # Sign with debug key
@@ -68,7 +73,7 @@ mv app/build/outputs/apk/release/app-release-unsigned.apk \
    app/build/outputs/apk/release/app-release.apk
 ```
 
-**No Kotlin LSP is installed in this environment.** The Gradle build IS the syntax/type verification — always run `assembleDebug` after code changes.
+**No Kotlin LSP is installed in this environment.** The Gradle build IS the syntax/type verification — always run `compileDebugKotlin` (fast) or `assembleDebug` (full APK) after code changes.
 
 ---
 

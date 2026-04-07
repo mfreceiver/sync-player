@@ -60,16 +60,24 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
             val authenticator = NtlmPasswordAuthenticator(null, source.username, source.password)
             cifsContext = bc.withCredentials(authenticator)
             currentHost = source.host
-            val pathParts = remotePath.trim('/').split("/")
-            shareName = pathParts.firstOrNull() ?: ""
-            subPath = pathParts.drop(1).joinToString("/")
-            val smbUrl = if (subPath.isNotEmpty()) {
-                "smb://${source.host}/${shareName}/${subPath}/"
+            val trimmedPath = remotePath.trim('/').ifEmpty { "/" }
+            if (trimmedPath == "/") {
+                shareName = ""
+                subPath = ""
+                val smbFile = SmbFile("smb://${source.host}/", cifsContext)
+                smbFile.listFiles()
             } else {
-                "smb://${source.host}/${shareName}/"
+                val pathParts = trimmedPath.split("/")
+                shareName = pathParts.firstOrNull() ?: ""
+                subPath = pathParts.drop(1).joinToString("/")
+                val smbUrl = if (subPath.isNotEmpty()) {
+                    "smb://${source.host}/${shareName}/${subPath}/"
+                } else {
+                    "smb://${source.host}/${shareName}/"
+                }
+                val smbFile = SmbFile(smbUrl, cifsContext)
+                smbFile.listFiles()
             }
-            val smbFile = SmbFile(smbUrl, cifsContext)
-            smbFile.listFiles()
         } catch (e: Exception) {
             cifsContext = null
             throw Exception(smbErrorMessage(e, source.host), e)
@@ -110,10 +118,49 @@ class SmbFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) 
         result
     }
 
-    override suspend fun listDirectories(path: String): List<RemoteFile> = withContext(Dispatchers.IO) {
+    /**
+     * List SMB shares available on the host.
+     * Uses `smb://host/` URL which returns share entries via IPC$ enumeration.
+     */
+    suspend fun listShares(): List<RemoteFile> = withContext(Dispatchers.IO) {
         val ctx = cifsContext ?: throw Exception("SMB未连接，请先执行connect()")
         val result = mutableListOf<RemoteFile>()
-        val pathParts = path.trim('/').split("/")
+        val smbFile = SmbFile("smb://$currentHost/", ctx)
+        val shares = try {
+            smbFile.listFiles() ?: return@withContext result
+        } catch (e: Exception) {
+            return@withContext result
+        }
+        for (share in shares) {
+            try {
+                if (share.isDirectory) {
+                    val name = share.name.trimEnd('/')
+                    result.add(
+                        RemoteFile(
+                            path = name,
+                            name = name,
+                            isDirectory = true,
+                            size = 0,
+                            lastModified = share.lastModified
+                        )
+                    )
+                }
+            } catch (_: Exception) { }
+        }
+        result
+    }
+
+    override suspend fun listDirectories(path: String): List<RemoteFile> = withContext(Dispatchers.IO) {
+        val ctx = cifsContext ?: throw Exception("SMB未连接，请先执行connect()")
+
+        // Root path "/" means we should list SMB shares, not file-system directories
+        val trimmedPath = path.trim('/')
+        if (trimmedPath.isEmpty()) {
+            return@withContext listShares()
+        }
+
+        val result = mutableListOf<RemoteFile>()
+        val pathParts = trimmedPath.split("/")
         val share = pathParts.firstOrNull() ?: ""
         val remoteSubPath = pathParts.drop(1).joinToString("/")
         val smbUrl = if (remoteSubPath.isNotEmpty()) {

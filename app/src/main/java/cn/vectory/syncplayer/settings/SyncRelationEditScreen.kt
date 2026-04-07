@@ -13,9 +13,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
+private val PlaceholderColor = Color(0xFF9E9E9E)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -30,11 +31,13 @@ fun SyncRelationEditScreen(
     val localBasePath by viewModel.localBasePath.collectAsStateWithLifecycle()
     val remoteDirs by viewModel.remoteDirectories.collectAsStateWithLifecycle()
     val currentPath by viewModel.currentRemoteBrowsePath.collectAsStateWithLifecycle()
+    val localDirs by viewModel.localDirectories.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
     val saveResult by viewModel.saveResult.collectAsStateWithLifecycle()
 
     var showRemoteBrowser by remember { mutableStateOf(false) }
+    var showLocalBrowser by remember { mutableStateOf(false) }
     var sourceExpanded by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -60,7 +63,7 @@ fun SyncRelationEditScreen(
                 value = name,
                 onValueChange = { viewModel.setName(it) },
                 label = { Text("友好名称") },
-                placeholder = { Text("电影同步") },
+                placeholder = { Text("电影同步", color = PlaceholderColor) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
@@ -97,11 +100,10 @@ fun SyncRelationEditScreen(
             ) {
                 OutlinedTextField(
                     value = remotePath,
-                    onValueChange = {},
+                    onValueChange = { viewModel.setRemotePath(it) },
                     label = { Text("远端目录") },
-                    placeholder = { Text("/share/电影") },
+                    placeholder = { Text("/share/电影", color = PlaceholderColor) },
                     modifier = Modifier.weight(1f),
-                    readOnly = true,
                     singleLine = true
                 )
                 IconButton(onClick = {
@@ -112,14 +114,26 @@ fun SyncRelationEditScreen(
                 }
             }
 
-            OutlinedTextField(
-                value = localBasePath,
-                onValueChange = { viewModel.setLocalBasePath(it) },
-                label = { Text("本地基目录") },
-                placeholder = { Text("动作片") },
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = localBasePath,
+                    onValueChange = { viewModel.setLocalBasePath(it) },
+                    label = { Text("本地基目录") },
+                    placeholder = { Text("动作片", color = PlaceholderColor) },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    readOnly = true
+                )
+                IconButton(onClick = {
+                    showLocalBrowser = true
+                    viewModel.browseLocalDirectories()
+                }) {
+                    Icon(Icons.Filled.FolderOpen, contentDescription = "选择本地目录")
+                }
+            }
 
             Text(
                 "基目录不能互相嵌套",
@@ -186,6 +200,70 @@ fun SyncRelationEditScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showRemoteBrowser = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    if (showLocalBrowser) {
+        AlertDialog(
+            onDismissRequest = { showLocalBrowser = false },
+            title = { Text("选择本地基目录") },
+            text = {
+                Column {
+                    if (localDirs.isEmpty()) {
+                        Text(
+                            "暂无本地目录，请在下方输入新目录名",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    LazyColumn(modifier = Modifier.heightIn(max = 250.dp)) {
+                        items(localDirs) { dirName ->
+                            TextButton(
+                                onClick = {
+                                    viewModel.selectLocalDirectory(dirName)
+                                    showLocalBrowser = false
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("📁 $dirName")
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    var customDirName by remember { mutableStateOf("") }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = customDirName,
+                            onValueChange = { customDirName = it },
+                            placeholder = { Text("输入新目录名", color = PlaceholderColor) },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                        TextButton(
+                            onClick = {
+                                if (customDirName.isNotBlank()) {
+                                    viewModel.selectLocalDirectory(customDirName.trim())
+                                    showLocalBrowser = false
+                                }
+                            },
+                            enabled = customDirName.isNotBlank()
+                        ) {
+                            Text("确定")
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showLocalBrowser = false }) {
                     Text("取消")
                 }
             }
