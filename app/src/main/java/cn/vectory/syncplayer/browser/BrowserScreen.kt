@@ -337,8 +337,16 @@ fun BrowserScreen(
             dismissButton = {
                 Row {
                     TextButton(onClick = {
-                        viewModel.shareVideo(item.videoItemId!!)
+                        val itemId = item.videoItemId!!
                         showContextMenu = null
+                        scope.launch {
+                            val intent = viewModel.buildShareIntent(itemId)
+                            if (intent != null) {
+                                context.startActivity(intent)
+                            } else {
+                                Toast.makeText(context, "分享失败：文件不存在或无法访问", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }) {
                         Text("分享")
                     }

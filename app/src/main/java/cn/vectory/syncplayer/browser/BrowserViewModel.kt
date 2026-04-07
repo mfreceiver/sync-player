@@ -242,12 +242,16 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    fun shareVideo(videoItemId: Long) {
-        viewModelScope.launch {
-            val video = videoRepository.getById(videoItemId) ?: return@launch
-            val file = File(video.localAbsolutePath)
-            if (!file.exists()) return@launch
+    /**
+     * 构建视频分享用的 Intent（chooser），由调用方使用 Activity Context 启动。
+     * 返回 null 表示文件不存在或 FileProvider 路径不匹配。
+     */
+    suspend fun buildShareIntent(videoItemId: Long): Intent? {
+        val video = videoRepository.getById(videoItemId) ?: return null
+        val file = File(video.localAbsolutePath)
+        if (!file.exists()) return null
 
+        return try {
             val uri = FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.fileprovider",
@@ -255,15 +259,15 @@ class BrowserViewModel @Inject constructor(
             )
 
             val mimeType = getMimeType(video.fileName)
-            val intent = Intent(Intent.ACTION_SEND).apply {
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = mimeType
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
-            val chooserIntent = Intent.createChooser(intent, "分享文件")
-            chooserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(chooserIntent)
+            Intent.createChooser(shareIntent, "分享文件")
+        } catch (e: Exception) {
+            null
         }
     }
 }
