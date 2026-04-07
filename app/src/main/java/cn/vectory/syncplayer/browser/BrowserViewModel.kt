@@ -78,6 +78,8 @@ class BrowserViewModel @Inject constructor(
         buildBrowseItems(folder, mode, filterVal, records, baseDirSet)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    private val hiddenDirNames = setOf("debug-logs")
+
     private suspend fun buildBrowseItems(
         folder: String,
         mode: SortMode,
@@ -85,17 +87,27 @@ class BrowserViewModel @Inject constructor(
         records: List<PlaybackRecordEntity>,
         baseDirSet: Set<String>
     ): List<BrowseItem> {
-        val folders = videoRepository.getSubFolders(folder).first()
-            .map { folderName ->
-                val fullPath = if (folder.isEmpty()) folderName else "$folder/$folderName"
-                BrowseItem(
-                    videoItemId = null,
-                    name = folderName,
-                    relativePath = fullPath,
-                    isDirectory = true,
-                    isSyncBaseDir = baseDirSet.contains(fullPath)
-                )
-            }
+        val dbFolderNames = videoRepository.getSubFolders(folder).first()
+
+        val physicalDir = if (folder.isEmpty()) context.filesDir else File(context.filesDir, folder)
+        val physicalFolderNames = physicalDir.listFiles()
+            ?.filter { it.isDirectory && it.name !in hiddenDirNames }
+            ?.map { it.name }
+            ?.toSet()
+            ?: emptySet()
+
+        val allFolderNames = (dbFolderNames + physicalFolderNames).sortedBy { it.lowercase() }
+
+        val folders = allFolderNames.map { folderName ->
+            val fullPath = if (folder.isEmpty()) folderName else "$folder/$folderName"
+            BrowseItem(
+                videoItemId = null,
+                name = folderName,
+                relativePath = fullPath,
+                isDirectory = true,
+                isSyncBaseDir = baseDirSet.contains(fullPath)
+            )
+        }
 
         val videos = videoRepository.getItemsInFolder(folder).first()
             .map { video ->

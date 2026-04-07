@@ -17,6 +17,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.io.File
 import javax.inject.Inject
 
 @HiltViewModel
@@ -52,8 +53,8 @@ class SyncRelationEditViewModel @Inject constructor(
     private val _currentRemoteBrowsePath = MutableStateFlow("/")
     val currentRemoteBrowsePath = _currentRemoteBrowsePath.asStateFlow()
 
-    private val _isBrowsingRemote = MutableStateFlow(false)
-    val isBrowsingRemote = _isBrowsingRemote.asStateFlow()
+    private val _currentLocalBrowsePath = MutableStateFlow("")
+    val currentLocalBrowsePath = _currentLocalBrowsePath.asStateFlow()
 
     private val _localDirectories = MutableStateFlow<List<String>>(emptyList())
     val localDirectories = _localDirectories.asStateFlow()
@@ -90,27 +91,54 @@ class SyncRelationEditViewModel @Inject constructor(
     }
 
     fun setName(value: String) { _name.value = value }
-    fun setLocalBasePath(value: String) {
-        _localBasePath.value = value
-    }
-    fun setRemotePath(value: String) {
-        _remotePath.value = value
-    }
+    fun setRemotePath(value: String) { _remotePath.value = value }
     fun selectSource(id: Long) { _selectedSourceId.value = id }
 
+    // --- Local directory browsing (multi-level) ---
+
     fun browseLocalDirectories() {
-        val filesDir = context.filesDir
-        val dirs = filesDir.listFiles()
+        val baseDir = if (_currentLocalBrowsePath.value.isEmpty()) {
+            context.filesDir
+        } else {
+            File(context.filesDir, _currentLocalBrowsePath.value)
+        }
+        _localDirectories.value = baseDir.listFiles()
             ?.filter { it.isDirectory }
             ?.map { it.name }
             ?.sorted()
             ?: emptyList()
-        _localDirectories.value = dirs
     }
 
-    fun selectLocalDirectory(name: String) {
-        _localBasePath.value = name
+    fun navigateLocalInto(dirName: String) {
+        val current = _currentLocalBrowsePath.value
+        _currentLocalBrowsePath.value = if (current.isEmpty()) dirName else "$current/$dirName"
+        browseLocalDirectories()
     }
+
+    fun navigateLocalUp() {
+        val current = _currentLocalBrowsePath.value
+        if (current.isEmpty()) return
+        val lastSlash = current.lastIndexOf('/')
+        _currentLocalBrowsePath.value = if (lastSlash > 0) current.substring(0, lastSlash) else ""
+        browseLocalDirectories()
+    }
+
+    fun confirmLocalSelection() {
+        _localBasePath.value = _currentLocalBrowsePath.value
+    }
+
+    fun createLocalFolder(name: String) {
+        val baseDir = if (_currentLocalBrowsePath.value.isEmpty()) {
+            context.filesDir
+        } else {
+            File(context.filesDir, _currentLocalBrowsePath.value)
+        }
+        val newDir = File(baseDir, name)
+        if (!newDir.exists()) newDir.mkdirs()
+        browseLocalDirectories()
+    }
+
+    // --- Remote directory browsing ---
 
     fun browseRemote() {
         viewModelScope.launch {
@@ -120,7 +148,6 @@ class SyncRelationEditViewModel @Inject constructor(
                 _error.value = "请先选择同步源"
                 return@launch
             }
-            _isBrowsingRemote.value = true
             _error.value = null
             try {
                 val client = when (source.protocol) {
@@ -136,8 +163,6 @@ class SyncRelationEditViewModel @Inject constructor(
                     SyncProtocol.SMB -> smbFileClient.disconnect()
                     SyncProtocol.SFTP -> sftpFileClient.disconnect()
                 } } catch (_: Exception) {}
-            } finally {
-                _isBrowsingRemote.value = false
             }
         }
     }
@@ -159,6 +184,8 @@ class SyncRelationEditViewModel @Inject constructor(
     fun selectRemotePath() {
         _remotePath.value = _currentRemoteBrowsePath.value
     }
+
+    // --- Save ---
 
     fun save() {
         viewModelScope.launch {
