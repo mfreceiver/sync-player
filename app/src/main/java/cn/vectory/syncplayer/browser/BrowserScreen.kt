@@ -356,7 +356,7 @@ fun BrowserScreen(
                         viewModel.toggleFavorite(item.videoItemId!!)
                         showContextMenu = null
                     }) {
-                        Text(if (item.isFavorite) "取消喜欢" else "喜欢")
+                        Text(if (item.isFavorite) "取消预删除" else "预删除")
                     }
                 }
             }
@@ -546,8 +546,8 @@ private fun FileItem(
                     )
                     if (item.isFavorite) {
                         Icon(
-                            imageVector = Icons.Default.Favorite,
-                            contentDescription = "已收藏",
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "已预删除",
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier
                                 .size(14.dp)
@@ -566,8 +566,8 @@ private fun FileItem(
                     )
                     if (item.isFavorite) {
                         Icon(
-                            imageVector = Icons.Default.Favorite,
-                            contentDescription = "已收藏",
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "已预删除",
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier
                                 .size(14.dp)
@@ -579,8 +579,8 @@ private fun FileItem(
             item.isFavorite -> {
                 Spacer(Modifier.width(8.dp))
                 Icon(
-                    imageVector = Icons.Default.Favorite,
-                    contentDescription = "已收藏",
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "已预删除",
                     tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(24.dp)
                 )

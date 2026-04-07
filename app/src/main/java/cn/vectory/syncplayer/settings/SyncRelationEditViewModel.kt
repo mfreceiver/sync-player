@@ -10,6 +10,7 @@ import cn.vectory.syncplayer.data.model.SyncRelation
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
+import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -26,6 +27,7 @@ class SyncRelationEditViewModel @Inject constructor(
     private val syncSourceRepository: SyncSourceRepository,
     private val smbFileClient: SmbFileClient,
     private val sftpFileClient: SftpFileClient,
+    private val storagePaths: StoragePaths,
     @ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
@@ -98,9 +100,9 @@ class SyncRelationEditViewModel @Inject constructor(
 
     fun browseLocalDirectories() {
         val baseDir = if (_currentLocalBrowsePath.value.isEmpty()) {
-            context.filesDir
+            storagePaths.userdataRoot
         } else {
-            File(context.filesDir, _currentLocalBrowsePath.value)
+            File(storagePaths.userdataRoot, _currentLocalBrowsePath.value)
         }
         _localDirectories.value = baseDir.listFiles()
             ?.filter { it.isDirectory }
@@ -129,9 +131,9 @@ class SyncRelationEditViewModel @Inject constructor(
 
     fun createLocalFolder(name: String) {
         val baseDir = if (_currentLocalBrowsePath.value.isEmpty()) {
-            context.filesDir
+            storagePaths.userdataRoot
         } else {
-            File(context.filesDir, _currentLocalBrowsePath.value)
+            File(storagePaths.userdataRoot, _currentLocalBrowsePath.value)
         }
         val newDir = File(baseDir, name)
         if (!newDir.exists()) newDir.mkdirs()

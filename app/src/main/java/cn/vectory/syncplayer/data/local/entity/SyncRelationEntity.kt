@@ -25,7 +25,7 @@ data class SyncRelationEntity(
     val name: String,
     val syncSourceId: Long,
     val remotePath: String,
-    val localBasePath: String,  // relative to context.filesDir
+    val localBasePath: String,  // relative to userdata root
     val lastSyncTime: Long? = null,
     val lastSyncResult: String? = null,
     val createdAt: Long = System.currentTimeMillis()

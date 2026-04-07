@@ -7,6 +7,7 @@ import cn.vectory.syncplayer.data.local.dao.VideoMetadataCacheDao
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.local.entity.VideoMetadataCacheEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.storage.StoragePaths
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.FileOutputStream
@@ -17,10 +18,11 @@ import javax.inject.Singleton
 class VideoMetadataExtractor @Inject constructor(
     private val videoRepository: VideoRepository,
     private val cacheDao: VideoMetadataCacheDao,
+    private val storagePaths: StoragePaths,
     @ApplicationContext private val context: Context
 ) {
     private val thumbnailDir: File
-        get() = File(context.filesDir, "thumbnails").also { it.mkdirs() }
+        get() = storagePaths.thumbnailsDir
 
     suspend fun extractAndSave(videoItem: VideoItemEntity): VideoItemEntity {
         val file = File(videoItem.localAbsolutePath)
@@ -96,5 +98,13 @@ class VideoMetadataExtractor @Inject constructor(
         } finally {
             try { retriever.release() } catch (_: Exception) {}
         }
+    }
+
+    suspend fun repairThumbnailIfNeeded(videoItem: VideoItemEntity): VideoItemEntity {
+        val thumbPath = videoItem.thumbnailPath
+        if (thumbPath != null && File(thumbPath).exists()) return videoItem
+        val localFile = File(videoItem.localAbsolutePath)
+        if (!localFile.exists()) return videoItem
+        return extractAndSave(videoItem)
     }
 }

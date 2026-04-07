@@ -101,15 +101,11 @@ class SyncPreviewViewModel @Inject constructor(
 
     fun startDelete() {
         viewModelScope.launch {
+            val actions = _toDelete.value
+            if (actions.isEmpty()) return@launch
             _isDeleting.value = true
             _error.value = null
             try {
-                val (actions, errMsg) = syncEngine.dryRunDelete(relationId)
-                if (errMsg != null) {
-                    _error.value = errMsg
-                    return@launch
-                }
-                _toDelete.value = actions
                 syncEngine.executeDelete(relationId, actions)
             } catch (e: Exception) {
                 _error.value = "删除失败: ${e.message}"

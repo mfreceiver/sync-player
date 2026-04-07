@@ -13,6 +13,7 @@ import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
+import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -35,6 +36,7 @@ class SyncEngine @Inject constructor(
     private val videoMetadataExtractor: VideoMetadataExtractor,
     private val smbFileClient: SmbFileClient,
     private val sftpFileClient: SftpFileClient,
+    private val storagePaths: StoragePaths,
     @ApplicationContext private val context: Context
 ) {
 
@@ -42,7 +44,7 @@ class SyncEngine @Inject constructor(
     val progress: StateFlow<SyncProgress> = _progress.asStateFlow()
 
     private fun getLocalSyncRoot(relation: SyncRelation): File =
-        File(context.filesDir, relation.localBasePath.trimStart('/')).also { it.mkdirs() }
+        storagePaths.resolveUserData(relation.localBasePath.trimStart('/')).also { it.mkdirs() }
 
     private fun getClient(protocol: SyncProtocol): RemoteFileClient = when (protocol) {
         SyncProtocol.SMB -> smbFileClient

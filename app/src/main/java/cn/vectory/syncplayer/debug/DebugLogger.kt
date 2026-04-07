@@ -24,11 +24,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import cn.vectory.syncplayer.storage.StoragePaths
 import dagger.hilt.android.qualifiers.ApplicationContext
 
 @Singleton
 class DebugLogger @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val storagePaths: StoragePaths
 ) {
     private val prefs: SharedPreferences = context.getSharedPreferences("player_prefs", Context.MODE_PRIVATE)
 
@@ -58,7 +60,7 @@ class DebugLogger @Inject constructor(
     fun enable() {
         prefs.edit().putBoolean("debug_mode", true).apply()
         _enabled.value = true
-        val dir = File(context.filesDir, "debug-logs")
+        val dir = storagePaths.debugLogsDir
         if (!dir.exists()) dir.mkdirs()
         currentLogFile = File(dir, "session-${System.currentTimeMillis()}.log")
         try {
@@ -165,7 +167,7 @@ class DebugLogger @Inject constructor(
     }
 
     private fun findLatestLogFile(): File? {
-        val dir = File(context.filesDir, "debug-logs")
+        val dir = storagePaths.debugLogsDir
         if (!dir.exists() || !dir.isDirectory) return null
         val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".log") } ?: return null
         return files.maxByOrNull { it.lastModified() }

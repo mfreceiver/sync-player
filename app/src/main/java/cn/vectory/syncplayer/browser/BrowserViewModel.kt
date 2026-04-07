@@ -12,8 +12,11 @@ import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.player.PlayerNavigationStore
+import cn.vectory.syncplayer.storage.StoragePaths
+import cn.vectory.syncplayer.sync.VideoMetadataExtractor
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.io.File
@@ -24,6 +27,8 @@ class BrowserViewModel @Inject constructor(
     private val videoRepository: VideoRepository,
     private val playbackRepository: PlaybackRepository,
     private val syncRelationRepository: SyncRelationRepository,
+    private val videoMetadataExtractor: VideoMetadataExtractor,
+    private val storagePaths: StoragePaths,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -78,8 +83,6 @@ class BrowserViewModel @Inject constructor(
         buildBrowseItems(folder, mode, filterVal, records, baseDirSet)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    private val hiddenDirNames = setOf("debug-logs")
-
     private suspend fun buildBrowseItems(
         folder: String,
         mode: SortMode,
@@ -89,9 +92,9 @@ class BrowserViewModel @Inject constructor(
     ): List<BrowseItem> {
         val dbFolderNames = videoRepository.getSubFolders(folder).first()
 
-        val physicalDir = if (folder.isEmpty()) context.filesDir else File(context.filesDir, folder)
+        val physicalDir = if (folder.isEmpty()) storagePaths.userdataRoot else File(storagePaths.userdataRoot, folder)
         val physicalFolderNames = physicalDir.listFiles()
-            ?.filter { it.isDirectory && it.name !in hiddenDirNames }
+            ?.filter { it.isDirectory }
             ?.map { it.name }
             ?.toSet()
             ?: emptySet()
@@ -131,6 +134,8 @@ class BrowserViewModel @Inject constructor(
                     isFavorite = record?.isFavorite ?: false
                 )
             }
+
+        repairMissingThumbnails(videoRepository.getItemsInFolder(folder).first())
 
         val filteredVideos = when (filterVal) {
             BrowseFilter.ALL -> videos
@@ -178,9 +183,9 @@ class BrowserViewModel @Inject constructor(
     fun createFolder(parentPath: String, folderName: String) {
         viewModelScope.launch {
             val newDir = if (parentPath.isEmpty()) {
-                File(context.filesDir, folderName)
+                File(storagePaths.userdataRoot, folderName)
             } else {
-                File(File(context.filesDir, parentPath), folderName)
+                File(File(storagePaths.userdataRoot, parentPath), folderName)
             }
             if (newDir.exists()) {
                 _error.value = "文件夹已存在"
@@ -196,7 +201,7 @@ class BrowserViewModel @Inject constructor(
 
     fun deleteFolder(path: String) {
         viewModelScope.launch {
-            val dir = File(context.filesDir, path)
+            val dir = File(storagePaths.userdataRoot, path)
             val isBase = syncRelationRepository.getByLocalBasePath(path) != null
             if (isBase) {
                 _error.value = "同步基目录不能删除，请先删除对应的同步关系"
@@ -223,6 +228,19 @@ class BrowserViewModel @Inject constructor(
 
     fun clearError() {
         _error.value = null
+    }
+
+    private fun repairMissingThumbnails(videos: List<VideoItemEntity>) {
+        val needsRepair = videos.filter { video ->
+            val thumbMissing = video.thumbnailPath == null || !File(video.thumbnailPath).exists()
+            thumbMissing && File(video.localAbsolutePath).exists()
+        }
+        if (needsRepair.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            needsRepair.forEach { video ->
+                videoMetadataExtractor.repairThumbnailIfNeeded(video)
+            }
+        }
     }
 
     companion object {

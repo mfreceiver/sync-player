@@ -96,7 +96,8 @@ fun SyncPreviewScreen(
                                 viewModel.startDelete()
                             }
                         },
-                        enabled = previewLoaded && !isSyncing && !isDeleting,
+                        enabled = previewLoaded && !isSyncing && !isDeleting &&
+                            (syncMode == SyncMode.DOWNLOAD && toDownload.isNotEmpty() || syncMode == SyncMode.DELETE && toDelete.isNotEmpty()),
                         colors = if (syncMode == SyncMode.DELETE) {
                             ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.error
