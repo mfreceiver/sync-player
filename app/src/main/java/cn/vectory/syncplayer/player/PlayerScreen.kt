@@ -176,6 +176,20 @@ fun PlayerScreen(
             val percent = (newBrightness * 100).toInt()
             gestureView.showBrightnessOverlay(percent)
         }
+        override fun onDoubleTap() {
+            if (exoPlayer.isPlaying) {
+                exoPlayer.pause()
+                gestureView.showGestureOverlay("⏸ 已暂停")
+            } else {
+                exoPlayer.play()
+                gestureView.showGestureOverlay("▶ 播放中")
+            }
+        }
+        override fun onTripleTap() {
+            val wasFavorite = playbackRecord?.isFavorite ?: false
+            gestureView.showGestureOverlay(if (wasFavorite) "取消预删除" else "已标记预删除")
+            viewModel.toggleFavorite()
+        }
     }
     fun doExit() {
         viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))

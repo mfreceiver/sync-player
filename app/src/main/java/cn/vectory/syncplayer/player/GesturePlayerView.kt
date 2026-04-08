@@ -49,9 +49,14 @@ class GesturePlayerView @JvmOverloads constructor(
         fun onSpeedUpChanged(speedUp: Boolean)
         fun onSeekTo(offsetMs: Long)
         fun onVolumeGestureStart()
-        fun onVolumeChanged(totalDelta: Float)   // totalDelta = cumulative displacement / height
+        fun onVolumeChanged(totalDelta: Float)
         fun onBrightnessChanged(delta: Float)
+        fun onDoubleTap()
+        fun onTripleTap()
     }
+
+    private var doubleTapJob: Job? = null
+    private var tapCount = 0
 
     fun setOnSingleTapCallback(callback: (() -> Unit)?) {
         singleTapCallback = callback
@@ -125,6 +130,25 @@ class GesturePlayerView @JvmOverloads constructor(
             return false
         }
 
+        override fun onDoubleTap(e: MotionEvent): Boolean {
+            doubleTapJob?.cancel()
+            tapCount++
+            if (tapCount == 1) {
+                doubleTapJob = CoroutineScope(Dispatchers.Main).launch {
+                    delay(300)
+                    if (tapCount == 1) {
+                        gestureListener?.onDoubleTap()
+                    }
+                    tapCount = 0
+                }
+            } else if (tapCount >= 2) {
+                doubleTapJob?.cancel()
+                tapCount = 0
+                gestureListener?.onTripleTap()
+            }
+            return true
+        }
+
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
             singleTapCallback?.invoke()
             return true
@@ -175,6 +199,10 @@ class GesturePlayerView @JvmOverloads constructor(
 
     fun showBrightnessOverlay(brightnessPercent: Int) {
         showOverlay("亮度 $brightnessPercent%")
+    }
+
+    fun showGestureOverlay(text: String) {
+        showOverlay(text)
     }
 
     private fun showOverlay(text: String) {
