@@ -1,8 +1,5 @@
 package cn.vectory.syncplayer.browser
 
-import android.graphics.BitmapFactory
-import android.widget.Toast
-import androidx.compose.foundation.Canvas
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -12,27 +9,32 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
-import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.PlayCircleOutline
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.painter.BitmapPainter
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import cn.vectory.syncplayer.data.model.BrowseItem
+import cn.vectory.syncplayer.ui.components.FileStatusIcon
+import cn.vectory.syncplayer.ui.components.FolderIcon
+import cn.vectory.syncplayer.ui.components.Thumbnail
+import cn.vectory.syncplayer.ui.util.buildMetadataLine
+import cn.vectory.syncplayer.ui.util.isVideoFile
 import kotlinx.coroutines.launch
 import cn.vectory.syncplayer.debug.DebugLogger
 
@@ -66,6 +68,7 @@ fun BrowserScreen(
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(currentFolder) {
         if (viewModel.currentFolder.value.isEmpty()) {
@@ -75,14 +78,6 @@ fun BrowserScreen(
 
     LaunchedEffect(Unit) {
         debugLogger.log("Compose", "BrowserScreen composed")
-    }
-
-    LaunchedEffect(Unit) {
-        val target = BrowserNavigationStore.targetFolder
-        if (target != null) {
-            BrowserNavigationStore.targetFolder = null
-            viewModel.setFolder(target)
-        }
     }
 
     BackHandler(enabled = folder.isNotEmpty()) {
@@ -146,6 +141,7 @@ fun BrowserScreen(
         }
     ) {
         Scaffold(
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
                     TopAppBar(
                         navigationIcon = {
@@ -294,7 +290,7 @@ fun BrowserScreen(
                                     viewModel.setFolderVideoIdsForNavigation(viewModel.getFolderVideoIds())
                                     onNavigateToPlayer(item.videoItemId!!)
                                 } else {
-                                    Toast.makeText(context, "该文件无法播放", Toast.LENGTH_SHORT).show()
+                                    scope.launch { snackbarHostState.showSnackbar("该文件无法播放") }
                                 }
                             },
                             onLongClick = { showContextMenu = item }
@@ -344,11 +340,6 @@ fun BrowserScreen(
             title = { Text(item.name) },
             text = { Text("选择操作") },
             confirmButton = {
-                TextButton(onClick = { showContextMenu = null }) {
-                    Text("取消")
-                }
-            },
-            dismissButton = {
                 Row {
                     TextButton(onClick = {
                         val itemId = item.videoItemId!!
@@ -358,7 +349,7 @@ fun BrowserScreen(
                             if (intent != null) {
                                 context.startActivity(intent)
                             } else {
-                                Toast.makeText(context, "分享失败：文件不存在或无法访问", Toast.LENGTH_SHORT).show()
+                                scope.launch { snackbarHostState.showSnackbar("分享失败：文件不存在或无法访问") }
                             }
                         }
                     }) {
@@ -371,6 +362,11 @@ fun BrowserScreen(
                         Text(if (item.isFavorite) "取消预删除" else "预删除")
                     }
                 }
+            },
+            dismissButton = {
+                TextButton(onClick = { showContextMenu = null }) {
+                    Text("取消")
+                }
             }
         )
     }
@@ -380,11 +376,6 @@ fun BrowserScreen(
             onDismissRequest = { showFolderContextMenu = null },
             title = { Text(item.name) },
             confirmButton = {
-                TextButton(onClick = { showFolderContextMenu = null }) {
-                    Text("取消")
-                }
-            },
-            dismissButton = {
                 if (!item.isSyncBaseDir && !item.containsSyncBaseDir) {
                     TextButton(
                         onClick = {
@@ -394,6 +385,11 @@ fun BrowserScreen(
                     ) {
                         Text("删除", color = MaterialTheme.colorScheme.error)
                     }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showFolderContextMenu = null }) {
+                    Text("取消")
                 }
             }
         )
@@ -435,7 +431,7 @@ fun BrowserScreen(
 
     error?.let {
         LaunchedEffect(it) {
-            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+            snackbarHostState.showSnackbar(it)
             viewModel.clearError()
         }
     }
@@ -458,27 +454,10 @@ private fun FolderItem(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier.size(40.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.Folder,
-                contentDescription = "文件夹",
-                tint = Color(0xFFFFB300),
-                modifier = Modifier.size(40.dp)
-            )
-            if (item.isSyncBaseDir) {
-                Icon(
-                    imageVector = Icons.Default.Cloud,
-                    contentDescription = "同步基目录",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .size(14.dp)
-                        .align(Alignment.BottomEnd)
-                )
-            }
-        }
+        FolderIcon(
+            isSyncBaseDir = item.isSyncBaseDir,
+            modifier = Modifier.size(40.dp)
+        )
 
         Spacer(Modifier.width(12.dp))
 
@@ -548,195 +527,11 @@ private fun FileItem(
             }
         }
 
-        when {
-            item.isCompleted -> {
-                Spacer(Modifier.width(8.dp))
-                Box(contentAlignment = Alignment.Center) {
-                    ProgressRing(
-                        progress = 1f,
-                        modifier = Modifier.size(32.dp)
-                    )
-                    if (item.isFavorite) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "已预删除",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier
-                                .size(14.dp)
-                                .align(Alignment.Center)
-                        )
-                    }
-                }
-            }
-            item.playbackPosition > 0 && item.playbackDuration > 0 -> {
-                Spacer(Modifier.width(8.dp))
-                val progress = item.playbackPosition.toFloat() / item.playbackDuration.toFloat()
-                Box(contentAlignment = Alignment.Center) {
-                    ProgressRing(
-                        progress = progress,
-                        modifier = Modifier.size(32.dp)
-                    )
-                    if (item.isFavorite) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "已预删除",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier
-                                .size(14.dp)
-                                .align(Alignment.Center)
-                        )
-                    }
-                }
-            }
-            item.isFavorite -> {
-                Spacer(Modifier.width(8.dp))
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "已预删除",
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun Thumbnail(
-    thumbnailPath: String?,
-    isVideo: Boolean = true,
-    modifier: Modifier = Modifier
-) {
-    val context = LocalContext.current
-    var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-
-    LaunchedEffect(thumbnailPath) {
-        thumbnailPath?.let { path ->
-            try {
-                bitmap = BitmapFactory.decodeFile(path)
-            } catch (e: Exception) {
-                bitmap = null
-            }
-        }
-    }
-
-    if (bitmap != null) {
-        androidx.compose.foundation.Image(
-            painter = BitmapPainter(bitmap!!.asImageBitmap()),
-            contentDescription = "缩略图",
-            modifier = modifier,
-            contentScale = ContentScale.Crop
+        FileStatusIcon(
+            isCompleted = item.isCompleted,
+            isFavorite = item.isFavorite,
+            playbackPosition = item.playbackPosition,
+            playbackDuration = item.playbackDuration
         )
-    } else {
-        Box(
-            modifier = modifier,
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = if (isVideo) Icons.Default.Movie else Icons.AutoMirrored.Filled.InsertDriveFile,
-                contentDescription = if (isVideo) "视频" else "文件",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier.size(32.dp)
-            )
-        }
     }
-}
-
-@Composable
-private fun ProgressRing(
-    progress: Float,
-    modifier: Modifier = Modifier
-) {
-    val primaryColor = MaterialTheme.colorScheme.primary
-    val trackColor = MaterialTheme.colorScheme.surfaceVariant
-
-    Canvas(modifier = modifier) {
-        val stroke = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
-        val radius = (size.minDimension - stroke.width) / 2
-
-        drawArc(
-            color = trackColor,
-            startAngle = 0f,
-            sweepAngle = 360f,
-            useCenter = false,
-            style = stroke,
-            topLeft = androidx.compose.ui.geometry.Offset(
-                center.x - radius,
-                center.y - radius
-            ),
-            size = Size(radius * 2, radius * 2)
-        )
-
-        if (progress > 0f) {
-            drawArc(
-                color = primaryColor,
-                startAngle = -90f,
-                sweepAngle = progress.coerceIn(0f, 1f) * 360f,
-                useCenter = false,
-                style = stroke,
-                topLeft = androidx.compose.ui.geometry.Offset(
-                    center.x - radius,
-                    center.y - radius
-                ),
-                size = Size(radius * 2, radius * 2)
-            )
-        }
-    }
-}
-
-private fun buildMetadataLine(
-    duration: Long?,
-    width: Int?,
-    height: Int?,
-    bitrate: Long?,
-    extension: String
-): String {
-    val parts = mutableListOf<String>()
-
-    duration?.let { ms ->
-        if (ms > 0) {
-            parts.add(formatDuration(ms))
-        }
-    }
-
-    if (width != null && height != null && width > 0 && height > 0) {
-        parts.add("${width}×${height}")
-    }
-
-    bitrate?.let { bps ->
-        if (bps > 0) {
-            val mbps = bps / 1_000_000.0
-            parts.add(if (mbps >= 1.0) "%.1fMbps".format(mbps) else "%.0fKbps".format(bps / 1000.0))
-        }
-    }
-
-    if (extension.isNotEmpty()) {
-        parts.add(extension.uppercase())
-    }
-
-    return parts.joinToString(" · ")
-}
-
-private fun formatDuration(ms: Long?): String {
-    if (ms == null || ms <= 0) return ""
-
-    val totalSeconds = ms / 1000
-    val hours = totalSeconds / 3600
-    val minutes = (totalSeconds % 3600) / 60
-    val seconds = totalSeconds % 60
-
-    return if (hours > 0) {
-        "%d:%02d:%02d".format(hours, minutes, seconds)
-    } else {
-        "%d:%02d".format(minutes, seconds)
-    }
-}
-
-private val VIDEO_EXTENSIONS = setOf(
-    "mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "ts", "m4v", "3gp", "mpeg", "mpg"
-)
-
-private fun isVideoFile(fileName: String): Boolean {
-    val ext = fileName.substringAfterLast('.', "").lowercase()
-    return ext in VIDEO_EXTENSIONS
 }

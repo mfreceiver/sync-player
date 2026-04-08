@@ -4,7 +4,26 @@ import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+
+data class ExtendedColors(
+    val folderAmber: Color,
+    val successGreen: Color,
+    val placeholderGrey: Color,
+    val favoritePink: Color,
+)
+
+val LocalExtendedColors = staticCompositionLocalOf {
+    ExtendedColors(
+        folderAmber = FolderAmber,
+        successGreen = SuccessGreen,
+        placeholderGrey = PlaceholderGrey,
+        favoritePink = FavoritePink,
+    )
+}
 
 @Composable
 fun SyncPlayerTheme(
@@ -22,8 +41,20 @@ fun SyncPlayerTheme(
         else -> lightColorScheme()
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        content = content
+    val typography = Typography()
+
+    val extendedColors = ExtendedColors(
+        folderAmber = FolderAmber,
+        successGreen = SuccessGreen,
+        placeholderGrey = PlaceholderGrey,
+        favoritePink = FavoritePink,
     )
+
+    CompositionLocalProvider(LocalExtendedColors provides extendedColors) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = typography,
+            content = content
+        )
+    }
 }

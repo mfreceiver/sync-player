@@ -10,10 +10,13 @@ import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
+import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.player.PlayerNavigationStore
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.VideoMetadataExtractor
+import cn.vectory.syncplayer.ui.util.getMimeType
+import cn.vectory.syncplayer.ui.util.isVideoFile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -29,30 +32,39 @@ class BrowserViewModel @Inject constructor(
     private val syncRelationRepository: SyncRelationRepository,
     private val videoMetadataExtractor: VideoMetadataExtractor,
     private val storagePaths: StoragePaths,
+    private val userPrefs: UserPreferencesRepository,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
-    enum class SortMode {
-        FILENAME_ASC, FILENAME_DESC, DURATION_ASC, DURATION_DESC
-    }
-
-    enum class BrowseFilter {
-        ALL, VIDEO_ONLY, FAVORITES_ONLY
-    }
-
-    private val prefs = context.getSharedPreferences("player_prefs", Context.MODE_PRIVATE)
+    enum class SortMode { FILENAME_ASC, FILENAME_DESC, DURATION_ASC, DURATION_DESC }
+    enum class BrowseFilter { ALL, VIDEO_ONLY, FAVORITES_ONLY }
 
     private val _currentFolder = MutableStateFlow("")
     val currentFolder: StateFlow<String> = _currentFolder.asStateFlow()
 
-    private val _sortMode = MutableStateFlow(readDefaultSortMode())
+    private val _sortMode = MutableStateFlow(SortMode.FILENAME_ASC)
     val sortMode: StateFlow<SortMode> = _sortMode.asStateFlow()
 
-    private val _filter = MutableStateFlow(readDefaultFilter())
+    private val _filter = MutableStateFlow(BrowseFilter.ALL)
     val filter: StateFlow<BrowseFilter> = _filter.asStateFlow()
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            _sortMode.value = try {
+                SortMode.valueOf(userPrefs.getDefaultSortMode())
+            } catch (_: Exception) {
+                SortMode.FILENAME_ASC
+            }
+            _filter.value = try {
+                BrowseFilter.valueOf(userPrefs.getDefaultFilter())
+            } catch (_: Exception) {
+                BrowseFilter.ALL
+            }
+        }
+    }
 
     val hasConfig: StateFlow<Boolean> = syncRelationRepository.getAllWithSourceFlow()
         .map { it.isNotEmpty() }
@@ -243,18 +255,6 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    private fun readDefaultSortMode(): SortMode = try {
-        SortMode.valueOf(prefs.getString("default_sort_mode", SortMode.FILENAME_ASC.name)!!)
-    } catch (_: Exception) {
-        SortMode.FILENAME_ASC
-    }
-
-    private fun readDefaultFilter(): BrowseFilter = try {
-        BrowseFilter.valueOf(prefs.getString("default_filter", BrowseFilter.ALL.name)!!)
-    } catch (_: Exception) {
-        BrowseFilter.ALL
-    }
-
     fun getFolderVideoIds(): List<Long> {
         return browseItems.value
             .filter { !it.isDirectory && it.videoItemId != null && isVideoFile(it.name) }
@@ -271,10 +271,6 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    /**
-     * 构建视频分享用的 Intent（chooser），由调用方使用 Activity Context 启动。
-     * 返回 null 表示文件不存在或 FileProvider 路径不匹配。
-     */
     suspend fun buildShareIntent(videoItemId: Long): Intent? {
         val video = videoRepository.getById(videoItemId) ?: return null
         val file = File(video.localAbsolutePath)
@@ -298,36 +294,5 @@ class BrowserViewModel @Inject constructor(
         } catch (e: Exception) {
             null
         }
-    }
-}
-
-private val VIDEO_EXTENSIONS = setOf(
-    "mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "ts", "m4v", "3gp", "mpeg", "mpg"
-)
-
-private fun isVideoFile(fileName: String): Boolean {
-    val ext = fileName.substringAfterLast('.', "").lowercase()
-    return ext in VIDEO_EXTENSIONS
-}
-
-private fun getMimeType(fileName: String): String {
-    val ext = fileName.substringAfterLast('.', "").lowercase()
-    return when (ext) {
-        in VIDEO_EXTENSIONS -> "video/*"
-        "jpg", "jpeg" -> "image/jpeg"
-        "png" -> "image/png"
-        "gif" -> "image/gif"
-        "bmp" -> "image/bmp"
-        "webp" -> "image/webp"
-        "mp3" -> "audio/mpeg"
-        "flac" -> "audio/flac"
-        "wav" -> "audio/wav"
-        "aac" -> "audio/aac"
-        "ogg" -> "audio/ogg"
-        "srt" -> "text/plain"
-        "ass" -> "text/plain"
-        "nfo" -> "text/plain"
-        "txt" -> "text/plain"
-        else -> "application/octet-stream"
     }
 }

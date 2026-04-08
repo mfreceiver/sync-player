@@ -1,6 +1,8 @@
 package cn.vectory.syncplayer.sync.sftp
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import cn.vectory.syncplayer.data.model.RemoteFile
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.sync.RemoteFileClient
@@ -15,10 +17,19 @@ import java.io.FileOutputStream
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
-class SftpFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context) : RemoteFileClient {
+class SftpFileClient(private val context: Context) : RemoteFileClient {
     private var sshClient: SSHClient? = null
     private var sftpClient: SFTPClient? = null
     private var remoteBasePath: String = ""
+
+    private fun checkNetwork() {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = cm.activeNetwork
+        val caps = cm.getNetworkCapabilities(network)
+        if (network == null || caps == null || !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+            throw Exception("网络不可用，请检查网络连接")
+        }
+    }
     private fun sftpErrorMessage(e: Exception, host: String): String {
         return when (e) {
             is UnknownHostException -> "无法解析主机地址: $host"
@@ -31,6 +42,7 @@ class SftpFileClient(@Suppress("UNUSED_PARAMETER") private val context: Context)
         }
     }
     override suspend fun connect(source: SyncSource, remotePath: String): Unit = withContext(Dispatchers.IO) {
+        checkNetwork()
         try {
             val client = SSHClient()
             client.addHostKeyVerifier(PromiscuousVerifier())

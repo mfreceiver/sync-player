@@ -15,12 +15,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-private val PlaceholderColor = Color(0xFF9E9E9E)
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -29,6 +29,7 @@ fun SyncRelationEditScreen(
     onNavigateToRelationList: () -> Unit = {},
     viewModel: SyncRelationEditViewModel = hiltViewModel()
 ) {
+    val extendedColors = LocalExtendedColors.current
     val name by viewModel.name.collectAsStateWithLifecycle()
     val sources by viewModel.availableSources.collectAsStateWithLifecycle()
     val selectedSourceId by viewModel.selectedSourceId.collectAsStateWithLifecycle()
@@ -70,7 +71,7 @@ fun SyncRelationEditScreen(
                 value = name,
                 onValueChange = { viewModel.setName(it) },
                 label = { Text("友好名称") },
-                placeholder = { Text("电影同步", color = PlaceholderColor) },
+                placeholder = { Text("电影同步", color = extendedColors.placeholderGrey) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
@@ -109,7 +110,7 @@ fun SyncRelationEditScreen(
                     value = remotePath,
                     onValueChange = { viewModel.setRemotePath(it) },
                     label = { Text("远端目录") },
-                    placeholder = { Text("/share/电影", color = PlaceholderColor) },
+                    placeholder = { Text("/share/电影", color = extendedColors.placeholderGrey) },
                     modifier = Modifier.weight(1f),
                     singleLine = true
                 )
@@ -129,7 +130,7 @@ fun SyncRelationEditScreen(
                     value = localBasePath,
                     onValueChange = {},
                     label = { Text("本地基目录") },
-                    placeholder = { Text("动作片", color = PlaceholderColor) },
+                    placeholder = { Text("动作片", color = extendedColors.placeholderGrey) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     readOnly = true
@@ -278,7 +279,7 @@ fun SyncRelationEditScreen(
                                 Icon(
                                     Icons.Filled.Folder,
                                     contentDescription = null,
-                                    tint = Color(0xFFFFB300),
+                                    tint = extendedColors.folderAmber,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(Modifier.width(8.dp))

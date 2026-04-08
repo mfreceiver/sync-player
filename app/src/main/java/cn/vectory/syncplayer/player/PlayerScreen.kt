@@ -21,6 +21,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
+import cn.vectory.syncplayer.ui.util.formatDuration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -242,11 +244,12 @@ fun PlayerScreen(
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         val isFavorite = playbackRecord?.isFavorite ?: false
+                        val extendedColors = LocalExtendedColors.current
                         IconButton(onClick = { viewModel.toggleFavorite() }) {
                             Icon(
                                 imageVector = if (isFavorite) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
                                 contentDescription = if (isFavorite) "取消预删除" else "预删除",
-                                tint = if (isFavorite) Color(0xFFFF4081) else Color.White
+                                tint = if (isFavorite) extendedColors.favoritePink else Color.White
                             )
                         }
                         IconButton(onClick = {
@@ -293,7 +296,7 @@ fun PlayerScreen(
                         )
                     }
                     Text(
-                        text = "${formatTime(currentPosition)} / ${formatTime(currentDuration)}",
+                        text = "${formatDuration(currentPosition)} / ${formatDuration(currentDuration)}",
                         color = Color.White.copy(alpha = 0.7f),
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.labelSmall
@@ -318,18 +321,5 @@ fun PlayerScreen(
                 }
             }
         }
-    }
-}
-
-private fun formatTime(ms: Long): String {
-    if (ms < 0) return "0:00"
-    val totalSeconds = ms / 1000
-    val hours = totalSeconds / 3600
-    val minutes = (totalSeconds % 3600) / 60
-    val seconds = totalSeconds % 60
-    return if (hours > 0) {
-        "%d:%02d:%02d".format(hours, minutes, seconds)
-    } else {
-        "%d:%02d".format(minutes, seconds)
     }
 }

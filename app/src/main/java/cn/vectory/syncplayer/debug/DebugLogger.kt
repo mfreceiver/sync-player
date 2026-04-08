@@ -1,7 +1,6 @@
 package cn.vectory.syncplayer.debug
 
 import android.content.Context
-import android.content.SharedPreferences
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
@@ -24,16 +23,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.storage.StoragePaths
 import dagger.hilt.android.qualifiers.ApplicationContext
 
 @Singleton
 class DebugLogger @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val storagePaths: StoragePaths
+    private val storagePaths: StoragePaths,
+    private val userPrefs: UserPreferencesRepository
 ) {
-    private val prefs: SharedPreferences = context.getSharedPreferences("player_prefs", Context.MODE_PRIVATE)
-
     private val buffer = ConcurrentLinkedQueue<String>()
     private val _enabled = MutableStateFlow(false)
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
@@ -49,16 +48,21 @@ class DebugLogger @Inject constructor(
     private var flushJob: Job? = null
 
     fun init() {
-        val wasEnabled = prefs.getBoolean("debug_mode", false)
+        val wasEnabled = run {
+            var result = false
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            scope.launch {
+                result = userPrefs.getDebugMode()
+            }
+            false
+        }
         if (wasEnabled) {
             previousLogFile = findLatestLogFile()
         }
-        prefs.edit().putBoolean("debug_mode", false).apply()
         _enabled.value = false
     }
 
     fun enable() {
-        prefs.edit().putBoolean("debug_mode", true).apply()
         _enabled.value = true
         val dir = storagePaths.debugLogsDir
         if (!dir.exists()) dir.mkdirs()
@@ -69,16 +73,21 @@ class DebugLogger @Inject constructor(
         }
         startFlushLoop()
         log("DebugLogger", "Debug mode enabled, session started")
+        CoroutineScope(Dispatchers.IO).launch {
+            userPrefs.setDebugMode(true)
+        }
     }
 
     fun disable() {
         log("DebugLogger", "Debug mode disabled")
-        prefs.edit().putBoolean("debug_mode", false).apply()
         _enabled.value = false
         flush()
         flushJob?.cancel()
         flushJob = null
         _logLines.value = emptyList()
+        CoroutineScope(Dispatchers.IO).launch {
+            userPrefs.setDebugMode(false)
+        }
     }
 
     fun log(tag: String, message: String) {
@@ -154,14 +163,14 @@ class DebugLogger @Inject constructor(
         val file = currentLogFile ?: return
         if (buffer.isEmpty()) return
         try {
-            val writer = BufferedWriter(FileWriter(file, true))
-            while (true) {
-                val line = buffer.poll() ?: break
-                writer.write(line)
-                writer.newLine()
+            BufferedWriter(FileWriter(file, true)).use { writer ->
+                while (true) {
+                    val line = buffer.poll() ?: break
+                    writer.write(line)
+                    writer.newLine()
+                }
+                writer.flush()
             }
-            writer.flush()
-            writer.close()
         } catch (_: IOException) {
         }
     }

@@ -1,6 +1,5 @@
 package cn.vectory.syncplayer.player
 
-import android.content.Context
 import android.content.pm.ActivityInfo
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -9,17 +8,13 @@ import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.model.OrientationPreference
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
+import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-/**
- * Temporary store for passing folder-scoped video IDs from BrowserScreen to PlayerScreen.
- * Set by BrowserViewModel before navigation, Read by PlayerViewModel on init.
- */
 object PlayerNavigationStore {
     var folderVideoIds: List<Long> = emptyList()
 }
@@ -29,7 +24,7 @@ class PlayerViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val videoRepository: VideoRepository,
     private val playbackRepository: PlaybackRepository,
-    @ApplicationContext private val context: Context
+    private val userPrefs: UserPreferencesRepository
 ) : ViewModel() {
 
     private val _videoItem = MutableStateFlow<VideoItemEntity?>(null)
@@ -47,15 +42,16 @@ class PlayerViewModel @Inject constructor(
     val allVideoIds: StateFlow<List<Long>> = _allVideoIds.asStateFlow()
 
     init {
-        val prefs = context.getSharedPreferences("player_prefs", Context.MODE_PRIVATE)
-        _speedMultiplier.value = prefs.getFloat("long_press_speed", 2.0f)
-        val prefStr = prefs.getString("orientation", null)
-        _orientationPreference.value = try {
-            OrientationPreference.valueOf(prefStr ?: OrientationPreference.FOLLOW_VIDEO.name)
-        } catch (_: Exception) {
-            OrientationPreference.FOLLOW_VIDEO
-        }
         loadFolderVideoIds()
+        viewModelScope.launch {
+            _speedMultiplier.value = userPrefs.getLongPressSpeed()
+            val prefStr = userPrefs.getOrientation()
+            _orientationPreference.value = try {
+                OrientationPreference.valueOf(prefStr ?: OrientationPreference.FOLLOW_VIDEO.name)
+            } catch (_: Exception) {
+                OrientationPreference.FOLLOW_VIDEO
+            }
+        }
     }
 
     private fun loadFolderVideoIds() {

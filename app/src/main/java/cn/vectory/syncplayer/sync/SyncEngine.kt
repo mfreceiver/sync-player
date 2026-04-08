@@ -17,7 +17,10 @@ import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,6 +46,8 @@ class SyncEngine @Inject constructor(
     private val _progress = MutableStateFlow(SyncProgress())
     val progress: StateFlow<SyncProgress> = _progress.asStateFlow()
 
+    private val syncMutex = Mutex()
+
     private fun getLocalSyncRoot(relation: SyncRelation): File =
         storagePaths.resolveUserData(relation.localBasePath.trimStart('/')).also { it.mkdirs() }
 
@@ -63,7 +68,7 @@ class SyncEngine @Inject constructor(
         }
     }
 
-    suspend fun dryRun(relationId: Long): Pair<List<SyncAction>, List<SyncAction>> {
+    suspend fun dryRun(relationId: Long): Pair<List<SyncAction>, List<SyncAction>> = syncMutex.withLock {
         val relation = syncRelationRepository.getById(relationId) ?: return Pair(emptyList(), emptyList())
         val source = syncSourceRepository.getById(relation.syncSourceId) ?: return Pair(emptyList(), emptyList())
         val client = getClient(source.protocol)
@@ -136,6 +141,8 @@ class SyncEngine @Inject constructor(
             }
 
             _progress.value = SyncProgress(phase = SyncPhase.CONFIRMING)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             _progress.value = SyncProgress(phase = SyncPhase.FAILED)
             syncLogRepository.log(
@@ -156,7 +163,7 @@ class SyncEngine @Inject constructor(
         relationId: Long,
         toDownload: List<SyncAction>,
         toDelete: List<SyncAction>
-    ): Boolean {
+    ): Boolean = syncMutex.withLock {
         val relation = syncRelationRepository.getById(relationId) ?: return false
         val source = syncSourceRepository.getById(relation.syncSourceId) ?: return false
         val client = getClient(source.protocol)
@@ -262,6 +269,8 @@ class SyncEngine @Inject constructor(
 
             syncRelationRepository.updateLastSync(relationId, "成功：下载 ${toDownload.size} 个，删除 ${toDelete.size} 个")
             return true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             _progress.value = SyncProgress(
                 isRunning = false,
@@ -285,7 +294,7 @@ class SyncEngine @Inject constructor(
         _progress.value = SyncProgress()
     }
 
-    suspend fun dryRunDelete(relationId: Long): Pair<List<SyncAction>, String?> {
+    suspend fun dryRunDelete(relationId: Long): Pair<List<SyncAction>, String?> = syncMutex.withLock {
         val relation = syncRelationRepository.getById(relationId) ?: return Pair(emptyList(), "未找到关联")
         val source = syncSourceRepository.getById(relation.syncSourceId) ?: return Pair(emptyList(), "未找到来源")
         val client = getClient(source.protocol)
@@ -319,6 +328,8 @@ class SyncEngine @Inject constructor(
 
             _progress.value = SyncProgress(phase = SyncPhase.CONFIRMING)
             return Pair(toDelete, null)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             _progress.value = SyncProgress(phase = SyncPhase.FAILED)
             return Pair(emptyList(), e.message)
@@ -327,7 +338,7 @@ class SyncEngine @Inject constructor(
         }
     }
 
-    suspend fun executeDelete(relationId: Long, actions: List<SyncAction>): Boolean {
+    suspend fun executeDelete(relationId: Long, actions: List<SyncAction>): Boolean = syncMutex.withLock {
         val relation = syncRelationRepository.getById(relationId) ?: return false
         val source = syncSourceRepository.getById(relation.syncSourceId) ?: return false
         val client = getClient(source.protocol)
@@ -386,6 +397,8 @@ class SyncEngine @Inject constructor(
 
             syncRelationRepository.updateLastSync(relationId, "成功：删除 ${actions.size} 个文件")
             return true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             _progress.value = SyncProgress(
                 isRunning = false,

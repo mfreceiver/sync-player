@@ -1,0 +1,32 @@
+package cn.vectory.syncplayer.ui.util
+
+internal val VIDEO_EXTENSIONS = setOf(
+    "mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "ts", "m4v", "3gp", "mpeg", "mpg"
+)
+
+internal fun isVideoFile(fileName: String): Boolean {
+    val ext = fileName.substringAfterLast('.', "").lowercase()
+    return ext in VIDEO_EXTENSIONS
+}
+
+internal fun getMimeType(fileName: String): String {
+    val ext = fileName.substringAfterLast('.', "").lowercase()
+    return when (ext) {
+        in VIDEO_EXTENSIONS -> "video/*"
+        "jpg", "jpeg" -> "image/jpeg"
+        "png" -> "image/png"
+        "gif" -> "image/gif"
+        "bmp" -> "image/bmp"
+        "webp" -> "image/webp"
+        "mp3" -> "audio/mpeg"
+        "flac" -> "audio/flac"
+        "wav" -> "audio/wav"
+        "aac" -> "audio/aac"
+        "ogg" -> "audio/ogg"
+        "srt" -> "text/plain"
+        "ass" -> "text/plain"
+        "nfo" -> "text/plain"
+        "txt" -> "text/plain"
+        else -> "application/octet-stream"
+    }
+}

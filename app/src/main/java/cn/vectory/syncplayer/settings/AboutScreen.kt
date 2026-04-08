@@ -1,7 +1,6 @@
 package cn.vectory.syncplayer.settings
 
 import android.content.Intent
-import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -11,7 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -20,6 +19,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.BuildConfig
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,10 +31,13 @@ fun AboutScreen(
     val debugMode by viewModel.debugMode.collectAsStateWithLifecycle()
     val previousSummary by viewModel.previousSessionSummary.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     var logViewerExpanded by remember { mutableStateOf(false) }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("关于") },
@@ -120,7 +123,7 @@ fun AboutScreen(
                                         }
                                         context.startActivity(Intent.createChooser(shareIntent, "导出调试日志"))
                                     } else {
-                                        Toast.makeText(context, "无日志可导出", Toast.LENGTH_SHORT).show()
+                                        scope.launch { snackbarHostState.showSnackbar("无日志可导出") }
                                     }
                                 }) {
                                     Text("导出日志")
@@ -188,8 +191,9 @@ fun AboutScreen(
 
 @Composable
 private fun LogEntryItem(log: SyncLogEntity) {
+    val extendedColors = LocalExtendedColors.current
     val statusColor = when (log.status) {
-        "SUCCESS" -> Color(0xFF4CAF50)
+        "SUCCESS" -> extendedColors.successGreen
         "FAILED" -> MaterialTheme.colorScheme.error
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }

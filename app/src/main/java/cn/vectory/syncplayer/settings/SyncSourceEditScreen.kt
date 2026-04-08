@@ -10,7 +10,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -19,7 +19,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.data.model.SyncProtocol
 
-private val PlaceholderColor = Color(0xFF9E9E9E)
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -28,6 +28,7 @@ fun SyncSourceEditScreen(
     onNavigateToSourceList: () -> Unit,
     viewModel: SyncSourceEditViewModel = hiltViewModel()
 ) {
+    val extendedColors = LocalExtendedColors.current
     val name by viewModel.name.collectAsStateWithLifecycle()
     val protocol by viewModel.protocol.collectAsStateWithLifecycle()
     val host by viewModel.host.collectAsStateWithLifecycle()
@@ -68,7 +69,7 @@ fun SyncSourceEditScreen(
                         value = name,
                         onValueChange = { viewModel.name.value = it },
                         label = { Text("名称") },
-                        placeholder = { Text("家庭NAS", color = PlaceholderColor) },
+                        placeholder = { Text("家庭NAS", color = extendedColors.placeholderGrey) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
@@ -92,7 +93,7 @@ fun SyncSourceEditScreen(
                         value = host,
                         onValueChange = { viewModel.host.value = it },
                         label = { Text("服务器地址") },
-                        placeholder = { Text("192.168.1.100", color = PlaceholderColor) },
+                        placeholder = { Text("192.168.1.100", color = extendedColors.placeholderGrey) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
