@@ -1,7 +1,7 @@
 # Sync Player — Project Context for AI Sessions
 
-> Last updated: 2026-04-03
-> Status: Active development, all P0 features implemented
+> Last updated: 2026-04-08
+> Status: Active development, v6.1.0, all P0 features implemented
 
 ---
 
@@ -24,7 +24,7 @@
 | Architecture | MVVM + Repository, Single Activity | — |
 | Navigation | Navigation Compose | 2.9.0 |
 | DI | Hilt | 2.54 |
-| DB | Room | 2.7.0, schema v3 |
+| DB | Room | 2.7.0, schema v6 |
 | Video Player | Media3 / ExoPlayer | 1.6.0 |
 | SMB Client | jcifs-ng | 2.1.10 |
 | SFTP Client | SSHJ | 0.39.0 |
@@ -53,27 +53,19 @@ JAVA_HOME=/home/mar/android-studio/jbr ANDROID_HOME=/home/mar/android-sdk ./grad
 ```bash
 # From project root /home/mar/sync-player
 JAVA_HOME=/home/mar/android-studio/jbr ANDROID_HOME=/home/mar/android-sdk ./gradlew assembleDebug --no-daemon
-# Output: app/build/outputs/apk/debug/app-debug.apk (~74MB)
+# Output: app/build/outputs/apk/debug/app-debug.apk
 ```
 
-### Build Release APK (signed)
+### Build Release APK (signed, minified with R8)
 ```bash
 JAVA_HOME=/home/mar/android-studio/jbr ANDROID_HOME=/home/mar/android-sdk ./gradlew assembleRelease --no-daemon
-# Output: app/build/outputs/apk/release/app-release-unsigned.apk
-
-# Sign with debug key
-jarsigner -verbose -keystore ~/.android/debug.keystore \
-  -storepass android \
-  -signedjar app/build/outputs/apk/release/app-release-unsigned.apk \
-  app/build/outputs/apk/release/app-release.apk \
-  androiddebugkey
-
-# Rename
-mv app/build/outputs/apk/release/app-release-unsigned.apk \
-   app/build/outputs/apk/release/app-release.apk
+# Output: app/build/outputs/apk/release/app-release.apk (~12MB, R8 minified)
+# Signing: automatically signed via release keystore configured in local.properties
+#   release.storeFile=release.keystore (at app/release.keystore)
+#   release.keyAlias=release
 ```
 
-**No Kotlin LSP is installed in this environment.** The Gradle build IS the syntax/type verification — always run `compileDebugKotlin` (fast) or `assembleDebug` (full APK) after code changes.
+**No Kotlin LSP is installed in this environment.** The Gradle build IS the syntax/type verification — always run `compileDebugKotlin` (fast, ~30s) or `assembleRelease` (full APK, ~1.5min) after code changes.
 
 ---
 
@@ -82,69 +74,82 @@ mv app/build/outputs/apk/release/app-release-unsigned.apk \
 ```
 app/src/main/java/cn/vectory/syncplayer/
 ├── MainActivity.kt                    # Single Activity, setContent
-├── SyncPlayerApp.kt                   # @HiltAndroidApp Application
+├── SyncPlayerApp.kt                   # @HiltAndroidApp Application, triggers StoragePaths migration
+├── storage/
+│   └── StoragePaths.kt                # Centralized path management (userdata/, thumbnails/, debug-logs/)
 ├── data/
 │   ├── local/
-│   │   ├── AppDatabase.kt             # Room DB v3 (exportSchema=false)
+│   │   ├── AppDatabase.kt             # Room DB v6, includes MIGRATION_5_6
 │   │   ├── dao/
-│   │   │   ├── ServerConfigDao.kt     # Server config CRUD (single row)
+│   │   │   ├── SyncSourceDao.kt       # Sync source CRUD (SMB/SFTP servers)
+│   │   │   ├── SyncRelationDao.kt     # Sync relations (source + local/remote path pairs)
 │   │   │   ├── VideoItemDao.kt        # Video file metadata queries
-│   │   │   ├── PlaybackRecordDao.kt   # Playback progress, favorites, getFavorites()
+│   │   │   ├── PlaybackRecordDao.kt   # Playback progress, favorites
 │   │   │   ├── SyncLogDao.kt          # Sync operation logs
 │   │   │   └── VideoMetadataCacheDao.kt # Metadata cache (path+name+size keyed)
 │   │   └── entity/
-│   │       ├── ServerConfigEntity.kt  # SMB/SFTP connection config
-│   │       ├── VideoItemEntity.kt     # Synced video file record (has frameRate)
+│   │       ├── SyncSourceEntity.kt    # SMB/SFTP connection config
+│   │       ├── SyncRelationEntity.kt  # Sync relation (source + localBasePath + remotePath)
+│   │       ├── VideoItemEntity.kt     # Synced video file record
 │   │       ├── PlaybackRecordEntity.kt # Play position, isCompleted, isFavorite
 │   │       ├── SyncLogEntity.kt       # Sync operation history
 │   │       └── VideoMetadataCacheEntity.kt # Cached metadata (duration, resolution, frameRate)
 │   ├── model/
-│   │   ├── BrowseItem.kt              # UI model for browser items (has frameRate)
+│   │   ├── BrowseItem.kt              # UI model for browser items
 │   │   ├── SyncAction.kt              # DOWNLOAD, DELETE_LOCAL, DELETE_BOTH
 │   │   ├── SyncProgress.kt            # Sync progress state
 │   │   ├── SyncProtocol.kt            # SMB / SFTP enum
-│   │   ├── ServerConfig.kt            # Domain model for server config
+│   │   ├── SyncRelation.kt            # Domain model for sync relation
+│   │   ├── SyncSource.kt              # Domain model for sync source
+│   │   ├── SyncRelationWithSource.kt  # Joined model for UI
 │   │   ├── RemoteFile.kt              # Remote file info model
 │   │   └── OrientationPreference.kt   # Player orientation settings
 │   └── repository/
 │       ├── VideoRepository.kt         # Video item CRUD + folder queries
-│       ├── PlaybackRepository.kt      # Playback records, getFavorites()
-│       ├── ServerConfigRepository.kt  # Server config management
+│       ├── PlaybackRepository.kt      # Playback records, favorites
+│       ├── SyncSourceRepository.kt    # Sync source management (encrypted passwords)
+│       ├── SyncRelationRepository.kt  # Sync relation management, basePath conflict detection
 │       └── SyncLogRepository.kt      # Sync log queries
+├── debug/
+│   ├── DebugLogger.kt                 # Debug logging with file output, session management
+│   └── DebugLogScreen.kt             # Debug log viewer UI
 ├── di/
-│   ├── DatabaseModule.kt              # Room DB + all DAO providers
+│   ├── DatabaseModule.kt              # Room DB + all DAO/repo providers + EncryptedSharedPreferences
 │   └── SyncModule.kt                  # RemoteFileClient binding (SMB/SFTP)
 ├── navigation/
-│   ├── Route.kt                       # Sealed class: Browser, BrowserFolder, Player, Settings, SyncPreview, DeletePreview
+│   ├── Route.kt                       # Sealed class: Browser, BrowserFolder, Player, Settings, SyncPreview, DeletePreview, SyncSourceList, SyncRelationList, SyncRelationEdit, About
 │   └── AppNavHost.kt                  # NavHost with all composable routes
 ├── browser/
-│   ├── BrowserScreen.kt               # File browser UI (grid/list, sort, filter, progress rings)
-│   └── BrowserViewModel.kt            # Folder navigation, video list state
+│   ├── BrowserScreen.kt               # File browser UI (grid/list, sort, filter, progress rings, thumbnails)
+│   └── BrowserViewModel.kt            # Folder navigation, video list, thumbnail auto-repair
 ├── player/
 │   ├── GesturePlayerView.kt           # Custom ExoPlayer view with gesture handling
 │   ├── PlayerScreen.kt                # Full-screen player UI
 │   └── PlayerViewModel.kt             # Playback state, progress save/restore
 ├── settings/
-│   ├── SettingsScreen.kt              # Server config, sync path, speed multiplier, debug log viewer
-│   └── SettingsViewModel.kt           # Settings state management
+│   ├── SettingsScreen.kt              # Main settings hub
+│   ├── SettingsViewModel.kt           # Settings state, debug mode toggle
+│   ├── PlaybackSettingsScreen.kt      # Playback speed, debug log export
+│   ├── SyncSourceListScreen.kt        # Sync source list management
+│   ├── SyncRelationListScreen.kt      # Sync relation list management
+│   ├── SyncRelationEditScreen.kt      # Sync relation create/edit with local/remote browser
+│   ├── SyncRelationEditViewModel.kt   # Sync relation state, local directory browsing
+│   └── AboutScreen.kt                # App info
 ├── sync/
 │   ├── SyncEngine.kt                  # Core sync logic: dryRun(), executeSync(), dryRunDelete(), executeDelete()
 │   ├── SyncPreviewScreen.kt           # Sync preview UI with download/delete mode tabs
 │   ├── SyncPreviewViewModel.kt        # Preview state (toDownload, toDelete lists)
-│   ├── DeletePreviewScreen.kt         # Delete confirmation UI
-│   ├── DeletePreviewViewModel.kt      # Delete preview state
 │   ├── SyncService.kt                 # Foreground service for sync operations
 │   ├── SyncNotificationHelper.kt      # Notification management
 │   ├── RemoteFileClient.kt            # Interface: listFiles(), downloadFile(), deleteFile()
-│   ├── VideoMetadataExtractor.kt      # Cache-first metadata extraction
+│   ├── VideoMetadataExtractor.kt      # Cache-first metadata extraction, thumbnail generation + repair
 │   ├── smb/SmbFileClient.kt           # SMB implementation (jcifs-ng)
-│   ├── sftp/SftpFileClient.kt         # SFTP implementation (SSHJ)
-│   └── SyncMode.kt (in SyncPreviewScreen.kt) # enum DOWNLOAD, DELETE
+│   └── sftp/SftpFileClient.kt         # SFTP implementation (SSHJ)
 └── ui/
     └── theme/                         # Material 3 theme (Color, Theme, Type)
 
 app/src/main/res/
-├── xml/filepaths.xml                  # FileProvider paths: synced/, thumbnails/
+├── xml/filepaths.xml                  # FileProvider paths: userdata/, cache/
 └── ...
 ```
 
@@ -176,15 +181,19 @@ sealed class Route(val route: String) {
 
 ---
 
-## 6. Database Schema (Room v3)
+## 6. Database Schema (Room v6)
 
 | Entity | PK | Key Fields | Notes |
 |---|---|---|---|
-| ServerConfigEntity | id (fixed=1) | protocol, host, port, username, encryptedPassword, remotePath | Single row |
-| VideoItemEntity | id (auto) | relativePath, fileName, localAbsolutePath, fileSize, duration, frameRate, dateSynced, remoteModifiedTime | One per synced file |
+| SyncSourceEntity | id (auto) | name, protocol, host, port, username, encryptedPassword | Multiple sync sources supported |
+| SyncRelationEntity | id (auto) | name, syncSourceId (FK), remotePath, localBasePath (relative to userdata), lastSyncTime, lastSyncResult | localBasePath is unique, nesting conflict checked |
+| VideoItemEntity | id (auto) | relativePath, fileName, localAbsolutePath, fileSize, duration, frameRate, thumbnailPath, syncRelationId | One per synced file |
 | PlaybackRecordEntity | id (auto) | videoItemId (FK, UNIQUE), position, duration, lastPlayedTime, isCompleted (>90%), isFavorite | 1:1 with VideoItem |
 | SyncLogEntity | id (auto) | timestamp, dryRun, action, relativePath, fileSize, status, errorMessage | Sync history |
-| VideoMetadataCacheEntity | id (auto) | filePath, fileName, fileSize, duration, width, height, frameRate, extractedAt | Cache keyed by path+name+size |
+| VideoMetadataCacheEntity | id (auto) | localAbsolutePath, fileName, fileSize, duration, width, height, frameRate, bitrate, thumbnailPath | Cache keyed by path+name+size |
+
+**Migration History**:
+- v5→v6: Updated `video_item.localAbsolutePath` to include `userdata/` segment; cleared `video_metadata_cache` for rebuild
 
 ---
 
@@ -233,15 +242,32 @@ sealed class Route(val route: String) {
 - **Back navigation**: from player returns to the folder the video was opened from (nav stack)
 - **Completed videos**: show full progress ring (progress=1f) instead of checkmark
 - **Video metadata line**: shows extension, resolution, frame rate
-- **Sort**: dropdown menu (name, date, size, duration) with direction toggle
-- **Filter**: "仅视频" (video-only) filter
-- **Thumbnails**: generated via MediaMetadataRetriever, cached in cache/thumbnails/
+- **Sort**: dropdown menu (filename, duration) with direction toggle
+- **Filter**: "全部", "仅视频", "仅预删除" filters
+- **Thumbnails**: generated via MediaMetadataRetriever, stored in `filesDir/thumbnails/`, auto-repaired when missing
 - **Non-video files**: show file icon, toast "该文件无法播放" on click
+- **Pre-delete (favorite)**: "喜欢" repurposed as "预删除" marker — files marked for deletion are visually distinct with delete icon
 
 ### Storage
-- Synced files: `context.filesDir/synced/`
-- Thumbnails: `context.cacheDir/thumbnails/`
-- Passwords: EncryptedSharedPreferences (Android Keystore)
+All paths managed centrally by `StoragePaths` (singleton, injected via Hilt).
+
+```
+context.filesDir/
+├── userdata/          ← User-visible data (sync folders, manually created folders)
+│   ├── movies/        ← Synced via SyncRelation.localBasePath="movies"
+│   └── drama/         ← Manually created by user
+├── thumbnails/        ← Auto-generated video thumbnails (self-healing)
+├── debug-logs/        ← Debug session logs (self-healing)
+└── sync-player.db     ← Room database
+```
+
+- User data root: `StoragePaths.userdataRoot` = `filesDir/userdata/`
+- Thumbnails: `StoragePaths.thumbnailsDir` = `filesDir/thumbnails/` (auto-mkdirs)
+- Debug logs: `StoragePaths.debugLogsDir` = `filesDir/debug-logs/` (auto-mkdirs)
+- Thumbnail auto-repair: `BrowserViewModel.repairMissingThumbnails()` detects missing thumbnail files and re-extracts asynchronously
+- FileProvider: only exposes `userdata/` and `cache/` (see `res/xml/filepaths.xml`)
+- Passwords: EncryptedSharedPreferences (`secure_prefs`) via Android Keystore
+- One-time migration: `StoragePaths.migrateToUserdataLayout()` moves pre-existing user dirs from `filesDir` root into `userdata/` (idempotent, marker file `.userdata_migrated`)
 
 ---
 
@@ -273,7 +299,7 @@ fix: favorite button, sync progress UI, seek clamp, swipe direction
 TOKEN=$(grep 'git.vectory' ~/.git-credentials | head -1 | sed 's|https://||' | sed 's|@.*||' | cut -d: -f2)
 GITEA_API="https://git.vectory.cn:18443/api/v1"
 REPO="mfreceiver/sync-player"
-VERSION="v4.0.0"
+VERSION="v6.1.0"
 
 # Step 1: Create release (if not exists)
 RELEASE_ID=$(curl -s "${GITEA_API}/repos/${REPO}/releases/tags/${VERSION}" \
@@ -283,20 +309,18 @@ if [ -z "$RELEASE_ID" ]; then
     RELEASE_ID=$(curl -s -X POST "${GITEA_API}/repos/${REPO}/releases" \
         -H "Authorization: token $TOKEN" \
         -H "Content-Type: application/json" \
-        -d "{\"tag_name\":\"${VERSION}\",\"target_commitish\":\"master\",\"name\":\"${VERSION}\",\"body\":\"fix description\",\"draft\":false,\"prerelease\":false}" \
+        -d "{\"tag_name\":\"${VERSION}\",\"target_commitish\":\"master\",\"name\":\"${VERSION}\",\"body\":\"release description\",\"draft\":false,\"prerelease\":false}" \
         | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 fi
 
-# Step 2: Upload APK (~74MB, may take several minutes)
-curl -X POST "${GITEA_API}/repos/${REPO}/releases/${RELEASE_ID}/assets?name=app-debug.apk" \
+# Step 2: Upload Release APK (~12MB, R8 minified)
+curl -X POST "${GITEA_API}/repos/${REPO}/releases/${RELEASE_ID}/assets?name=app-release.apk" \
     -H "Authorization: token $TOKEN" \
     -H "Content-Type: application/vnd.android.package-archive" \
-    --data-binary @app/build/outputs/apk/debug/app-debug.apk \
-    --max-time 600
+    --data-binary @app/build/outputs/apk/release/app-release.apk \
+    --max-time 300
 ```
-**Note**: APK upload is ~74MB and may take several minutes. Use `--max-time 600` to avoid timeout. If upload times out, retry with longer timeout or use a tmux session.
-
- For Chinese body text, avoid `curl -d` with inline Chinese — use Python `json.dumps()` instead.
+**Note**: Release APK is ~12MB (R8 minified). Use `--max-time 300`. For Chinese body text, avoid `curl -d` with inline Chinese — use Python `json.dumps()` instead.
 
 ### Versioning Rule
 **After every `git commit` + `git push`, increment the app version number by +1 (major version).**
@@ -307,13 +331,13 @@ curl -X POST "${GITEA_API}/repos/${REPO}/releases/${RELEASE_ID}/assets?name=app-
 ---
 
 ## 9. Known Issues & Limitations
-- No Kotlin LSP in dev environment — rely on `./gradlew assembleDebug` for verification
+- No Kotlin LSP in dev environment — rely on `./gradlew assembleRelease` for verification
 - No test suite currently
-- `fallbackToDestructiveMigration()` deprecated — should update to parameterized version
+- `fallbackToDestructiveMigration()` still present but protected by explicit migrations (v5→v6)
 - Sync runs via foreground service (not in WorkManager)
 - No background/periodic sync (intentional — manual trigger only)
-- Thumbnails generated on-demand, no pre-generation during sync
-- APK upload to Gitea can timeout for large files (~74MB) — use `--max-time 600` or tmux session
+- Thumbnail repair runs during browsing (not proactive on app start)
+- APK upload to Gitea can timeout for large files — use `--max-time 600` or tmux session
 
 ---
 
@@ -322,8 +346,8 @@ All user-facing strings are in **Chinese (zh-CN)**:
 - "同步预览", "下载", "删除", "确认下载", "确认删除"
 - "取消", "返回", "重试"
 - "本地文件已是最新", "同步摘要"
-- "仅视频" filter
-- "喜欢" for favorites
+- "全部", "仅视频", "仅预删除" filters
+- "预删除" for favorite/marked-for-delete
 - "该文件无法播放" for non-video files
 
 Code (variable names, comments) is in **English**.
