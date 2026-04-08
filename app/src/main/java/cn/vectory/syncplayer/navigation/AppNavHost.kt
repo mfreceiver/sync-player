@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.navigation
 import androidx.compose.runtime.Composable
 import cn.vectory.syncplayer.debug.DebugLogger
 import androidx.compose.runtime.LaunchedEffect
+import androidx.navigation.NavController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -27,8 +28,7 @@ import cn.vectory.syncplayer.sync.SyncPreviewViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
 
 @Composable
-fun AppNavHost(debugLogger: DebugLogger) {
-    val navController = rememberNavController()
+fun AppNavHost(debugLogger: DebugLogger, navController: NavController = rememberNavController()) {
 
     LaunchedEffect(Unit) {
         navController.addOnDestinationChangedListener { _, destination, _ ->

@@ -25,6 +25,7 @@ fun PlaybackSettingsScreen(
     val orientationPreference by viewModel.orientationPreference.collectAsStateWithLifecycle()
     val defaultSortMode by viewModel.defaultSortMode.collectAsStateWithLifecycle()
     val defaultFilter by viewModel.defaultFilter.collectAsStateWithLifecycle()
+    val maxConcurrentDownloads by viewModel.maxConcurrentDownloads.collectAsStateWithLifecycle()
     var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -116,6 +117,28 @@ fun PlaybackSettingsScreen(
                                 selected = defaultFilter == filter,
                                 onClick = { viewModel.setDefaultFilter(filter) },
                                 label = { Text(filterLabel(filter), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("并发下载数", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "同时下载的文件数量，增大可提升同步速度",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(1, 2, 3).forEach { count ->
+                            FilterChip(
+                                selected = maxConcurrentDownloads == count,
+                                onClick = { viewModel.setMaxConcurrentDownloads(count) },
+                                label = { Text("$count 个", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             )
                         }
                     }

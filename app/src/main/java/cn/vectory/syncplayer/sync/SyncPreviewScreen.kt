@@ -14,6 +14,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import cn.vectory.syncplayer.data.model.ActiveDownload
 import cn.vectory.syncplayer.data.model.SyncAction
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -212,6 +213,7 @@ fun SyncPreviewScreen(
                             totalFiles = progress.totalFiles,
                             transferredBytes = progress.transferredBytes,
                             totalBytes = progress.totalBytes,
+                            activeDownloads = progress.activeDownloads,
                             currentFileName = progress.currentFileName,
                             currentFileProgress = progress.currentFileProgress
                         )
@@ -383,6 +385,7 @@ private fun SyncProgressCard(
     totalFiles: Int,
     transferredBytes: Long,
     totalBytes: Long,
+    activeDownloads: List<ActiveDownload>,
     currentFileName: String,
     currentFileProgress: Float
 ) {
@@ -436,7 +439,42 @@ private fun SyncProgressCard(
                 }
             }
 
-            if (currentFileName.isNotEmpty()) {
+            if (activeDownloads.size > 1) {
+                HorizontalDivider()
+                Text(
+                    text = "正在下载 ${activeDownloads.size} 个文件",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                activeDownloads.forEach { download ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            progress = { download.progress },
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Text(
+                            text = download.fileName,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (download.progress > 0) {
+                            Text(
+                                text = "%.0f%%".format(download.progress * 100),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            } else if (currentFileName.isNotEmpty()) {
                 HorizontalDivider()
                 Row(
                     modifier = Modifier.fillMaxWidth(),

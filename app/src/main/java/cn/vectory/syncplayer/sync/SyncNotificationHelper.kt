@@ -2,9 +2,11 @@ package cn.vectory.syncplayer.sync
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
-import android.os.Build
+import android.content.Intent
 import androidx.core.app.NotificationCompat
+import cn.vectory.syncplayer.MainActivity
 import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProgress
 
@@ -12,6 +14,12 @@ object SyncNotificationHelper {
 
     private const val CHANNEL_ID = "sync_channel"
     const val NOTIFICATION_ID = 1001
+    const val COMPLETE_NOTIFICATION_ID = 1002
+
+    private const val ACTION_NAVIGATE_SYNC = "cn.vectory.syncplayer.NAVIGATE_SYNC"
+    private const val ACTION_NAVIGATE_FOLDER = "cn.vectory.syncplayer.NAVIGATE_FOLDER"
+    private const val EXTRA_RELATION_ID = "notification_relation_id"
+    private const val EXTRA_LOCAL_BASE_PATH = "notification_local_base_path"
 
     fun createNotificationChannel(context: Context) {
         val channel = NotificationChannel(
@@ -26,46 +34,109 @@ object SyncNotificationHelper {
         manager.createNotificationChannel(channel)
     }
 
-    fun createNotification(context: Context, progress: SyncProgress): android.app.Notification {
+    fun createOngoingNotification(context: Context, progress: SyncProgress): android.app.Notification {
+        val name = progress.relationName.ifEmpty { "同步" }
+        val percent = progress.downloadPercent
+        val eta = progress.etaFormatted()
+
         val title = when (progress.phase) {
-            SyncPhase.SCANNING -> "正在扫描远程文件…"
-            SyncPhase.DOWNLOADING -> "正在下载文件…"
-            SyncPhase.DELETING -> "正在清理文件…"
-            SyncPhase.COMPLETED -> "同步完成"
-            SyncPhase.FAILED -> "同步失败"
-            SyncPhase.CANCELLED -> "同步已取消"
-            else -> "正在同步…"
+            SyncPhase.SCANNING -> "$name - 正在扫描…"
+            SyncPhase.DOWNLOADING -> "$name 已下载 $percent%"
+            SyncPhase.DELETING -> "$name - 正在清理…"
+            else -> "$name - 正在同步…"
         }
 
         val content = buildString {
-            append(progress.currentFileName.takeIf { it.isNotEmpty() } ?: "准备中…")
+            if (progress.activeDownloads.size > 1) {
+                append("正在下载 ${progress.activeDownloads.size} 个文件")
+            } else {
+                append(progress.currentFileName.takeIf { it.isNotEmpty() } ?: "准备中…")
+            }
             append(" (${progress.completedFiles}/${progress.totalFiles})")
+            append("  剩余 $eta")
         }
 
-        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+        val pendingIntent = createSyncPendingIntent(context, progress.relationId)
+
+        return NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentTitle(title)
             .setContentText(content)
-            .setOngoing(progress.phase != SyncPhase.COMPLETED && progress.phase != SyncPhase.FAILED)
-            .setProgress(progress.totalFiles, progress.completedFiles, progress.totalFiles == 0)
+            .setOngoing(true)
+            .setProgress(100, percent, false)
+            .setContentIntent(pendingIntent)
+            .build()
+    }
 
-        if (progress.transferredBytes > 0) {
-            builder.setSubText(formatSpeed(progress.speedBytesPerSec))
+    fun createCompleteNotification(context: Context, progress: SyncProgress): android.app.Notification {
+        val name = progress.relationName.ifEmpty { "同步" }
+        val title = "$name 已下载完成"
+
+        val content = buildString {
+            append("共 ${progress.completedFiles} 个文件")
+            if (progress.transferredBytes > 0) {
+                append("  ${formatFileSize(progress.transferredBytes)}")
+            }
         }
 
-        return builder.build()
+        val pendingIntent = createFolderPendingIntent(context, progress.localBasePath)
+
+        return NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
+            .setContentTitle(title)
+            .setContentText(content)
+            .setAutoCancel(true)
+            .setOngoing(false)
+            .setContentIntent(pendingIntent)
+            .build()
     }
 
     fun updateNotification(context: Context, progress: SyncProgress) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, createNotification(context, progress))
+        if (progress.phase == SyncPhase.COMPLETED) {
+            manager.notify(COMPLETE_NOTIFICATION_ID, createCompleteNotification(context, progress))
+            manager.cancel(NOTIFICATION_ID)
+        } else {
+            manager.notify(NOTIFICATION_ID, createOngoingNotification(context, progress))
+        }
     }
 
-    private fun formatSpeed(bytesPerSec: Long): String {
+    private fun createSyncPendingIntent(context: Context, relationId: Long): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = ACTION_NAVIGATE_SYNC
+            putExtra("navigateTo", "syncPreview")
+            putExtra(EXTRA_RELATION_ID, relationId)
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        return PendingIntent.getActivity(
+            context,
+            (relationId % Int.MAX_VALUE).toInt(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun createFolderPendingIntent(context: Context, localBasePath: String): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = ACTION_NAVIGATE_FOLDER
+            putExtra("navigateTo", "browser")
+            putExtra(EXTRA_LOCAL_BASE_PATH, localBasePath)
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        return PendingIntent.getActivity(
+            context,
+            COMPLETE_NOTIFICATION_ID,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun formatFileSize(bytes: Long): String {
         return when {
-            bytesPerSec >= 1024 * 1024 -> "%.1f MB/s".format(bytesPerSec / (1024.0 * 1024))
-            bytesPerSec >= 1024 -> "%.0f KB/s".format(bytesPerSec / 1024.0)
-            else -> "$bytesPerSec B/s"
+            bytes >= 1024L * 1024 * 1024 -> "%.1f GB".format(bytes / (1024.0 * 1024 * 1024))
+            bytes >= 1024L * 1024 -> "%.0f MB".format(bytes / (1024.0 * 1024))
+            bytes >= 1024 -> "%.1f KB".format(bytes / 1024.0)
+            else -> "$bytes B"
         }
     }
 }

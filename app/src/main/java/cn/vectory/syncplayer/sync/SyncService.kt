@@ -4,6 +4,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.IBinder
+import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProgress
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
@@ -27,7 +28,7 @@ class SyncService : Service() {
         SyncNotificationHelper.createNotificationChannel(this)
         startForeground(
             SyncNotificationHelper.NOTIFICATION_ID,
-            SyncNotificationHelper.createNotification(this, SyncProgress())
+            SyncNotificationHelper.createOngoingNotification(this, SyncProgress())
         )
     }
 
@@ -39,22 +40,46 @@ class SyncService : Service() {
 
         val relationId = intent?.getLongExtra(EXTRA_RELATION_ID, 0L) ?: 0L
 
+        if (syncJob?.isActive == true) {
+            return START_NOT_STICKY
+        }
+
         syncJob?.cancel()
         syncJob = serviceScope.launch {
-            val (toDownload, toDelete) = syncEngine.dryRun(relationId)
+            val task = syncEngine.consumePendingTask()
+            if (task != null && task.relationId == relationId) {
+                _syncProgress.value = SyncProgress(
+                    isRunning = true,
+                    phase = SyncPhase.DOWNLOADING,
+                    totalFiles = task.toDownload.size + task.toDelete.size,
+                    relationId = relationId,
+                    relationName = task.relationName,
+                    localBasePath = task.localBasePath
+                )
+                SyncNotificationHelper.updateNotification(this@SyncService, _syncProgress.value)
 
-            _syncProgress.value = SyncProgress(
-                isRunning = true,
-                phase = cn.vectory.syncplayer.data.model.SyncPhase.DOWNLOADING,
-                totalFiles = toDownload.size + toDelete.size
-            )
-
-            syncEngine.executeSync(relationId, toDownload, toDelete)
+                syncEngine.executeSync(
+                    relationId,
+                    task.toDownload,
+                    task.toDelete,
+                    task.relationName,
+                    task.localBasePath
+                )
+            } else {
+                val (toDownload, toDelete) = syncEngine.dryRun(relationId)
+                _syncProgress.value = SyncProgress(
+                    isRunning = true,
+                    phase = SyncPhase.DOWNLOADING,
+                    totalFiles = toDownload.size + toDelete.size,
+                    relationId = relationId
+                )
+                syncEngine.executeSync(relationId, toDownload, toDelete)
+            }
 
             _syncProgress.value = syncEngine.progress.value
             SyncNotificationHelper.updateNotification(this@SyncService, _syncProgress.value)
 
-            delay(2000)
+            delay(3000)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
@@ -75,7 +100,7 @@ class SyncService : Service() {
         serviceScope.launch {
             SyncNotificationHelper.updateNotification(
                 this@SyncService,
-                SyncProgress(phase = cn.vectory.syncplayer.data.model.SyncPhase.CANCELLED)
+                SyncProgress(phase = SyncPhase.CANCELLED)
             )
             delay(1000)
             stopForeground(STOP_FOREGROUND_REMOVE)

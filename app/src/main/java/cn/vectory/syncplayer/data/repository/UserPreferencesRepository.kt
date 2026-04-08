@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -29,6 +30,7 @@ class UserPreferencesRepository @Inject constructor(
         val DEFAULT_SORT_MODE = stringPreferencesKey("default_sort_mode")
         val DEFAULT_FILTER = stringPreferencesKey("default_filter")
         val DEBUG_MODE = booleanPreferencesKey("debug_mode")
+        val MAX_CONCURRENT_DOWNLOADS = intPreferencesKey("max_concurrent_downloads")
     }
 
     val longPressSpeed: Flow<Float> = dataStore.data.map { it[Keys.LONG_PRESS_SPEED] ?: 2.0f }
@@ -45,11 +47,16 @@ class UserPreferencesRepository @Inject constructor(
 
     val debugMode: Flow<Boolean> = dataStore.data.map { it[Keys.DEBUG_MODE] ?: false }
 
+    val maxConcurrentDownloads: Flow<Int> = dataStore.data.map {
+        (it[Keys.MAX_CONCURRENT_DOWNLOADS] ?: 1).coerceIn(1, 3)
+    }
+
     suspend fun getLongPressSpeed(): Float = longPressSpeed.first()
     suspend fun getOrientation(): String? = orientation.first()
     suspend fun getDefaultSortMode(): String = defaultSortMode.first()
     suspend fun getDefaultFilter(): String = defaultFilter.first()
     suspend fun getDebugMode(): Boolean = debugMode.first()
+    suspend fun getMaxConcurrentDownloads(): Int = maxConcurrentDownloads.first()
 
     suspend fun setLongPressSpeed(speed: Float) {
         dataStore.edit { it[Keys.LONG_PRESS_SPEED] = speed }
@@ -69,5 +76,9 @@ class UserPreferencesRepository @Inject constructor(
 
     suspend fun setDebugMode(enabled: Boolean) {
         dataStore.edit { it[Keys.DEBUG_MODE] = enabled }
+    }
+
+    suspend fun setMaxConcurrentDownloads(max: Int) {
+        dataStore.edit { it[Keys.MAX_CONCURRENT_DOWNLOADS] = max.coerceIn(1, 3) }
     }
 }

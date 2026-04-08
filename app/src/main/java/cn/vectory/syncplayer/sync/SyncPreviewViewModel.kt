@@ -1,19 +1,26 @@
 package cn.vectory.syncplayer.sync
 
+import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.model.SyncAction
+import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProgress
+import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class SyncPreviewViewModel @Inject constructor(
     private val syncEngine: SyncEngine,
+    private val syncRelationRepository: SyncRelationRepository,
+    @ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -47,6 +54,15 @@ class SyncPreviewViewModel @Inject constructor(
 
     val totalDownloadSize: Long get() = _toDownload.value.sumOf { it.fileSize }
     val totalDeleteSize: Long get() = _toDelete.value.sumOf { it.fileSize }
+
+    init {
+        val currentProgress = syncEngine.progress.value
+        if (currentProgress.isRunning && currentProgress.relationId == relationId) {
+            _isSyncing.value = true
+            _previewLoaded.value = true
+            observeSyncCompletion()
+        }
+    }
 
     fun setSyncMode(mode: SyncMode) {
         _syncMode.value = mode
@@ -82,20 +98,28 @@ class SyncPreviewViewModel @Inject constructor(
 
     fun startSync() {
         viewModelScope.launch {
+            val relation = syncRelationRepository.getById(relationId) ?: return@launch
+            syncEngine.setPendingTask(PendingSyncTask(
+                relationId = relationId,
+                relationName = relation.name,
+                localBasePath = relation.localBasePath,
+                toDownload = _toDownload.value,
+                toDelete = _toDelete.value
+            ))
             _isSyncing.value = true
             _error.value = null
-            try {
-                syncEngine.executeSync(relationId, _toDownload.value, _toDelete.value)
-                // Auto-refresh preview to show actual sync results
-                syncEngine.resetProgress()
-                val (downloads, deletes) = syncEngine.dryRun(relationId)
-                _toDownload.value = downloads
-                _toDelete.value = deletes
-            } catch (e: Exception) {
-                _error.value = "同步失败: ${e.message}"
-            } finally {
-                _isSyncing.value = false
+            SyncService.start(context, relationId)
+            observeSyncCompletion()
+        }
+    }
+
+    private fun observeSyncCompletion() {
+        viewModelScope.launch {
+            syncEngine.progress.first { p ->
+                (p.relationId == relationId || p.relationId == 0L) &&
+                    (p.phase == SyncPhase.COMPLETED || p.phase == SyncPhase.FAILED || p.phase == SyncPhase.CANCELLED)
             }
+            _isSyncing.value = false
         }
     }
 

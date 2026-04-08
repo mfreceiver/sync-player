@@ -33,6 +33,9 @@ class SettingsViewModel @Inject constructor(
     private val _defaultFilter = MutableStateFlow(BrowserViewModel.BrowseFilter.ALL)
     val defaultFilter: StateFlow<BrowserViewModel.BrowseFilter> = _defaultFilter.asStateFlow()
 
+    private val _maxConcurrentDownloads = MutableStateFlow(1)
+    val maxConcurrentDownloads: StateFlow<Int> = _maxConcurrentDownloads.asStateFlow()
+
     val debugMode: StateFlow<Boolean> = debugLogger.enabled
     private val _previousSessionSummary = MutableStateFlow(debugLogger.getPreviousSessionSummary())
     val previousSessionSummary: StateFlow<String> = _previousSessionSummary.asStateFlow()
@@ -59,6 +62,7 @@ class SettingsViewModel @Inject constructor(
             } catch (_: Exception) {
                 BrowserViewModel.BrowseFilter.ALL
             }
+            _maxConcurrentDownloads.value = userPrefs.getMaxConcurrentDownloads()
         }
     }
 
@@ -80,6 +84,11 @@ class SettingsViewModel @Inject constructor(
     fun setDefaultFilter(filter: BrowserViewModel.BrowseFilter) {
         _defaultFilter.value = filter
         viewModelScope.launch { userPrefs.setDefaultFilter(filter.name) }
+    }
+
+    fun setMaxConcurrentDownloads(max: Int) {
+        _maxConcurrentDownloads.value = max
+        viewModelScope.launch { userPrefs.setMaxConcurrentDownloads(max) }
     }
 
     fun clearLogs() {

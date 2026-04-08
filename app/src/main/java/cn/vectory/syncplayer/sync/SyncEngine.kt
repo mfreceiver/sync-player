@@ -1,6 +1,7 @@
 package cn.vectory.syncplayer.sync
 
 import android.content.Context
+import cn.vectory.syncplayer.data.model.ActiveDownload
 import cn.vectory.syncplayer.data.model.SyncAction
 import cn.vectory.syncplayer.data.model.SyncActionType
 import cn.vectory.syncplayer.data.model.SyncPhase
@@ -13,21 +14,35 @@ import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
+import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
+
+data class PendingSyncTask(
+    val relationId: Long,
+    val relationName: String,
+    val localBasePath: String,
+    val toDownload: List<SyncAction>,
+    val toDelete: List<SyncAction>
+)
 
 @Singleton
 class SyncEngine @Inject constructor(
@@ -40,6 +55,7 @@ class SyncEngine @Inject constructor(
     private val smbFileClient: SmbFileClient,
     private val sftpFileClient: SftpFileClient,
     private val storagePaths: StoragePaths,
+    private val userPrefs: UserPreferencesRepository,
     @ApplicationContext private val context: Context
 ) {
 
@@ -47,6 +63,22 @@ class SyncEngine @Inject constructor(
     val progress: StateFlow<SyncProgress> = _progress.asStateFlow()
 
     private val syncMutex = Mutex()
+
+    @Volatile
+    var pendingTask: PendingSyncTask? = null
+        private set
+
+    fun setPendingTask(task: PendingSyncTask) {
+        pendingTask = task
+    }
+
+    fun consumePendingTask(): PendingSyncTask? {
+        val task = pendingTask
+        pendingTask = null
+        return task
+    }
+
+    val isSyncRunning: Boolean get() = _progress.value.isRunning
 
     private fun getLocalSyncRoot(relation: SyncRelation): File =
         storagePaths.resolveUserData(relation.localBasePath.trimStart('/')).also { it.mkdirs() }
@@ -68,12 +100,18 @@ class SyncEngine @Inject constructor(
         }
     }
 
+    private fun cleanupTempFiles(root: File) {
+        root.walkTopDown().filter { it.name.endsWith(".sync_tmp") }.forEach {
+            it.delete()
+        }
+    }
+
     suspend fun dryRun(relationId: Long): Pair<List<SyncAction>, List<SyncAction>> = syncMutex.withLock {
         val relation = syncRelationRepository.getById(relationId) ?: return Pair(emptyList(), emptyList())
         val source = syncSourceRepository.getById(relation.syncSourceId) ?: return Pair(emptyList(), emptyList())
         val client = getClient(source.protocol)
 
-        _progress.value = SyncProgress(phase = SyncPhase.SCANNING)
+        _progress.value = SyncProgress(phase = SyncPhase.SCANNING, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
 
         val toDownload = mutableListOf<SyncAction>()
         val toDelete = mutableListOf<SyncAction>()
@@ -140,11 +178,11 @@ class SyncEngine @Inject constructor(
                 }
             }
 
-            _progress.value = SyncProgress(phase = SyncPhase.CONFIRMING)
+            _progress.value = SyncProgress(phase = SyncPhase.CONFIRMING, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            _progress.value = SyncProgress(phase = SyncPhase.FAILED)
+            _progress.value = SyncProgress(phase = SyncPhase.FAILED, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
             syncLogRepository.log(
                 action = "SCAN",
                 relativePath = "",
@@ -162,76 +200,133 @@ class SyncEngine @Inject constructor(
     suspend fun executeSync(
         relationId: Long,
         toDownload: List<SyncAction>,
-        toDelete: List<SyncAction>
+        toDelete: List<SyncAction>,
+        relationName: String = "",
+        localBasePath: String = ""
     ): Boolean = syncMutex.withLock {
         val relation = syncRelationRepository.getById(relationId) ?: return false
         val source = syncSourceRepository.getById(relation.syncSourceId) ?: return false
         val client = getClient(source.protocol)
+        val maxConcurrency = userPrefs.getMaxConcurrentDownloads()
+        val name = relationName.ifEmpty { relation.name }
+        val basePath = localBasePath.ifEmpty { relation.localBasePath }
 
         val totalActions = toDownload.size + toDelete.size
-        var completedActions = 0
-        var totalBytesTransferred = 0L
+        val completedCount = AtomicInteger(0)
+        val totalBytesTransferred = AtomicLong(0L)
+        val totalDownloadBytes = toDownload.sumOf { it.fileSize }
+        val activeDownloadsMutex = Mutex()
+        val activeDownloadsMap = mutableMapOf<String, ActiveDownload>()
+
+        val localRoot = getLocalSyncRoot(relation)
+        cleanupTempFiles(localRoot)
 
         _progress.value = SyncProgress(
             isRunning = true,
             totalFiles = totalActions,
-            phase = SyncPhase.DOWNLOADING
+            phase = SyncPhase.DOWNLOADING,
+            relationId = relationId,
+            relationName = name,
+            localBasePath = basePath,
+            totalBytes = totalDownloadBytes,
+            startTimeMs = System.currentTimeMillis()
         )
 
         try {
             client.connect(source, relation.remotePath)
 
-            for (action in toDownload) {
-                _progress.value = _progress.value.copy(
-                    currentFileName = action.relativePath,
-                    completedFiles = completedActions,
-                    totalBytes = toDownload.sumOf { it.fileSize }
-                )
+            if (toDownload.isNotEmpty()) {
+                val semaphore = Semaphore(maxConcurrency)
+                coroutineScope {
+                    for (action in toDownload) {
+                        semaphore.acquire()
+                        launch(Dispatchers.IO) {
+                            try {
+                                val tmpFile = File(localRoot, "${action.relativePath}.sync_tmp")
+                                val finalFile = File(localRoot, action.relativePath)
+                                val localRelPath = toLocalRelativePath(relation.localBasePath, action.relativePath)
 
-                val localRoot = getLocalSyncRoot(relation)
-                val localFile = File(localRoot, action.relativePath)
-                val localRelPath = toLocalRelativePath(relation.localBasePath, action.relativePath)
-                val success = client.downloadFile(action.relativePath, localFile) { transferred, total ->
-                    _progress.value = _progress.value.copy(
-                        transferredBytes = totalBytesTransferred + transferred,
-                        currentFileProgress = if (total > 0) transferred.toFloat() / total else 0f
-                    )
-                }
+                                activeDownloadsMutex.withLock {
+                                    activeDownloadsMap[action.relativePath] = ActiveDownload(
+                                        fileName = action.relativePath.substringAfterLast("/"),
+                                        totalBytes = action.fileSize
+                                    )
+                                    updateActiveDownloadsState(activeDownloadsMap, totalBytesTransferred.get(), totalDownloadBytes, completedCount.get(), totalActions)
+                                }
 
-                if (success) {
-                    totalBytesTransferred += action.fileSize
-                    val entity = VideoItemEntity(
-                        relativePath = localRelPath,
-                        fileName = action.relativePath.substringAfterLast("/"),
-                        localAbsolutePath = localFile.absolutePath,
-                        fileSize = action.fileSize,
-                        remoteModifiedTime = action.remoteModifiedTime,
-                        dateSynced = System.currentTimeMillis(),
-                        syncRelationId = relationId
-                    )
-                    videoRepository.upsert(entity)
-                    val savedEntity = videoRepository.getByRelativePath(localRelPath)
-                    if (savedEntity != null) {
-                        videoMetadataExtractor.extractAndSave(savedEntity)
+                                val success = client.downloadFile(action.relativePath, tmpFile) { transferred, total ->
+                                    val snapshot = activeDownloadsMutex.tryLock()
+                                    if (snapshot) {
+                                        try {
+                                            activeDownloadsMap[action.relativePath] = ActiveDownload(
+                                                fileName = action.relativePath.substringAfterLast("/"),
+                                                progress = if (total > 0) transferred.toFloat() / total else 0f,
+                                                transferredBytes = transferred,
+                                                totalBytes = action.fileSize
+                                            )
+                                            _progress.value = _progress.value.copy(
+                                                activeDownloads = activeDownloadsMap.values.toList(),
+                                                transferredBytes = totalBytesTransferred.get() + activeDownloadsMap.values.sumOf { it.transferredBytes },
+                                                totalBytes = totalDownloadBytes,
+                                                completedFiles = completedCount.get(),
+                                                totalFiles = totalActions
+                                            )
+                                        } finally {
+                                            activeDownloadsMutex.unlock()
+                                        }
+                                    }
+                                }
+
+                                activeDownloadsMutex.withLock {
+                                    activeDownloadsMap.remove(action.relativePath)
+                                }
+
+                                if (success && tmpFile.exists()) {
+                                    if (finalFile.exists()) finalFile.delete()
+                                    tmpFile.renameTo(finalFile)
+                                    totalBytesTransferred.addAndGet(action.fileSize)
+                                    val entity = VideoItemEntity(
+                                        relativePath = localRelPath,
+                                        fileName = action.relativePath.substringAfterLast("/"),
+                                        localAbsolutePath = finalFile.absolutePath,
+                                        fileSize = action.fileSize,
+                                        remoteModifiedTime = action.remoteModifiedTime,
+                                        dateSynced = System.currentTimeMillis(),
+                                        syncRelationId = relationId
+                                    )
+                                    videoRepository.upsert(entity)
+                                    val savedEntity = videoRepository.getByRelativePath(localRelPath)
+                                    if (savedEntity != null) {
+                                        videoMetadataExtractor.extractAndSave(savedEntity)
+                                    }
+                                    syncLogRepository.log(
+                                        action = "DOWNLOAD",
+                                        relativePath = localRelPath,
+                                        status = "SUCCESS",
+                                        dryRun = false,
+                                        fileSize = action.fileSize
+                                    )
+                                } else {
+                                    if (tmpFile.exists()) tmpFile.delete()
+                                    syncLogRepository.log(
+                                        action = "DOWNLOAD",
+                                        relativePath = localRelPath,
+                                        status = "FAILED",
+                                        dryRun = false,
+                                        fileSize = action.fileSize,
+                                        errorMessage = "Download failed"
+                                    )
+                                }
+                                completedCount.incrementAndGet()
+                                activeDownloadsMutex.withLock {
+                                    updateActiveDownloadsState(activeDownloadsMap, totalBytesTransferred.get(), totalDownloadBytes, completedCount.get(), totalActions)
+                                }
+                            } finally {
+                                semaphore.release()
+                            }
+                        }
                     }
-                    syncLogRepository.log(
-                        action = "DOWNLOAD",
-                        relativePath = localRelPath,
-                        status = "SUCCESS",
-                        dryRun = false,
-                        fileSize = action.fileSize
-                    )
-                } else {
-                    syncLogRepository.log(
-                        action = "DOWNLOAD",
-                        relativePath = localRelPath,
-                        status = "FAILED",
-                        dryRun = false,
-                        fileSize = action.fileSize,
-                        errorMessage = "Download failed"
-                    )
                 }
-                completedActions++
             }
 
             _progress.value = _progress.value.copy(phase = SyncPhase.DELETING)
@@ -239,13 +334,11 @@ class SyncEngine @Inject constructor(
             for (action in toDelete) {
                 _progress.value = _progress.value.copy(
                     currentFileName = action.relativePath,
-                    completedFiles = completedActions
+                    completedFiles = completedCount.get()
                 )
 
                 videoRepository.deleteByRelativePath(action.relativePath)
                 val physicalRelPath = toPathUnderBase(relation.localBasePath, action.relativePath)
-                val localRoot = getLocalSyncRoot(relation)
- 
                 val localFile = File(localRoot, physicalRelPath)
                 if (localFile.exists()) localFile.delete()
                 
@@ -256,7 +349,7 @@ class SyncEngine @Inject constructor(
                     dryRun = false,
                     fileSize = action.fileSize
                 )
-                completedActions++
+                completedCount.incrementAndGet()
             }
 
             _progress.value = SyncProgress(
@@ -264,17 +357,33 @@ class SyncEngine @Inject constructor(
                 phase = SyncPhase.COMPLETED,
                 completedFiles = totalActions,
                 totalFiles = totalActions,
-                transferredBytes = totalBytesTransferred
+                transferredBytes = totalBytesTransferred.get(),
+                relationId = relationId,
+                relationName = name,
+                localBasePath = basePath,
+                startTimeMs = _progress.value.startTimeMs
             )
 
             syncRelationRepository.updateLastSync(relationId, "成功：下载 ${toDownload.size} 个，删除 ${toDelete.size} 个")
             return true
         } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
+            cleanupTempFiles(localRoot)
             _progress.value = SyncProgress(
                 isRunning = false,
-                phase = SyncPhase.FAILED
+                phase = SyncPhase.CANCELLED,
+                relationId = relationId,
+                relationName = name,
+                localBasePath = basePath
+            )
+            throw e
+        } catch (e: Exception) {
+            cleanupTempFiles(localRoot)
+            _progress.value = SyncProgress(
+                isRunning = false,
+                phase = SyncPhase.FAILED,
+                relationId = relationId,
+                relationName = name,
+                localBasePath = basePath
             )
             syncRelationRepository.updateLastSync(relationId, "同步失败: ${e.message}")
             syncLogRepository.log(
@@ -290,6 +399,25 @@ class SyncEngine @Inject constructor(
         }
     }
 
+    private fun updateActiveDownloadsState(
+        activeDownloadsMap: Map<String, ActiveDownload>,
+        transferredSoFar: Long,
+        totalDownloadBytes: Long,
+        completedFiles: Int,
+        totalFiles: Int
+    ) {
+        val activeTransferred = activeDownloadsMap.values.sumOf { it.transferredBytes }
+        _progress.value = _progress.value.copy(
+            activeDownloads = activeDownloadsMap.values.toList(),
+            transferredBytes = transferredSoFar + activeTransferred,
+            totalBytes = totalDownloadBytes,
+            completedFiles = completedFiles,
+            totalFiles = totalFiles,
+            currentFileName = activeDownloadsMap.values.firstOrNull()?.fileName ?: _progress.value.currentFileName,
+            currentFileProgress = activeDownloadsMap.values.firstOrNull()?.progress ?: _progress.value.currentFileProgress
+        )
+    }
+
     fun resetProgress() {
         _progress.value = SyncProgress()
     }
@@ -298,7 +426,7 @@ class SyncEngine @Inject constructor(
         val relation = syncRelationRepository.getById(relationId) ?: return Pair(emptyList(), "未找到关联")
         val source = syncSourceRepository.getById(relation.syncSourceId) ?: return Pair(emptyList(), "未找到来源")
         val client = getClient(source.protocol)
-        _progress.value = SyncProgress(phase = SyncPhase.SCANNING)
+        _progress.value = SyncProgress(phase = SyncPhase.SCANNING, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
 
         val toDelete = mutableListOf<SyncAction>()
 
@@ -326,12 +454,12 @@ class SyncEngine @Inject constructor(
                 }
             }
 
-            _progress.value = SyncProgress(phase = SyncPhase.CONFIRMING)
+            _progress.value = SyncProgress(phase = SyncPhase.CONFIRMING, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
             return Pair(toDelete, null)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            _progress.value = SyncProgress(phase = SyncPhase.FAILED)
+            _progress.value = SyncProgress(phase = SyncPhase.FAILED, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
             return Pair(emptyList(), e.message)
         } finally {
             client.disconnect()
@@ -349,7 +477,10 @@ class SyncEngine @Inject constructor(
         _progress.value = SyncProgress(
             isRunning = true,
             totalFiles = totalActions,
-            phase = SyncPhase.DELETING
+            phase = SyncPhase.DELETING,
+            relationId = relationId,
+            relationName = relation.name,
+            localBasePath = relation.localBasePath
         )
 
         try {
@@ -392,7 +523,10 @@ class SyncEngine @Inject constructor(
                 isRunning = false,
                 phase = SyncPhase.COMPLETED,
                 completedFiles = totalActions,
-                totalFiles = totalActions
+                totalFiles = totalActions,
+                relationId = relationId,
+                relationName = relation.name,
+                localBasePath = relation.localBasePath
             )
 
             syncRelationRepository.updateLastSync(relationId, "成功：删除 ${actions.size} 个文件")
@@ -402,7 +536,10 @@ class SyncEngine @Inject constructor(
         } catch (e: Exception) {
             _progress.value = SyncProgress(
                 isRunning = false,
-                phase = SyncPhase.FAILED
+                phase = SyncPhase.FAILED,
+                relationId = relationId,
+                relationName = relation.name,
+                localBasePath = relation.localBasePath
             )
             syncRelationRepository.updateLastSync(relationId, "删除失败: ${e.message}")
             syncLogRepository.log(
