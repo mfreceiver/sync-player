@@ -88,17 +88,6 @@ class SyncEngine @Inject constructor(
         SyncProtocol.SFTP -> sftpFileClient
     }
 
-    private fun toLocalRelativePath(basePath: String, remoteRelPath: String): String {
-        return if (basePath.isNotEmpty()) "$basePath/$remoteRelPath" else remoteRelPath
-    }
-
-    private fun toPathUnderBase(basePath: String, localRelPath: String): String {
-        return if (basePath.isNotEmpty() && localRelPath.startsWith("$basePath/")) {
-            localRelPath.removePrefix("$basePath/")
-        } else {
-            localRelPath
-        }
-    }
 
     private fun cleanupTempFiles(root: File) {
         root.walkTopDown().filter { it.name.endsWith(".sync_tmp") }.forEach {
@@ -125,7 +114,7 @@ class SyncEngine @Inject constructor(
             for (remoteFile in remoteFiles) {
                 if (remoteFile.isDirectory) continue
                 val remoteRelPath = remoteFile.path
-                val localRelPath = toLocalRelativePath(relation.localBasePath, remoteRelPath)
+                val localRelPath = storagePaths.toLocalRelativePath(relation.localBasePath, remoteRelPath)
                 val local = localMap[localRelPath]
                 val needsDownload = local == null ||
                     remoteFile.size != local.fileSize ||
@@ -158,7 +147,7 @@ class SyncEngine @Inject constructor(
             }
 
             val remoteLocalPaths = remoteFiles.filter { !it.isDirectory }.map {
-                toLocalRelativePath(relation.localBasePath, it.path)
+                storagePaths.toLocalRelativePath(relation.localBasePath, it.path)
             }.toSet()
             for (localVideo in localVideos) {
                 if (localVideo.relativePath !in remoteLocalPaths) {
@@ -244,7 +233,7 @@ class SyncEngine @Inject constructor(
                             try {
                                 val tmpFile = File(localRoot, "${action.relativePath}.sync_tmp")
                                 val finalFile = File(localRoot, action.relativePath)
-                                val localRelPath = toLocalRelativePath(relation.localBasePath, action.relativePath)
+                                val localRelPath = storagePaths.toLocalRelativePath(relation.localBasePath, action.relativePath)
 
                                 activeDownloadsMutex.withLock {
                                     activeDownloadsMap[action.relativePath] = ActiveDownload(
@@ -338,7 +327,7 @@ class SyncEngine @Inject constructor(
                 )
 
                 videoRepository.deleteByRelativePath(action.relativePath)
-                val physicalRelPath = toPathUnderBase(relation.localBasePath, action.relativePath)
+                val physicalRelPath = storagePaths.toPathUnderBase(relation.localBasePath, action.relativePath)
                 val localFile = File(localRoot, physicalRelPath)
                 if (localFile.exists()) localFile.delete()
                 
@@ -442,7 +431,7 @@ class SyncEngine @Inject constructor(
                 val localFile = File(videoItem.localAbsolutePath)
                 if (!localFile.exists()) continue
 
-                val remoteRelPath = toPathUnderBase(relation.localBasePath, videoItem.relativePath)
+                val remoteRelPath = storagePaths.toPathUnderBase(relation.localBasePath, videoItem.relativePath)
                 val remoteFile = remoteMap[remoteRelPath]
                 if (remoteFile != null) {
                     val action = SyncAction(
@@ -506,7 +495,7 @@ class SyncEngine @Inject constructor(
                     videoRepository.deleteByRelativePath(action.relativePath)
                 }
 
-                val remoteRelPath = toPathUnderBase(relation.localBasePath, action.relativePath)
+                val remoteRelPath = storagePaths.toPathUnderBase(relation.localBasePath, action.relativePath)
                 client.deleteFile(remoteRelPath)
 
                 syncLogRepository.log(

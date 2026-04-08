@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
-import cn.vectory.syncplayer.player.PlayerNavigationStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -118,9 +117,5 @@ class SearchViewModel @Inject constructor(
         return searchResults.value
             .filter { !it.isDirectory && it.videoItemId != null }
             .mapNotNull { it.videoItemId }
-    }
-
-    fun setFolderVideoIdsForNavigation(ids: List<Long>) {
-        PlayerNavigationStore.folderVideoIds = ids
     }
 }

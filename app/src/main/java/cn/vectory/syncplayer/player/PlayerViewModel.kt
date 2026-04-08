@@ -15,10 +15,6 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-object PlayerNavigationStore {
-    var folderVideoIds: List<Long> = emptyList()
-}
-
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
@@ -41,6 +37,8 @@ class PlayerViewModel @Inject constructor(
     private val _allVideoIds = MutableStateFlow<List<Long>>(emptyList())
     val allVideoIds: StateFlow<List<Long>> = _allVideoIds.asStateFlow()
 
+    private val savedVideoIds: String? = savedStateHandle.get<String>("videoIds")
+
     init {
         loadFolderVideoIds()
         viewModelScope.launch {
@@ -55,7 +53,12 @@ class PlayerViewModel @Inject constructor(
     }
 
     private fun loadFolderVideoIds() {
-        val ids = PlayerNavigationStore.folderVideoIds
+        val idsStr = savedVideoIds ?: ""
+        val ids = if (idsStr.isNotBlank()) {
+            idsStr.split(",").mapNotNull { it.trim().toLongOrNull() }
+        } else {
+            emptyList()
+        }
         if (ids.isNotEmpty()) {
             _allVideoIds.value = ids
         } else {

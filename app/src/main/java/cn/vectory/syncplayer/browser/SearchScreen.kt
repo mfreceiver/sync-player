@@ -35,7 +35,7 @@ import cn.vectory.syncplayer.ui.util.isVideoFile
 fun SearchScreen(
     viewModel: SearchViewModel = hiltViewModel(),
     onNavigateToFolder: (String) -> Unit,
-    onNavigateToPlayer: (Long) -> Unit,
+    onNavigateToPlayer: (Long, List<Long>) -> Unit,
     onBack: () -> Unit,
 ) {
     val query by viewModel.query.collectAsState()
@@ -197,8 +197,7 @@ fun SearchScreen(
                                 item = item,
                                 onClick = {
                                     if (isVideoFile(item.name)) {
-                                        viewModel.setFolderVideoIdsForNavigation(viewModel.getSearchResultVideoIds())
-                                        onNavigateToPlayer(item.videoItemId!!)
+                                        onNavigateToPlayer(item.videoItemId!!, viewModel.getSearchResultVideoIds())
                                     }
                                 }
                             )

@@ -43,6 +43,18 @@ class StoragePaths @Inject constructor(
         return if (trimmed.isEmpty()) userdataRoot else File(userdataRoot, trimmed)
     }
 
+    fun toLocalRelativePath(basePath: String, remoteRelPath: String): String {
+        return if (basePath.isNotEmpty()) "$basePath/$remoteRelPath" else remoteRelPath
+    }
+
+    fun toPathUnderBase(basePath: String, localRelPath: String): String {
+        return if (basePath.isNotEmpty() && localRelPath.startsWith("$basePath/")) {
+            localRelPath.removePrefix("$basePath/")
+        } else {
+            localRelPath
+        }
+    }
+
     companion object {
         const val USERDATA_DIR = "userdata"
         const val THUMBNAILS_DIR = "thumbnails"

@@ -6,6 +6,7 @@ import android.net.NetworkCapabilities
 import cn.vectory.syncplayer.data.model.RemoteFile
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.sync.RemoteFileClient
+import cn.vectory.syncplayer.sync.mapNetworkErrorMessage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
@@ -14,9 +15,6 @@ import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import net.schmizz.sshj.userauth.UserAuthException
 import java.io.File
 import java.io.FileOutputStream
-import java.net.ConnectException
-import java.net.SocketTimeoutException
-import java.net.UnknownHostException
 class SftpFileClient(private val context: Context) : RemoteFileClient {
     private var sshClient: SSHClient? = null
     private var sftpClient: SFTPClient? = null
@@ -31,10 +29,9 @@ class SftpFileClient(private val context: Context) : RemoteFileClient {
         }
     }
     private fun sftpErrorMessage(e: Exception, host: String): String {
+        val commonMsg = mapNetworkErrorMessage(e, host)
+        if (commonMsg != null) return commonMsg
         return when (e) {
-            is UnknownHostException -> "无法解析主机地址: $host"
-            is ConnectException -> "连接被拒绝，请检查主机地址和端口"
-            is SocketTimeoutException -> "连接超时，请检查网络连接和主机地址 ${host}"
             is UserAuthException -> "SSH认证失败，请检查用户名和密码 (${e.message})"
             is net.schmizz.sshj.transport.TransportException ->
                 "SSH连接错误: ${e.message}"

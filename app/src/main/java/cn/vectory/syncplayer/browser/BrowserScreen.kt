@@ -48,7 +48,7 @@ import cn.vectory.syncplayer.debug.DebugLogger
 fun BrowserScreen(
     viewModel: BrowserViewModel = hiltViewModel(),
     currentFolder: String = "",
-    onNavigateToPlayer: (videoItemId: Long) -> Unit,
+    onNavigateToPlayer: (videoItemId: Long, videoIds: List<Long>) -> Unit,
     onNavigateToSearch: () -> Unit,
     onNavigateToSyncSourceList: () -> Unit,
     onNavigateToSyncRelationList: () -> Unit,
@@ -304,8 +304,7 @@ fun BrowserScreen(
                             onClick = {
                                 debugLogger.log("Click", "Open file: ${item.name}")
                                 if (isVideoFile(item.name)) {
-                                    viewModel.setFolderVideoIdsForNavigation(viewModel.getFolderVideoIds())
-                                    onNavigateToPlayer(item.videoItemId!!)
+                                    onNavigateToPlayer(item.videoItemId!!, viewModel.getFolderVideoIds())
                                 } else {
                                     scope.launch { snackbarHostState.showSnackbar("该文件无法播放") }
                                 }

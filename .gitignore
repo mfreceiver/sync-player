@@ -10,3 +10,8 @@
 local.properties
 /app/build
 /app/release.keystore
+
+# Root junk files
+/20
+/git
+/tail

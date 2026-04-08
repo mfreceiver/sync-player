@@ -12,7 +12,6 @@ import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
-import cn.vectory.syncplayer.player.PlayerNavigationStore
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.VideoMetadataExtractor
 import cn.vectory.syncplayer.ui.util.getMimeType
@@ -22,6 +21,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 
@@ -50,6 +50,10 @@ class BrowserViewModel @Inject constructor(
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
+
+    private val _refreshTrigger = MutableStateFlow(0L)
+
+    private val effectiveFolder = combine(_currentFolder, _refreshTrigger) { folder, _ -> folder }
 
     init {
         viewModelScope.launch {
@@ -80,14 +84,14 @@ class BrowserViewModel @Inject constructor(
         list.associate { it.relation.localBasePath to it.relation.id }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
-    val currentRelationId: StateFlow<Long?> = combine(_currentFolder, basePathToRelationId) { folder, pathMap ->
+    val currentRelationId: StateFlow<Long?> = combine(effectiveFolder, basePathToRelationId) { folder, pathMap ->
         pathMap.entries.firstOrNull { (basePath, _) ->
             folder == basePath || folder.startsWith("$basePath/")
         }?.value
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val browseItems: StateFlow<List<BrowseItem>> = combine(
-        _currentFolder,
+        effectiveFolder,
         _sortMode,
         _filter,
         playbackRecords,
@@ -103,7 +107,7 @@ class BrowserViewModel @Inject constructor(
         filterVal: BrowseFilter,
         records: List<PlaybackRecordEntity>,
         baseDirSet: Set<String>
-    ): List<BrowseItem> {
+    ): List<BrowseItem> = withContext(Dispatchers.IO) {
         val dbFolderNames = videoRepository.getSubFolders(folder).first()
 
         val physicalDir = if (folder.isEmpty()) storagePaths.userdataRoot else File(storagePaths.userdataRoot, folder)
@@ -163,7 +167,7 @@ class BrowserViewModel @Inject constructor(
             SortMode.DURATION_ASC -> filteredVideos.sortedBy { it.duration ?: 0L }
             SortMode.DURATION_DESC -> filteredVideos.sortedByDescending { it.duration ?: 0L }
         }
-        return (sortedFolders + sortedVideos).distinctBy { it.relativePath }
+        (sortedFolders + sortedVideos).distinctBy { it.relativePath }
     }
 
     fun setFolder(folder: String) {
@@ -207,7 +211,7 @@ class BrowserViewModel @Inject constructor(
                 _error.value = "创建文件夹失败"
                 return@launch
             }
-            _currentFolder.value = _currentFolder.value
+            _refreshTrigger.value++
         }
     }
 
@@ -234,7 +238,7 @@ class BrowserViewModel @Inject constructor(
             videoRepository.deleteByFolderPath(path)
             playbackRepository.deleteByFolderPath(path)
             dir.deleteRecursively()
-            _currentFolder.value = _currentFolder.value
+            _refreshTrigger.value++
         }
     }
 
@@ -259,10 +263,6 @@ class BrowserViewModel @Inject constructor(
         return browseItems.value
             .filter { !it.isDirectory && it.videoItemId != null && isVideoFile(it.name) }
             .mapNotNull { it.videoItemId }
-    }
-
-    fun setFolderVideoIdsForNavigation(ids: List<Long>) {
-        PlayerNavigationStore.folderVideoIds = ids
     }
 
     fun toggleFavorite(videoItemId: Long) {

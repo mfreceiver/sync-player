@@ -6,6 +6,7 @@ import android.net.NetworkCapabilities
 import cn.vectory.syncplayer.data.model.RemoteFile
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.sync.RemoteFileClient
+import cn.vectory.syncplayer.sync.mapNetworkErrorMessage
 import jcifs.context.BaseContext
 import jcifs.smb.NtlmPasswordAuthenticator
 import jcifs.smb.SmbAuthException
@@ -15,9 +16,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import java.net.ConnectException
-import java.net.SocketTimeoutException
-import java.net.UnknownHostException
 import java.util.Properties
 
 class SmbFileClient(private val context: Context) : RemoteFileClient {
@@ -37,10 +35,9 @@ class SmbFileClient(private val context: Context) : RemoteFileClient {
     private var subPath: String = ""
 
     private fun smbErrorMessage(e: Exception, host: String): String {
+        val commonMsg = mapNetworkErrorMessage(e, host)
+        if (commonMsg != null) return commonMsg
         return when (e) {
-            is UnknownHostException -> "无法解析主机地址: $host"
-            is ConnectException -> "连接被拒绝，请检查主机地址 ${host}:445 是否可达"
-            is SocketTimeoutException -> "连接超时，请检查网络连接和主机地址 ${host}"
             is SmbAuthException -> "SMB认证失败，请检查用户名和密码 (${e.message})"
             is SmbException -> {
                 val msg = e.message.orEmpty()

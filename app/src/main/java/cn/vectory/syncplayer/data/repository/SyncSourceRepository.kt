@@ -37,13 +37,19 @@ class SyncSourceRepository @Inject constructor(
             host = source.host,
             port = source.port,
             username = source.username,
-            encryptedPassword = encryptPassword(source.password)
+            encryptedPassword = ENCRYPTED_PLACEHOLDER
         )
-        return syncSourceDao.upsert(entity)
+        val savedId = syncSourceDao.upsert(entity)
+        val actualId = if (source.id != 0L) source.id else savedId
+        encryptedPrefs.edit()
+            .putString("pw_$actualId", source.password)
+            .apply()
+        return savedId
     }
 
     suspend fun delete(id: Long) {
         syncSourceDao.deleteById(id)
+        encryptedPrefs.edit().remove("pw_$id").apply()
     }
 
     private fun SyncSourceEntity.toDomain() = SyncSource(
@@ -53,19 +59,11 @@ class SyncSourceRepository @Inject constructor(
         host = host,
         port = port,
         username = username,
-        password = decryptPassword(encryptedPassword),
+        password = encryptedPrefs.getString("pw_$id", null) ?: "",
         createdAt = createdAt
     )
 
-    private fun encryptPassword(password: String): String =
-        android.util.Base64.encodeToString(
-            password.toByteArray(Charsets.UTF_8),
-            android.util.Base64.NO_WRAP
-        )
-
-    private fun decryptPassword(encrypted: String): String =
-        String(
-            android.util.Base64.decode(encrypted, android.util.Base64.NO_WRAP),
-            Charsets.UTF_8
-        )
+    companion object {
+        private const val ENCRYPTED_PLACEHOLDER = "ENCRYPTED"
+    }
 }

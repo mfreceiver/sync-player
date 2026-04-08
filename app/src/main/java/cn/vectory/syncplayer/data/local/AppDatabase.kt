@@ -7,31 +7,27 @@ import cn.vectory.syncplayer.data.local.dao.SyncLogDao
 import cn.vectory.syncplayer.data.local.dao.SyncSourceDao
 import cn.vectory.syncplayer.data.local.dao.SyncRelationDao
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao
-import cn.vectory.syncplayer.data.local.dao.VideoMetadataCacheDao
 import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
 import cn.vectory.syncplayer.data.local.entity.SyncSourceEntity
 import cn.vectory.syncplayer.data.local.entity.SyncRelationEntity
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
-import cn.vectory.syncplayer.data.local.entity.VideoMetadataCacheEntity
 
 @Database(
     entities = [
         VideoItemEntity::class,
         PlaybackRecordEntity::class,
         SyncLogEntity::class,
-        VideoMetadataCacheEntity::class,
         SyncSourceEntity::class,
         SyncRelationEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun videoItemDao(): VideoItemDao
     abstract fun playbackRecordDao(): PlaybackRecordDao
     abstract fun syncLogDao(): SyncLogDao
-    abstract fun videoMetadataCacheDao(): VideoMetadataCacheDao
     abstract fun syncSourceDao(): SyncSourceDao
     abstract fun syncRelationDao(): SyncRelationDao
 }

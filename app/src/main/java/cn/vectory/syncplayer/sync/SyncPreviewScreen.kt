@@ -44,6 +44,9 @@ fun SyncPreviewScreen(
                             onClick = {
                                 if (!isNavigatingBack) {
                                     isNavigatingBack = true
+                                    if (isSyncing) {
+                                        viewModel.cancelSync()
+                                    }
                                     onBack()
                                 }
                             },
@@ -79,8 +82,14 @@ fun SyncPreviewScreen(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = onBack) {
-                        Text("取消")
+                    TextButton(onClick = {
+                        if (isSyncing || isDeleting) {
+                            viewModel.cancelSync()
+                        } else {
+                            onBack()
+                        }
+                    }) {
+                        Text(if (isSyncing || isDeleting) "停止" else "取消")
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
