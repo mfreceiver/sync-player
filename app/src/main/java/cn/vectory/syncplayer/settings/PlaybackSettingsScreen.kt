@@ -3,20 +3,19 @@ package cn.vectory.syncplayer.settings
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.browser.BrowserViewModel
 import cn.vectory.syncplayer.data.model.OrientationPreference
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun PlaybackSettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
@@ -59,12 +58,12 @@ fun PlaybackSettingsScreen(
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("长按加速倍速", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(1.5f, 2.0f, 2.5f, 3.0f).forEach { speed ->
                             FilterChip(
                                 selected = longPressSpeed == speed,
                                 onClick = { viewModel.setLongPressSpeed(speed) },
-                                label = { Text("${speed}x") }
+                                label = { Text("${speed}x", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             )
                         }
                     }
@@ -75,16 +74,16 @@ fun PlaybackSettingsScreen(
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("播放方向", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = orientationPreference == OrientationPreference.FOLLOW_VIDEO,
                             onClick = { viewModel.setOrientationPreference(OrientationPreference.FOLLOW_VIDEO) },
-                            label = { Text("按照视频方向") }
+                            label = { Text("按照视频方向", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                         )
                         FilterChip(
                             selected = orientationPreference == OrientationPreference.FOLLOW_SYSTEM,
                             onClick = { viewModel.setOrientationPreference(OrientationPreference.FOLLOW_SYSTEM) },
-                            label = { Text("按照系统方向") }
+                            label = { Text("按照系统方向", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                         )
                     }
                 }
@@ -94,13 +93,13 @@ fun PlaybackSettingsScreen(
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("默认排序", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         BrowserViewModel.SortMode.entries.forEach { mode ->
                             FilterChip(
                                 selected = defaultSortMode == mode,
                                 onClick = { viewModel.setDefaultSortMode(mode) },
                                 leadingIcon = { Icon(sortModeIcon(mode), null, modifier = Modifier.size(18.dp)) },
-                                label = { Text(sortModeLabel(mode)) }
+                                label = { Text(sortModeLabel(mode), maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             )
                         }
                     }
@@ -111,12 +110,12 @@ fun PlaybackSettingsScreen(
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("默认筛选", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         BrowserViewModel.BrowseFilter.entries.forEach { filter ->
                             FilterChip(
                                 selected = defaultFilter == filter,
                                 onClick = { viewModel.setDefaultFilter(filter) },
-                                label = { Text(filterLabel(filter)) }
+                                label = { Text(filterLabel(filter), maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             )
                         }
                     }
