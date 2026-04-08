@@ -3,6 +3,10 @@ package cn.vectory.syncplayer.settings
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -95,6 +99,7 @@ fun PlaybackSettingsScreen(
                             FilterChip(
                                 selected = defaultSortMode == mode,
                                 onClick = { viewModel.setDefaultSortMode(mode) },
+                                leadingIcon = { Icon(sortModeIcon(mode), null, modifier = Modifier.size(18.dp)) },
                                 label = { Text(sortModeLabel(mode)) }
                             )
                         }
@@ -122,10 +127,15 @@ fun PlaybackSettingsScreen(
 }
 
 private fun sortModeLabel(mode: BrowserViewModel.SortMode): String = when (mode) {
-    BrowserViewModel.SortMode.FILENAME_ASC -> "文件名 ↑"
-    BrowserViewModel.SortMode.FILENAME_DESC -> "文件名 ↓"
-    BrowserViewModel.SortMode.DURATION_ASC -> "时长 ↑"
-    BrowserViewModel.SortMode.DURATION_DESC -> "时长 ↓"
+    BrowserViewModel.SortMode.FILENAME_ASC -> "A→Z"
+    BrowserViewModel.SortMode.FILENAME_DESC -> "Z→A"
+    BrowserViewModel.SortMode.DURATION_ASC -> "短→长"
+    BrowserViewModel.SortMode.DURATION_DESC -> "长→短"
+}
+
+private fun sortModeIcon(mode: BrowserViewModel.SortMode) = when (mode) {
+    BrowserViewModel.SortMode.FILENAME_ASC, BrowserViewModel.SortMode.FILENAME_DESC -> Icons.Default.SortByAlpha
+    BrowserViewModel.SortMode.DURATION_ASC, BrowserViewModel.SortMode.DURATION_DESC -> Icons.Default.Schedule
 }
 
 private fun filterLabel(filter: BrowserViewModel.BrowseFilter): String = when (filter) {

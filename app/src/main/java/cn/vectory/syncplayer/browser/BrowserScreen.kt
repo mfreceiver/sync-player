@@ -15,8 +15,13 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.PlayCircleOutline
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
@@ -122,7 +127,7 @@ fun BrowserScreen(
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )
                 NavigationDrawerItem(
-                    icon = { Icon(Icons.Default.PlayCircleOutline, contentDescription = null) },
+                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
                     label = { Text("设置") },
                     selected = false,
                     onClick = {
@@ -224,23 +229,27 @@ fun BrowserScreen(
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("按文件名 ↑") },
+                                    text = { Text("文件名 A→Z") },
                                     onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_ASC); debugLogger.log("Click","Sort: FILENAME_ASC"); showSortMenu = false },
+                                    leadingIcon = { Icon(Icons.Default.SortByAlpha, null, modifier = Modifier.size(18.dp)) },
                                     trailingIcon = { if (sortMode == BrowserViewModel.SortMode.FILENAME_ASC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("按文件名 ↓") },
+                                    text = { Text("文件名 Z→A") },
                                     onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_DESC); debugLogger.log("Click","Sort: FILENAME_DESC"); showSortMenu = false },
+                                    leadingIcon = { Icon(Icons.Default.SortByAlpha, null, modifier = Modifier.size(18.dp)) },
                                     trailingIcon = { if (sortMode == BrowserViewModel.SortMode.FILENAME_DESC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("按时长 ↑") },
+                                    text = { Text("时长 短→长") },
                                     onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_ASC); debugLogger.log("Click","Sort: DURATION_ASC"); showSortMenu = false },
+                                    leadingIcon = { Icon(Icons.Default.Schedule, null, modifier = Modifier.size(18.dp)) },
                                     trailingIcon = { if (sortMode == BrowserViewModel.SortMode.DURATION_ASC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("按时长 ↓") },
+                                    text = { Text("时长 长→短") },
                                     onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_DESC); debugLogger.log("Click","Sort: DURATION_DESC"); showSortMenu = false },
+                                    leadingIcon = { Icon(Icons.Default.Schedule, null, modifier = Modifier.size(18.dp)) },
                                     trailingIcon = { if (sortMode == BrowserViewModel.SortMode.DURATION_DESC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                                 HorizontalDivider()
