@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,7 +15,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.navigation.NavController
+import androidx.compose.ui.platform.LocalContext
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import cn.vectory.syncplayer.navigation.AppNavHost
 import cn.vectory.syncplayer.navigation.Route
@@ -37,37 +39,30 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MainContent(debugLogger = debugLogger, activity = this@MainActivity)
+                    val navController = rememberNavController()
+                    var notificationIntent by remember { mutableStateOf(intent) }
+
+                    LaunchedEffect(intent) {
+                        notificationIntent = intent
+                    }
+
+                    LaunchedEffect(notificationIntent) {
+                        handleNotificationNavigation(notificationIntent, navController)
+                    }
+
+                    AppNavHost(debugLogger = debugLogger, navController = navController)
                 }
             }
         }
     }
 
-    override fun onNewIntent(intent: android.content.Intent) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
     }
 }
 
-@Composable
-private fun MainContent(debugLogger: DebugLogger, activity: MainActivity) {
-    val navController = rememberNavController()
-    var currentIntent by remember { mutableStateOf(activity.intent) }
-
-    LaunchedEffect(activity) {
-        activity.setOnNewIntentListener { intent ->
-            currentIntent = intent
-        }
-    }
-
-    LaunchedEffect(currentIntent) {
-        handleNotificationNavigation(currentIntent, navController)
-    }
-
-    AppNavHost(debugLogger = debugLogger, navController = navController)
-}
-
-private fun handleNotificationNavigation(intent: android.content.Intent?, navController: NavController) {
+private fun handleNotificationNavigation(intent: Intent?, navController: NavHostController) {
     val navigateTo = intent?.getStringExtra("navigateTo") ?: return
     when (navigateTo) {
         "syncPreview" -> {
