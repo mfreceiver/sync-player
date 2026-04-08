@@ -15,11 +15,11 @@ interface PlaybackRecordDao {
     @Query("SELECT * FROM playback_record ORDER BY lastPlayedTime DESC")
     fun getAllFlow(): Flow<List<PlaybackRecordEntity>>
 
-    @Query("SELECT * FROM playback_record WHERE isFavorite = 1 ORDER BY lastPlayedTime DESC")
-    fun getFavoritesFlow(): Flow<List<PlaybackRecordEntity>>
+    @Query("SELECT * FROM playback_record WHERE isTrashed = 1 ORDER BY lastPlayedTime DESC")
+    fun getTrashedFlow(): Flow<List<PlaybackRecordEntity>>
 
-    @Query("SELECT * FROM playback_record WHERE isFavorite = 1")
-    suspend fun getFavorites(): List<PlaybackRecordEntity>
+    @Query("SELECT * FROM playback_record WHERE isTrashed = 1")
+    suspend fun getTrashed(): List<PlaybackRecordEntity>
 
     @Upsert
     suspend fun upsert(record: PlaybackRecordEntity)
@@ -43,8 +43,8 @@ interface PlaybackRecordDao {
 
     @Query("""
         UPDATE playback_record 
-        SET isFavorite = :favorite 
+        SET isTrashed = :trashed
         WHERE videoItemId = :videoItemId
     """)
-    suspend fun updateFavorite(videoItemId: Long, favorite: Boolean)
+    suspend fun updateTrashed(videoItemId: Long, trashed: Boolean)
 }

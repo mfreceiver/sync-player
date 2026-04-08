@@ -179,16 +179,16 @@ fun PlayerScreen(
         override fun onDoubleTap() {
             if (exoPlayer.isPlaying) {
                 exoPlayer.pause()
-                gestureView.showGestureOverlay("⏸ 已暂停")
+                gestureView.showIconOverlay("⏸", "已暂停")
             } else {
                 exoPlayer.play()
-                gestureView.showGestureOverlay("▶ 播放中")
+                gestureView.showIconOverlay("▶", "播放中")
             }
         }
         override fun onTripleTap() {
-            val wasFavorite = playbackRecord?.isFavorite ?: false
-            gestureView.showGestureOverlay(if (wasFavorite) "取消预删除" else "已标记预删除")
-            viewModel.toggleFavorite()
+            val wasTrashed = playbackRecord?.isTrashed ?: false
+            gestureView.showIconOverlay("🗑", if (wasTrashed) "已从回收站恢复" else "已放入回收站")
+            viewModel.toggleTrashed()
         }
     }
     fun doExit() {
@@ -262,13 +262,13 @@ fun PlayerScreen(
                         overflow = TextOverflow.Ellipsis
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        val isFavorite = playbackRecord?.isFavorite ?: false
-                        val extendedColors = LocalExtendedColors.current
-                        IconButton(onClick = { viewModel.toggleFavorite() }) {
-                            Icon(
-                                imageVector = if (isFavorite) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
-                                contentDescription = if (isFavorite) "取消预删除" else "预删除",
-                                tint = if (isFavorite) extendedColors.favoritePink else Color.White
+                    val isTrashed = playbackRecord?.isTrashed ?: false
+                    val extendedColors = LocalExtendedColors.current
+                    IconButton(onClick = { viewModel.toggleTrashed() }) {
+                        Icon(
+                            imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
+                            contentDescription = if (isTrashed) "从回收站恢复" else "放入回收站",
+                            tint = if (isTrashed) extendedColors.trashRed else Color.White
                             )
                         }
                         IconButton(onClick = {

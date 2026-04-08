@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 internal fun FileStatusIcon(
     isCompleted: Boolean,
-    isFavorite: Boolean,
+    isTrashed: Boolean,
     playbackPosition: Long,
     playbackDuration: Long,
     modifier: Modifier = Modifier
@@ -29,10 +29,10 @@ internal fun FileStatusIcon(
                     progress = 1f,
                     modifier = Modifier.size(32.dp)
                 )
-                if (isFavorite) {
+                if (isTrashed) {
                     Icon(
                         imageVector = Icons.Default.Delete,
-                        contentDescription = "已预删除",
+                        contentDescription = "回收站",
                         tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier
                             .size(14.dp)
@@ -42,17 +42,17 @@ internal fun FileStatusIcon(
             }
         }
         playbackPosition > 0 && playbackDuration > 0 -> {
-            Spacer(Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(8.dp))
             val progress = playbackPosition.toFloat() / playbackDuration.toFloat()
             Box(contentAlignment = Alignment.Center) {
                 ProgressRing(
                     progress = progress,
                     modifier = Modifier.size(32.dp)
                 )
-                if (isFavorite) {
+                if (isTrashed) {
                     Icon(
                         imageVector = Icons.Default.Delete,
-                        contentDescription = "已预删除",
+                        contentDescription = "回收站",
                         tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier
                             .size(14.dp)
@@ -61,11 +61,11 @@ internal fun FileStatusIcon(
                 }
             }
         }
-        isFavorite -> {
-            Spacer(Modifier.width(8.dp))
+        isTrashed -> {
+            Spacer(modifier = Modifier.width(8.dp))
             Icon(
                 imageVector = Icons.Default.Delete,
-                contentDescription = "已预删除",
+                contentDescription = "回收站",
                 tint = MaterialTheme.colorScheme.error,
                 modifier = Modifier.size(24.dp)
             )

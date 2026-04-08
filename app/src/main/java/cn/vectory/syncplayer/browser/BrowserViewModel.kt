@@ -37,7 +37,7 @@ class BrowserViewModel @Inject constructor(
 ) : ViewModel() {
 
     enum class SortMode { FILENAME_ASC, FILENAME_DESC, DURATION_ASC, DURATION_DESC }
-    enum class BrowseFilter { ALL, VIDEO_ONLY, FAVORITES_ONLY }
+    enum class BrowseFilter { ALL, VIDEO_ONLY, TRASHED_ONLY }
 
     private val _currentFolder = MutableStateFlow("")
     val currentFolder: StateFlow<String> = _currentFolder.asStateFlow()
@@ -149,7 +149,7 @@ class BrowserViewModel @Inject constructor(
                     playbackPosition = record?.position ?: 0,
                     playbackDuration = record?.duration ?: 0,
                     isCompleted = record?.isCompleted ?: false,
-                    isFavorite = record?.isFavorite ?: false
+                    isTrashed = record?.isTrashed ?: false
                 )
             }
 
@@ -158,7 +158,7 @@ class BrowserViewModel @Inject constructor(
         val filteredVideos = when (filterVal) {
             BrowseFilter.ALL -> videos
             BrowseFilter.VIDEO_ONLY -> videos.filter { isVideoFile(it.name) }
-            BrowseFilter.FAVORITES_ONLY -> videos.filter { it.isFavorite }
+            BrowseFilter.TRASHED_ONLY -> videos.filter { it.isTrashed }
         }
         val sortedFolders = folders.sortedBy { it.name.lowercase() }
         val sortedVideos = when (mode) {
@@ -265,9 +265,9 @@ class BrowserViewModel @Inject constructor(
             .mapNotNull { it.videoItemId }
     }
 
-    fun toggleFavorite(videoItemId: Long) {
+    fun toggleTrashed(videoItemId: Long) {
         viewModelScope.launch {
-            playbackRepository.toggleFavorite(videoItemId)
+            playbackRepository.toggleTrashed(videoItemId)
         }
     }
 

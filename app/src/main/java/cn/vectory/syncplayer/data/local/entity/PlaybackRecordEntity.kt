@@ -24,5 +24,5 @@ data class PlaybackRecordEntity(
     val duration: Long = 0L,
     val lastPlayedTime: Long = System.currentTimeMillis(),
     val isCompleted: Boolean = false,
-    val isFavorite: Boolean = false
+    val isTrashed: Boolean = false
 )

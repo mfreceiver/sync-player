@@ -424,10 +424,10 @@ class SyncEngine @Inject constructor(
             val remoteFiles = client.listFiles(relation.remotePath)
             val remoteMap = remoteFiles.filter { !it.isDirectory }.associateBy { it.path }
 
-            val favorites = playbackRepository.getFavorites()
+            val trashed = playbackRepository.getTrashed()
             val localVideos = videoRepository.getBySyncRelationId(relationId)
-            for (favorite in favorites) {
-                val videoItem = localVideos.find { it.id == favorite.videoItemId } ?: continue
+            for (record in trashed) {
+                val videoItem = localVideos.find { it.id == record.videoItemId } ?: continue
                 val localFile = File(videoItem.localAbsolutePath)
                 if (!localFile.exists()) continue
 

@@ -333,7 +333,7 @@ private fun SearchFileItem(
 
         FileStatusIcon(
             isCompleted = item.isCompleted,
-            isFavorite = item.isFavorite,
+            isTrashed = item.isTrashed,
             playbackPosition = item.playbackPosition,
             playbackDuration = item.playbackDuration
         )

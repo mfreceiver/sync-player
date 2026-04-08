@@ -101,7 +101,7 @@ class SearchViewModel @Inject constructor(
                     playbackPosition = record?.position ?: 0,
                     playbackDuration = record?.duration ?: 0,
                     isCompleted = record?.isCompleted ?: false,
-                    isFavorite = record?.isFavorite ?: false
+                    isTrashed = record?.isTrashed ?: false
                 )
             }.sortedBy { it.name.lowercase() }
             result.addAll(matchingFiles)

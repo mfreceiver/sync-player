@@ -19,9 +19,9 @@ class PlaybackRepository @Inject constructor(
 
     fun getAllFlow(): Flow<List<PlaybackRecordEntity>> = playbackRecordDao.getAllFlow()
 
-    fun getFavoritesFlow(): Flow<List<PlaybackRecordEntity>> = playbackRecordDao.getFavoritesFlow()
+    fun getTrashedFlow(): Flow<List<PlaybackRecordEntity>> = playbackRecordDao.getTrashedFlow()
 
-    suspend fun getFavorites(): List<PlaybackRecordEntity> = playbackRecordDao.getFavorites()
+    suspend fun getTrashed(): List<PlaybackRecordEntity> = playbackRecordDao.getTrashed()
 
     suspend fun upsert(record: PlaybackRecordEntity) = playbackRecordDao.upsert(record)
 
@@ -45,16 +45,16 @@ class PlaybackRepository @Inject constructor(
                     duration = duration,
                     lastPlayedTime = System.currentTimeMillis(),
                     isCompleted = isCompleted,
-                    isFavorite = false
+                    isTrashed = false
                 )
             )
         }
     }
 
-    suspend fun toggleFavorite(videoItemId: Long) {
+    suspend fun toggleTrashed(videoItemId: Long) {
         val existing = playbackRecordDao.getByVideoId(videoItemId)
         if (existing != null) {
-            playbackRecordDao.updateFavorite(videoItemId, !existing.isFavorite)
+            playbackRecordDao.updateTrashed(videoItemId, !existing.isTrashed)
         } else {
             playbackRecordDao.upsert(
                 PlaybackRecordEntity(
@@ -63,14 +63,14 @@ class PlaybackRepository @Inject constructor(
                     duration = 0,
                     lastPlayedTime = System.currentTimeMillis(),
                     isCompleted = false,
-                    isFavorite = true
+                    isTrashed = true
                 )
             )
         }
     }
 
-    suspend fun setFavorite(videoItemId: Long, favorite: Boolean) {
-        playbackRecordDao.updateFavorite(videoItemId, favorite)
+    suspend fun setTrashed(videoItemId: Long, trashed: Boolean) {
+        playbackRecordDao.updateTrashed(videoItemId, trashed)
     }
 
     suspend fun deleteByVideoId(videoItemId: Long) =

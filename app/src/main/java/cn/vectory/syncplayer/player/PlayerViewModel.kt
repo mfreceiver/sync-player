@@ -85,10 +85,10 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun toggleFavorite() {
+    fun toggleTrashed() {
         val videoId = _videoItem.value?.id ?: return
         viewModelScope.launch {
-            playbackRepository.toggleFavorite(videoId)
+            playbackRepository.toggleTrashed(videoId)
             _playbackRecord.value = playbackRepository.getByVideoId(videoId)
         }
     }

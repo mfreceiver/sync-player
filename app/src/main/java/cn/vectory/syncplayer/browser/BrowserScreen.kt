@@ -270,9 +270,9 @@ fun BrowserScreen(
                                     trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.VIDEO_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("仅预删除") },
-                                    onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.FAVORITES_ONLY); debugLogger.log("Click","Filter: FAVORITES_ONLY"); showSortMenu = false },
-                                    trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.FAVORITES_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                                    text = { Text("仅回收站") },
+                                    onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.TRASHED_ONLY); debugLogger.log("Click","Filter: TRASHED_ONLY"); showSortMenu = false },
+                                    trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.TRASHED_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                             }
                         }
@@ -372,10 +372,10 @@ fun BrowserScreen(
                         Text("分享")
                     }
                     TextButton(onClick = {
-                        viewModel.toggleFavorite(item.videoItemId!!)
+                        viewModel.toggleTrashed(item.videoItemId!!)
                         showContextMenu = null
                     }) {
-                        Text(if (item.isFavorite) "取消预删除" else "预删除")
+                        Text(if (item.isTrashed) "从回收站恢复" else "放入回收站")
                     }
                 }
             },
@@ -545,7 +545,7 @@ private fun FileItem(
 
         FileStatusIcon(
             isCompleted = item.isCompleted,
-            isFavorite = item.isFavorite,
+                    isTrashed = item.isTrashed,
             playbackPosition = item.playbackPosition,
             playbackDuration = item.playbackDuration
         )

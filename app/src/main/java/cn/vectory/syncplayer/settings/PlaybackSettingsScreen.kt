@@ -163,5 +163,5 @@ private fun sortModeIcon(mode: BrowserViewModel.SortMode) = when (mode) {
 private fun filterLabel(filter: BrowserViewModel.BrowseFilter): String = when (filter) {
     BrowserViewModel.BrowseFilter.ALL -> "全部"
     BrowserViewModel.BrowseFilter.VIDEO_ONLY -> "仅视频"
-    BrowserViewModel.BrowseFilter.FAVORITES_ONLY -> "仅预删除"
+    BrowserViewModel.BrowseFilter.TRASHED_ONLY -> "仅回收站"
 }

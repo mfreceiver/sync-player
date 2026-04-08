@@ -13,7 +13,7 @@ data class ExtendedColors(
     val folderAmber: Color,
     val successGreen: Color,
     val placeholderGrey: Color,
-    val favoritePink: Color,
+    val trashRed: Color,
 )
 
 val LocalExtendedColors = staticCompositionLocalOf {
@@ -21,7 +21,7 @@ val LocalExtendedColors = staticCompositionLocalOf {
         folderAmber = FolderAmber,
         successGreen = SuccessGreen,
         placeholderGrey = PlaceholderGrey,
-        favoritePink = FavoritePink,
+        trashRed = TrashRed,
     )
 }
 
@@ -47,7 +47,7 @@ fun SyncPlayerTheme(
         folderAmber = FolderAmber,
         successGreen = SuccessGreen,
         placeholderGrey = PlaceholderGrey,
-        favoritePink = FavoritePink,
+        trashRed = TrashRed,
     )
 
     CompositionLocalProvider(LocalExtendedColors provides extendedColors) {

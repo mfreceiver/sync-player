@@ -1,11 +1,14 @@
 package cn.vectory.syncplayer.player
 
 import android.content.Context
+import android.graphics.Typeface
 import android.media.AudioManager
 import android.util.AttributeSet
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.MotionEvent
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.*
@@ -27,6 +30,25 @@ class GesturePlayerView @JvmOverloads constructor(
         setBackgroundColor(0x80000000.toInt())
         setPadding(24, 12, 24, 12)
         visibility = GONE
+    }
+    private val iconOverlayLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER
+        setBackgroundColor(0x80000000.toInt())
+        setPadding(40, 24, 40, 24)
+        visibility = GONE
+    }
+    private val iconOverlaySymbol = TextView(context).apply {
+        setTextColor(0xFFFFFFFF.toInt())
+        textSize = 36f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+    }
+    private val iconOverlayLabel = TextView(context).apply {
+        setTextColor(0xFFFFFFFF.toInt())
+        textSize = 14f
+        gravity = Gravity.CENTER
+        setPadding(0, 8, 0, 0)
     }
 
     var gestureListener: GestureListener? = null
@@ -55,8 +77,8 @@ class GesturePlayerView @JvmOverloads constructor(
         fun onTripleTap()
     }
 
-    private var doubleTapJob: Job? = null
     private var tapCount = 0
+    private var tapJob: Job? = null
 
     fun setOnSingleTapCallback(callback: (() -> Unit)?) {
         singleTapCallback = callback
@@ -65,7 +87,12 @@ class GesturePlayerView @JvmOverloads constructor(
     init {
         addView(playerView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(overlayText, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-            gravity = android.view.Gravity.CENTER
+            gravity = Gravity.CENTER
+        })
+        iconOverlayLayout.addView(iconOverlaySymbol)
+        iconOverlayLayout.addView(iconOverlayLabel)
+        addView(iconOverlayLayout, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.CENTER
         })
     }
 
@@ -122,7 +149,7 @@ class GesturePlayerView @JvmOverloads constructor(
                     val delta = distanceY / height.toFloat()
                     gestureListener?.onBrightnessChanged(delta)
                 } else {
-                    val totalDelta = (e2.y - touchStartY) / height.toFloat()
+                    val totalDelta = (touchStartY - e2.y) / height.toFloat()
                     gestureListener?.onVolumeChanged(totalDelta)
                 }
                 return true
@@ -130,27 +157,18 @@ class GesturePlayerView @JvmOverloads constructor(
             return false
         }
 
-        override fun onDoubleTap(e: MotionEvent): Boolean {
-            doubleTapJob?.cancel()
+        override fun onSingleTapUp(e: MotionEvent): Boolean {
             tapCount++
-            if (tapCount == 1) {
-                doubleTapJob = CoroutineScope(Dispatchers.Main).launch {
-                    delay(300)
-                    if (tapCount == 1) {
-                        gestureListener?.onDoubleTap()
-                    }
-                    tapCount = 0
+            tapJob?.cancel()
+            tapJob = CoroutineScope(Dispatchers.Main).launch {
+                delay(280)
+                when (tapCount) {
+                    1 -> singleTapCallback?.invoke()
+                    2 -> gestureListener?.onDoubleTap()
+                    else -> gestureListener?.onTripleTap()
                 }
-            } else if (tapCount >= 2) {
-                doubleTapJob?.cancel()
                 tapCount = 0
-                gestureListener?.onTripleTap()
             }
-            return true
-        }
-
-        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-            singleTapCallback?.invoke()
             return true
         }
     })
@@ -205,8 +223,21 @@ class GesturePlayerView @JvmOverloads constructor(
         showOverlay(text)
     }
 
+    fun showIconOverlay(symbol: String, label: String) {
+        overlayHideJob?.cancel()
+        hideOverlay()
+        iconOverlaySymbol.text = symbol
+        iconOverlayLabel.text = label
+        iconOverlayLayout.visibility = VISIBLE
+        overlayHideJob = CoroutineScope(Dispatchers.Main).launch {
+            delay(750)
+            iconOverlayLayout.visibility = GONE
+        }
+    }
+
     private fun showOverlay(text: String) {
         overlayHideJob?.cancel()
+        iconOverlayLayout.visibility = GONE
         overlayText.text = text
         overlayText.visibility = VISIBLE
         overlayHideJob = CoroutineScope(Dispatchers.Main).launch {
@@ -218,7 +249,9 @@ class GesturePlayerView @JvmOverloads constructor(
     private fun hideOverlay() {
         overlayHideJob?.cancel()
         overlayText.visibility = GONE
+        iconOverlayLayout.visibility = GONE
     }
+
     private fun formatTimeMs(ms: Long): String {
         val totalSeconds = (ms / 1000).coerceAtLeast(0)
         val hours = totalSeconds / 3600
