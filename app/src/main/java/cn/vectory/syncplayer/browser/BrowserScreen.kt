@@ -102,8 +102,10 @@ fun BrowserScreen(
                     label = { Text("数据源") },
                     selected = false,
                     onClick = {
-                        scope.launch { drawerState.close() }
-                        onNavigateToSyncSourceList()
+                        scope.launch {
+                            drawerState.close()
+                            onNavigateToSyncSourceList()
+                        }
                     },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )
@@ -112,8 +114,10 @@ fun BrowserScreen(
                     label = { Text("同步关系") },
                     selected = false,
                     onClick = {
-                        scope.launch { drawerState.close() }
-                        onNavigateToSyncRelationList()
+                        scope.launch {
+                            drawerState.close()
+                            onNavigateToSyncRelationList()
+                        }
                     },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )
@@ -122,8 +126,10 @@ fun BrowserScreen(
                     label = { Text("设置") },
                     selected = false,
                     onClick = {
-                        scope.launch { drawerState.close() }
-                        onNavigateToPlaybackSettings()
+                        scope.launch {
+                            drawerState.close()
+                            onNavigateToPlaybackSettings()
+                        }
                     },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )
@@ -132,8 +138,10 @@ fun BrowserScreen(
                     label = { Text("关于") },
                     selected = false,
                     onClick = {
-                        scope.launch { drawerState.close() }
-                        onNavigateToAbout()
+                        scope.launch {
+                            drawerState.close()
+                            onNavigateToAbout()
+                        }
                     },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )

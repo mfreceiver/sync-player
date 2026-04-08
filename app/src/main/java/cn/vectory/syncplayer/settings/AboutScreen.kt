@@ -35,6 +35,7 @@ fun AboutScreen(
     val scope = rememberCoroutineScope()
 
     var logViewerExpanded by remember { mutableStateOf(false) }
+    var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -42,7 +43,15 @@ fun AboutScreen(
             TopAppBar(
                 title = { Text("关于") },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(
+                        onClick = {
+                            if (!isNavigatingBack) {
+                                isNavigatingBack = true
+                                onNavigateBack()
+                            }
+                        },
+                        enabled = !isNavigatingBack
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
                     }
                 }

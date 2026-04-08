@@ -43,13 +43,22 @@ fun SyncSourceEditScreen(
     val sourceId = viewModel.sourceId
     var passwordVisible by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(if (sourceId > 0L) "编辑数据源" else "新增数据源") },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(
+                        onClick = {
+                            if (!isNavigatingBack) {
+                                isNavigatingBack = true
+                                onNavigateBack()
+                            }
+                        },
+                        enabled = !isNavigatingBack
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 }

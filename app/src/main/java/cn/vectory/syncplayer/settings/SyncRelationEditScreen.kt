@@ -47,13 +47,22 @@ fun SyncRelationEditScreen(
     var showLocalBrowser by remember { mutableStateOf(false) }
     var sourceExpanded by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(if (viewModel.relationId > 0) "编辑同步关系" else "新增同步关系") },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(
+                        onClick = {
+                            if (!isNavigatingBack) {
+                                isNavigatingBack = true
+                                onNavigateBack()
+                            }
+                        },
+                        enabled = !isNavigatingBack
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 }

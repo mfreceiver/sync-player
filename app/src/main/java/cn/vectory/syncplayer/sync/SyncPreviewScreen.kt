@@ -31,6 +31,7 @@ fun SyncPreviewScreen(
     val syncMode by viewModel.syncMode.collectAsState()
     val previewLoaded by viewModel.previewLoaded.collectAsState()
     val progress by viewModel.progress.collectAsState()
+    var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -38,7 +39,15 @@ fun SyncPreviewScreen(
                 TopAppBar(
                     title = { Text("同步预览") },
                     navigationIcon = {
-                        IconButton(onClick = onBack) {
+                        IconButton(
+                            onClick = {
+                                if (!isNavigatingBack) {
+                                    isNavigatingBack = true
+                                    onBack()
+                                }
+                            },
+                            enabled = !isNavigatingBack
+                        ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = "返回"

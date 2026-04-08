@@ -43,13 +43,22 @@ fun SyncRelationListScreen(
     viewModel: SyncRelationListViewModel = hiltViewModel()
 ) {
     val relations by viewModel.relationsWithSource.collectAsStateWithLifecycle()
+    var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("同步关系管理") },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(
+                        onClick = {
+                            if (!isNavigatingBack) {
+                                isNavigatingBack = true
+                                onNavigateBack()
+                            }
+                        },
+                        enabled = !isNavigatingBack
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 }

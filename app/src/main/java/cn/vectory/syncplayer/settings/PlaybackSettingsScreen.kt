@@ -22,13 +22,22 @@ fun PlaybackSettingsScreen(
     val orientationPreference by viewModel.orientationPreference.collectAsStateWithLifecycle()
     val defaultSortMode by viewModel.defaultSortMode.collectAsStateWithLifecycle()
     val defaultFilter by viewModel.defaultFilter.collectAsStateWithLifecycle()
+    var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("设置") },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(
+                        onClick = {
+                            if (!isNavigatingBack) {
+                                isNavigatingBack = true
+                                onNavigateBack()
+                            }
+                        },
+                        enabled = !isNavigatingBack
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
                     }
                 }
