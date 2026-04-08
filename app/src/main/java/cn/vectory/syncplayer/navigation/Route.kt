@@ -24,8 +24,9 @@ sealed class Route(val route: String) {
         fun create(relationId: Long): String = "sync_relation_edit/$relationId"
         fun createNew(): String = "sync_relation_edit/0"
     }
-    data object SyncPreview : Route("sync_preview/{relationId}") {
-        fun create(relationId: Long): String = "sync_preview/$relationId"
+    data object SyncPreview : Route("sync_preview/{relationId}?initialTab={initialTab}") {
+        fun create(relationId: Long, initialTab: String = "download"): String =
+            "sync_preview/$relationId?initialTab=$initialTab"
     }
     data object Search : Route("search")
     data object PlaybackSettings : Route("playback_settings")

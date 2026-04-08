@@ -271,6 +271,26 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
+    fun isFileInBaseDir(relativePath: String): Boolean {
+        val basePathsList = basePaths.value.map { it.relation.localBasePath }
+        return basePathsList.any { basePath ->
+            relativePath.startsWith("$basePath/") || relativePath == basePath
+        }
+    }
+
+    fun deleteFile(relativePath: String) {
+        viewModelScope.launch {
+            val video = videoRepository.getByRelativePath(relativePath)
+            if (video != null) {
+                playbackRepository.deleteByVideoId(video.id)
+                videoRepository.deleteByRelativePath(relativePath)
+            }
+            val file = File(storagePaths.userdataRoot, relativePath)
+            if (file.exists()) file.delete()
+            _refreshTrigger.value++
+        }
+    }
+
     suspend fun buildShareIntent(videoItemId: Long): Intent? {
         val video = videoRepository.getById(videoItemId) ?: return null
         val file = File(video.localAbsolutePath)

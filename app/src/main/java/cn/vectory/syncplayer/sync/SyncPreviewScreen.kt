@@ -227,7 +227,9 @@ fun SyncPreviewScreen(
                             )
                         ) {
                             Column(
-                                modifier = Modifier.padding(16.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Icon(
@@ -261,17 +263,21 @@ fun SyncPreviewScreen(
                             )
                         }
                         if (syncMode == SyncMode.DOWNLOAD) {
-                            SyncDownloadSummaryCard(
-                                downloadCount = toDownload.size,
-                                downloadSize = viewModel.totalDownloadSize,
-                                deleteCount = toDelete.size,
-                                deleteSize = viewModel.totalDeleteSize
-                            )
+                            if (toDownload.isNotEmpty() || toDelete.isNotEmpty()) {
+                                SyncDownloadSummaryCard(
+                                    downloadCount = toDownload.size,
+                                    downloadSize = viewModel.totalDownloadSize,
+                                    deleteCount = toDelete.size,
+                                    deleteSize = viewModel.totalDeleteSize
+                                )
+                            }
                         } else {
-                            SyncDeleteSummaryCard(
-                                count = toDelete.size,
-                                totalSize = viewModel.totalDeleteSize
-                            )
+                            if (toDelete.isNotEmpty()) {
+                                SyncDeleteSummaryCard(
+                                    count = toDelete.size,
+                                    totalSize = viewModel.totalDeleteSize
+                                )
+                            }
                         }
                         if (syncMode == SyncMode.DOWNLOAD && toDelete.isNotEmpty()) {
                             SyncDeleteWarningCard()

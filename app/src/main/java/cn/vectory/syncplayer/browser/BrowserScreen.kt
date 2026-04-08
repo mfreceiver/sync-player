@@ -34,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.ui.components.FileStatusIcon
@@ -283,7 +284,7 @@ fun BrowserScreen(
             }
         ) { paddingValues ->
             val listState = rememberLazyListState()
-            LaunchedEffect(browseItems) { listState.scrollToItem(0) }
+            LaunchedEffect(folder) { listState.scrollToItem(0) }
             LazyColumn(
                 state = listState,
                 modifier = Modifier
@@ -357,40 +358,72 @@ fun BrowserScreen(
     }
 
     showContextMenu?.let { item ->
-        AlertDialog(
-            onDismissRequest = { showContextMenu = null },
-            title = { Text(item.name) },
-            text = { Text("选择操作") },
-            confirmButton = {
-                Row {
-                    TextButton(onClick = {
-                        val itemId = item.videoItemId!!
-                        showContextMenu = null
-                        scope.launch {
-                            val intent = viewModel.buildShareIntent(itemId)
-                            if (intent != null) {
-                                context.startActivity(intent)
-                            } else {
-                                scope.launch { snackbarHostState.showSnackbar("分享失败：文件不存在或无法访问") }
+        Dialog(onDismissRequest = { showContextMenu = null }) {
+            Card(
+                modifier = Modifier.width(280.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = item.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    if (isVideoFile(item.name)) {
+                        Spacer(Modifier.height(12.dp))
+                        Thumbnail(
+                            thumbnailPath = item.thumbnailPath,
+                            isVideo = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = {
+                            val itemId = item.videoItemId!!
+                            showContextMenu = null
+                            scope.launch {
+                                val intent = viewModel.buildShareIntent(itemId)
+                                if (intent != null) {
+                                    context.startActivity(intent)
+                                } else {
+                                    scope.launch { snackbarHostState.showSnackbar("分享失败：文件不存在或无法访问") }
+                                }
+                            }
+                        }) {
+                            Text("分享")
+                        }
+                        TextButton(onClick = {
+                            viewModel.toggleTrashed(item.videoItemId!!)
+                            showContextMenu = null
+                        }) {
+                            Text(if (item.isTrashed) "从回收站恢复" else "放入回收站")
+                        }
+                        if (!viewModel.isFileInBaseDir(item.relativePath)) {
+                            TextButton(onClick = {
+                                viewModel.deleteFile(item.relativePath)
+                                showContextMenu = null
+                            }) {
+                                Text("删除", color = MaterialTheme.colorScheme.error)
                             }
                         }
-                    }) {
-                        Text("分享")
+                        TextButton(onClick = { showContextMenu = null }) {
+                            Text("取消")
+                        }
                     }
-                    TextButton(onClick = {
-                        viewModel.toggleTrashed(item.videoItemId!!)
-                        showContextMenu = null
-                    }) {
-                        Text(if (item.isTrashed) "从回收站恢复" else "放入回收站")
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showContextMenu = null }) {
-                    Text("取消")
                 }
             }
-        )
+        }
     }
 
     showFolderContextMenu?.let { item ->

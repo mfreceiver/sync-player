@@ -78,7 +78,7 @@ fun AppNavHost(debugLogger: DebugLogger, navController: NavHostController = reme
                     navController.navigate(Route.About.route, drawerNavOptions)
                 },
                 onNavigateToSyncPreview = { relationId ->
-                    navController.navigate(Route.SyncPreview.create(relationId))
+                    navController.navigate(Route.SyncPreview.create(relationId, "delete"))
                 }
             , debugLogger = debugLogger
             )
@@ -147,7 +147,7 @@ fun AppNavHost(debugLogger: DebugLogger, navController: NavHostController = reme
                     navController.navigate(Route.SyncRelationEdit.createNew())
                 },
                 onNavigateToSyncPreview = { relationId ->
-                    navController.navigate(Route.SyncPreview.create(relationId))
+                    navController.navigate(Route.SyncPreview.create(relationId, "download"))
                 }
             )
         }
@@ -167,7 +167,8 @@ fun AppNavHost(debugLogger: DebugLogger, navController: NavHostController = reme
         composable(
             route = Route.SyncPreview.route,
             arguments = listOf(
-                navArgument("relationId") { type = NavType.LongType; defaultValue = 0L }
+                navArgument("relationId") { type = NavType.LongType; defaultValue = 0L },
+                navArgument("initialTab") { type = NavType.StringType; defaultValue = "download" }
             )
         ) {
             val viewModel: SyncPreviewViewModel = hiltViewModel()

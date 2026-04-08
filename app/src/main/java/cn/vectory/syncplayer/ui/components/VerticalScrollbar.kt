@@ -24,11 +24,9 @@ fun Modifier.verticalScrollbar(
     width: Dp = 4.dp,
     color: Color = Color.White.copy(alpha = 0.4f)
 ): Modifier {
-    val totalItems = state.layoutInfo.totalItemsCount
-
     val targetAlpha by remember {
         derivedStateOf {
-            if (state.layoutInfo.visibleItemsInfo.size < totalItems) 1f else 0f
+            if (state.layoutInfo.visibleItemsInfo.size < state.layoutInfo.totalItemsCount) 1f else 0f
         }
     }
 
@@ -43,12 +41,12 @@ fun Modifier.verticalScrollbar(
                 ThumbInfo(0f, 0f, 0f)
             } else {
                 val firstVisibleItem = layoutInfo.visibleItemsInfo.firstOrNull()
-                val scrollProgress = if (firstVisibleItem != null && totalItems > 1) {
+                val scrollProgress = if (firstVisibleItem != null && layoutInfo.totalItemsCount > 1) {
                     (firstVisibleItem.index.toFloat() + firstVisibleItem.offset.toFloat() / -firstVisibleItem.size.toFloat()
-                        .coerceAtLeast(1f)) / (totalItems - 1).toFloat()
+                        .coerceAtLeast(1f)) / (layoutInfo.totalItemsCount - 1).toFloat()
                 } else 0f
 
-                val viewportRatio = layoutInfo.visibleItemsInfo.size.toFloat() / totalItems.toFloat()
+                val viewportRatio = layoutInfo.visibleItemsInfo.size.toFloat() / layoutInfo.totalItemsCount.toFloat()
                 val viewportHeight = layoutInfo.viewportSize.height.toFloat()
                 val tSize = (viewportRatio * viewportHeight).coerceIn(40f, viewportHeight)
                 val tOffset = scrollProgress * (viewportHeight - tSize)

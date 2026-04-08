@@ -50,7 +50,11 @@ class SyncPreviewViewModel @Inject constructor(
     private val _syncComplete = MutableStateFlow(false)
     val syncComplete = _syncComplete.asStateFlow()
 
-    private val _syncMode = MutableStateFlow(SyncMode.DOWNLOAD)
+    private val initialTab: String = savedStateHandle.get<String>("initialTab") ?: "download"
+
+    private val _syncMode = MutableStateFlow(
+        if (initialTab == "delete") SyncMode.DELETE else SyncMode.DOWNLOAD
+    )
     val syncMode = _syncMode.asStateFlow()
 
     private var deleteJob: kotlinx.coroutines.Job? = null
