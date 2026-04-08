@@ -74,11 +74,7 @@ class GesturePlayerView @JvmOverloads constructor(
         fun onVolumeChanged(totalDelta: Float)
         fun onBrightnessChanged(delta: Float)
         fun onDoubleTap()
-        fun onTripleTap()
     }
-
-    private var tapCount = 0
-    private var tapJob: Job? = null
 
     fun setOnSingleTapCallback(callback: (() -> Unit)?) {
         singleTapCallback = callback
@@ -157,18 +153,13 @@ class GesturePlayerView @JvmOverloads constructor(
             return false
         }
 
-        override fun onSingleTapUp(e: MotionEvent): Boolean {
-            tapCount++
-            tapJob?.cancel()
-            tapJob = CoroutineScope(Dispatchers.Main).launch {
-                delay(280)
-                when (tapCount) {
-                    1 -> singleTapCallback?.invoke()
-                    2 -> gestureListener?.onDoubleTap()
-                    else -> gestureListener?.onTripleTap()
-                }
-                tapCount = 0
-            }
+        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            singleTapCallback?.invoke()
+            return true
+        }
+
+        override fun onDoubleTap(e: MotionEvent): Boolean {
+            gestureListener?.onDoubleTap()
             return true
         }
     })

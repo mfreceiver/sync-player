@@ -177,15 +177,6 @@ fun PlayerScreen(
             gestureView.showBrightnessOverlay(percent)
         }
         override fun onDoubleTap() {
-            if (exoPlayer.isPlaying) {
-                exoPlayer.pause()
-                gestureView.showIconOverlay("⏸", "已暂停")
-            } else {
-                exoPlayer.play()
-                gestureView.showIconOverlay("▶", "播放中")
-            }
-        }
-        override fun onTripleTap() {
             val wasTrashed = playbackRecord?.isTrashed ?: false
             gestureView.showIconOverlay("🗑", if (wasTrashed) "已从回收站恢复" else "已放入回收站")
             viewModel.toggleTrashed()

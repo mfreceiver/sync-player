@@ -29,7 +29,6 @@ object DatabaseModule {
             AppDatabase::class.java,
             "sync-player.db"
         )
-            .addMigrations(AppDatabase.MIGRATION_7_8)
             .fallbackToDestructiveMigration()
             .build()
     }
