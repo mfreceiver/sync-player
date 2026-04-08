@@ -3,6 +3,9 @@ package cn.vectory.syncplayer.navigation
 import androidx.compose.runtime.Composable
 import cn.vectory.syncplayer.debug.DebugLogger
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -55,9 +58,9 @@ fun AppNavHost(debugLogger: DebugLogger, navController: NavHostController = reme
             BrowserScreen(
                 viewModel = viewModel,
                 currentFolder = folder,
-                onNavigateToPlayer = { videoItemId ->
+                onNavigateToPlayer = { videoItemId, videoIds ->
                     val currentFolder = viewModel.currentFolder.value
-                    navController.navigate(Route.Player.create(videoItemId, currentFolder, "browser"))
+                    navController.navigate(Route.Player.create(videoItemId, currentFolder, "browser", videoIds))
                 },
                 onNavigateToSearch = {
                     navController.navigate(Route.Search.route)
@@ -86,8 +89,13 @@ fun AppNavHost(debugLogger: DebugLogger, navController: NavHostController = reme
             arguments = listOf(
                 navArgument("videoItemId") { type = NavType.LongType },
                 navArgument("returnFolder") { type = NavType.StringType; defaultValue = "" },
-                navArgument("fromRoute") { type = NavType.StringType; defaultValue = "browser" }
-            )
+                navArgument("fromRoute") { type = NavType.StringType; defaultValue = "browser" },
+                navArgument("videoIds") { type = NavType.StringType; defaultValue = "" }
+            ),
+            enterTransition = { fadeIn(tween(0)) },
+            exitTransition = { fadeOut(tween(0)) },
+            popEnterTransition = { fadeIn(tween(0)) },
+            popExitTransition = { fadeOut(tween(0)) }
         ) { backStackEntry ->
             val videoItemId = backStackEntry.arguments?.getLong("videoItemId") ?: return@composable
             val fromRoute = backStackEntry.arguments?.getString("fromRoute") ?: "browser"
@@ -176,8 +184,8 @@ fun AppNavHost(debugLogger: DebugLogger, navController: NavHostController = reme
                     navController.popBackStack(Route.Search.route, inclusive = true)
                     navController.navigate(Route.Browser.create(folderPath))
                 },
-                onNavigateToPlayer = { videoItemId ->
-                    navController.navigate(Route.Player.create(videoItemId, "", "search"))
+                onNavigateToPlayer = { videoItemId, videoIds ->
+                    navController.navigate(Route.Player.create(videoItemId, "", "search", videoIds))
                 },
                 onBack = { navController.popBackStack() }
             )

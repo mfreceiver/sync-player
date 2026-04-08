@@ -50,6 +50,8 @@ class SyncPreviewViewModel @Inject constructor(
     private val _syncMode = MutableStateFlow(SyncMode.DOWNLOAD)
     val syncMode = _syncMode.asStateFlow()
 
+    private var deleteJob: kotlinx.coroutines.Job? = null
+
     val progress = syncEngine.progress
 
     val totalDownloadSize: Long get() = _toDownload.value.sumOf { it.fileSize }
@@ -123,14 +125,25 @@ class SyncPreviewViewModel @Inject constructor(
         }
     }
 
+    fun cancelSync() {
+        if (_isSyncing.value) {
+            SyncService.stop(context)
+        }
+        deleteJob?.cancel()
+        deleteJob = null
+    }
+
     fun startDelete() {
-        viewModelScope.launch {
+        deleteJob = viewModelScope.launch {
             val actions = _toDelete.value
             if (actions.isEmpty()) return@launch
             _isDeleting.value = true
             _error.value = null
             try {
                 syncEngine.executeDelete(relationId, actions)
+                _toDelete.value = emptyList()
+                _toDownload.value = emptyList()
+                _previewLoaded.value = false
             } catch (e: Exception) {
                 _error.value = "删除失败: ${e.message}"
             } finally {

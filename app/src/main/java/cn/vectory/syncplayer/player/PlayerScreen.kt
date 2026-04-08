@@ -138,6 +138,7 @@ fun PlayerScreen(
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
+    var initialVolume by remember { mutableIntStateOf(0) }
     gestureView.setOnSingleTapCallback {
         showControls = !showControls
     }
@@ -153,11 +154,14 @@ fun PlayerScreen(
             val newPos = (exoPlayer.currentPosition + offsetMs).coerceIn(0, exoPlayer.duration.coerceAtLeast(0))
             exoPlayer.seekTo(newPos)
         }
-        override fun onVolumeChanged(delta: Float) {
+        override fun onVolumeGestureStart() {
+            val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+            initialVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        }
+        override fun onVolumeChanged(totalDelta: Float) {
             val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
             val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-            val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-            val newVolume = (currentVolume + (delta * maxVolume).toInt()).coerceIn(0, maxVolume)
+            val newVolume = (initialVolume + (totalDelta * maxVolume).toInt()).coerceIn(0, maxVolume)
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVolume, 0)
             val percent = (newVolume * 100 / maxVolume).coerceIn(0, 100)
             gestureView.showVolumeOverlay(percent)
@@ -175,7 +179,8 @@ fun PlayerScreen(
     }
     fun doExit() {
         viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
-        exoPlayer.stop() // Clear video surface before navigation to avoid black frame
+        gestureView.getPlayerView().visibility = android.view.View.INVISIBLE
+        exoPlayer.stop()
         onExit()
     }
     fun switchToVideo(newId: Long) {

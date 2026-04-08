@@ -48,7 +48,8 @@ class GesturePlayerView @JvmOverloads constructor(
     interface GestureListener {
         fun onSpeedUpChanged(speedUp: Boolean)
         fun onSeekTo(offsetMs: Long)
-        fun onVolumeChanged(delta: Float)
+        fun onVolumeGestureStart()
+        fun onVolumeChanged(totalDelta: Float)   // totalDelta = cumulative displacement / height
         fun onBrightnessChanged(delta: Float)
     }
 
@@ -94,6 +95,8 @@ class GesturePlayerView @JvmOverloads constructor(
                         val window = (context as? android.app.Activity)?.window
                         initialBrightness = window?.attributes?.screenBrightness ?: 0.5f
                         if (initialBrightness < 0) initialBrightness = 0.5f
+                    } else {
+                        gestureListener?.onVolumeGestureStart()
                     }
                 } else if (absDxFromStart > absDyFromStart && absDxFromStart > 30) {
                     isSeeking = true
@@ -110,11 +113,12 @@ class GesturePlayerView @JvmOverloads constructor(
             }
 
             if (isAdjustingVertical) {
-                val delta = distanceY / height.toFloat()
                 if (isInLeftHalf) {
+                    val delta = distanceY / height.toFloat()
                     gestureListener?.onBrightnessChanged(delta)
                 } else {
-                    gestureListener?.onVolumeChanged(delta)
+                    val totalDelta = (e2.y - touchStartY) / height.toFloat()
+                    gestureListener?.onVolumeChanged(totalDelta)
                 }
                 return true
             }
