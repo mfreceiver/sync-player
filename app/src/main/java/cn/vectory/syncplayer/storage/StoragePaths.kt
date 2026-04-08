@@ -43,33 +43,9 @@ class StoragePaths @Inject constructor(
         return if (trimmed.isEmpty()) userdataRoot else File(userdataRoot, trimmed)
     }
 
-    /**
-     * One-time migration: move pre-existing user data directories from filesDir root into userdata/.
-     * Safe to call multiple times — no-ops if already migrated.
-     */
-    fun migrateToUserdataLayout() {
-        val migrated = File(context.filesDir, MIGRATION_MARKER)
-        if (migrated.exists()) return
-
-        val userdataDir = userdataRoot // triggers mkdirs
-        val systemDirNames = setOf(USERDATA_DIR, THUMBNAILS_DIR, DEBUG_LOGS_DIR)
-
-        context.filesDir.listFiles()
-            ?.filter { it.isDirectory && it.name !in systemDirNames }
-            ?.forEach { dir ->
-                val target = File(userdataDir, dir.name)
-                if (!target.exists()) {
-                    dir.renameTo(target)
-                }
-            }
-
-        migrated.createNewFile()
-    }
-
     companion object {
         const val USERDATA_DIR = "userdata"
         const val THUMBNAILS_DIR = "thumbnails"
         const val DEBUG_LOGS_DIR = "debug-logs"
-        private const val MIGRATION_MARKER = ".userdata_migrated"
     }
 }

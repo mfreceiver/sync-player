@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -7,9 +8,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material3.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,6 +26,7 @@ private val PlaceholderColor = Color(0xFF9E9E9E)
 @Composable
 fun SyncRelationEditScreen(
     onNavigateBack: () -> Unit,
+    onNavigateToRelationList: () -> Unit = {},
     viewModel: SyncRelationEditViewModel = hiltViewModel()
 ) {
     val name by viewModel.name.collectAsStateWithLifecycle()
@@ -43,6 +45,7 @@ fun SyncRelationEditScreen(
     var showRemoteBrowser by remember { mutableStateOf(false) }
     var showLocalBrowser by remember { mutableStateOf(false) }
     var sourceExpanded by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -74,9 +77,9 @@ fun SyncRelationEditScreen(
 
             Box {
                 OutlinedTextField(
-                    value = sources.find { it.id == selectedSourceId }?.name ?: "请选择同步源",
+                    value = sources.find { it.id == selectedSourceId }?.name ?: "请选择数据源",
                     onValueChange = {},
-                    label = { Text("同步源") },
+                    label = { Text("数据源") },
                     readOnly = true,
                     modifier = Modifier.fillMaxWidth(),
                     trailingIcon = {
@@ -144,6 +147,15 @@ fun SyncRelationEditScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                if (viewModel.relationId > 0L) {
+                    OutlinedButton(
+                        onClick = { showDeleteDialog = true },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("删除")
+                    }
+                }
                 Button(
                     onClick = { viewModel.save() },
                     enabled = !isSaving && name.isNotBlank() && selectedSourceId > 0L
@@ -161,6 +173,33 @@ fun SyncRelationEditScreen(
                 Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
             }
         }
+    }
+
+    LaunchedEffect(saveResult) {
+        if (saveResult?.contains("成功") == true) {
+            onNavigateToRelationList()
+        }
+    }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("删除同步关系") },
+            text = { Text("确定要删除该同步关系吗？已同步的本地文件不会被删除。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteRelation()
+                    showDeleteDialog = false
+                }) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 
     // Remote browser dialog
@@ -229,27 +268,37 @@ fun SyncRelationEditScreen(
 
                     LazyColumn(modifier = Modifier.heightIn(max = 250.dp)) {
                         items(localDirs) { dirName ->
-                            TextButton(
-                                onClick = { viewModel.navigateLocalInto(dirName) },
-                                modifier = Modifier.fillMaxWidth()
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { viewModel.navigateLocalInto(dirName) }
+                                    .padding(vertical = 8.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("📁 $dirName")
+                                Icon(
+                                    Icons.Filled.Folder,
+                                    contentDescription = null,
+                                    tint = Color(0xFFFFB300),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(dirName)
                             }
                         }
                     }
 
                     Spacer(Modifier.height(4.dp))
-                    OutlinedButton(
-                        onClick = { showCreateFolderDialog = true },
-                        modifier = Modifier.fillMaxWidth()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Start
                     ) {
-                        Icon(
-                            Icons.Filled.CreateNewFolder,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text("新建文件夹")
+                        IconButton(onClick = { showCreateFolderDialog = true }) {
+                            Icon(
+                                Icons.Filled.CreateNewFolder,
+                                contentDescription = "新建文件夹",
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
             },

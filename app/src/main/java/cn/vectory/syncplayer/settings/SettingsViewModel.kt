@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.settings
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cn.vectory.syncplayer.browser.BrowserViewModel
 import cn.vectory.syncplayer.data.model.OrientationPreference
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
@@ -21,11 +22,19 @@ class SettingsViewModel @Inject constructor(
     private val debugLogger: cn.vectory.syncplayer.debug.DebugLogger
 ) : ViewModel() {
 
+    private val prefs = context.getSharedPreferences("player_prefs", Context.MODE_PRIVATE)
+
     private val _longPressSpeed = MutableStateFlow(2.0f)
     val longPressSpeed: StateFlow<Float> = _longPressSpeed.asStateFlow()
 
     private val _orientationPreference = MutableStateFlow(OrientationPreference.FOLLOW_VIDEO)
-   val orientationPreference: StateFlow<OrientationPreference> = _orientationPreference.asStateFlow()
+    val orientationPreference: StateFlow<OrientationPreference> = _orientationPreference.asStateFlow()
+
+    private val _defaultSortMode = MutableStateFlow(BrowserViewModel.SortMode.FILENAME_ASC)
+    val defaultSortMode: StateFlow<BrowserViewModel.SortMode> = _defaultSortMode.asStateFlow()
+
+    private val _defaultFilter = MutableStateFlow(BrowserViewModel.BrowseFilter.ALL)
+    val defaultFilter: StateFlow<BrowserViewModel.BrowseFilter> = _defaultFilter.asStateFlow()
 
     val debugMode: StateFlow<Boolean> = debugLogger.enabled
     private val _previousSessionSummary = MutableStateFlow(debugLogger.getPreviousSessionSummary())
@@ -35,7 +44,6 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
-        val prefs = context.getSharedPreferences("player_prefs", Context.MODE_PRIVATE)
         _longPressSpeed.value = prefs.getFloat("long_press_speed", 2.0f)
         val orientStr = prefs.getString("orientation", null)
         _orientationPreference.value = try {
@@ -43,18 +51,40 @@ class SettingsViewModel @Inject constructor(
         } catch (_: Exception) {
             OrientationPreference.FOLLOW_VIDEO
         }
+        _defaultSortMode.value = try {
+            BrowserViewModel.SortMode.valueOf(
+                prefs.getString("default_sort_mode", BrowserViewModel.SortMode.FILENAME_ASC.name)!!
+            )
+        } catch (_: Exception) {
+            BrowserViewModel.SortMode.FILENAME_ASC
+        }
+        _defaultFilter.value = try {
+            BrowserViewModel.BrowseFilter.valueOf(
+                prefs.getString("default_filter", BrowserViewModel.BrowseFilter.ALL.name)!!
+            )
+        } catch (_: Exception) {
+            BrowserViewModel.BrowseFilter.ALL
+        }
     }
 
     fun setLongPressSpeed(speed: Float) {
         _longPressSpeed.value = speed
-        val prefs = context.getSharedPreferences("player_prefs", Context.MODE_PRIVATE)
         prefs.edit().putFloat("long_press_speed", speed).apply()
     }
 
     fun setOrientationPreference(pref: OrientationPreference) {
         _orientationPreference.value = pref
-        val prefs = context.getSharedPreferences("player_prefs", Context.MODE_PRIVATE)
         prefs.edit().putString("orientation", pref.name).apply()
+    }
+
+    fun setDefaultSortMode(mode: BrowserViewModel.SortMode) {
+        _defaultSortMode.value = mode
+        prefs.edit().putString("default_sort_mode", mode.name).apply()
+    }
+
+    fun setDefaultFilter(filter: BrowserViewModel.BrowseFilter) {
+        _defaultFilter.value = filter
+        prefs.edit().putString("default_filter", filter.name).apply()
     }
 
     fun clearLogs() {

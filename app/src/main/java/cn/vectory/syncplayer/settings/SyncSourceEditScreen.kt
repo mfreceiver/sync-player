@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
@@ -24,6 +25,7 @@ private val PlaceholderColor = Color(0xFF9E9E9E)
 @Composable
 fun SyncSourceEditScreen(
     onNavigateBack: () -> Unit,
+    onNavigateToSourceList: () -> Unit,
     viewModel: SyncSourceEditViewModel = hiltViewModel()
 ) {
     val name by viewModel.name.collectAsStateWithLifecycle()
@@ -37,12 +39,14 @@ fun SyncSourceEditScreen(
     val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
     val saveResult by viewModel.saveResult.collectAsStateWithLifecycle()
 
+    val sourceId = viewModel.sourceId
     var passwordVisible by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("同步源编辑") },
+                title = { Text(if (sourceId > 0L) "编辑数据源" else "新增数据源") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -151,6 +155,23 @@ fun SyncSourceEditScreen(
                         }
                     }
 
+                    if (sourceId > 0L) {
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = { showDeleteDialog = true },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "删除",
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("删除数据源")
+                        }
+                    }
+
                     testResult?.let {
                         Spacer(Modifier.height(8.dp))
                         Text(
@@ -171,6 +192,33 @@ fun SyncSourceEditScreen(
                     }
                 }
             }
+        }
+    }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("删除数据源") },
+            text = { Text("确定要删除该数据源吗？请先删除所有关联的同步关系。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteSource()
+                    showDeleteDialog = false
+                }) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    LaunchedEffect(saveResult) {
+        if (saveResult?.contains("成功") == true) {
+            onNavigateToSourceList()
         }
     }
 }

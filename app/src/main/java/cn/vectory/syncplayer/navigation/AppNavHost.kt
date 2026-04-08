@@ -11,6 +11,7 @@ import androidx.navigation.navArgument
 import androidx.navigation.navOptions
 import cn.vectory.syncplayer.browser.BrowserScreen
 import cn.vectory.syncplayer.browser.BrowserViewModel
+import cn.vectory.syncplayer.browser.SearchScreen
 import cn.vectory.syncplayer.player.PlayerScreen
 import cn.vectory.syncplayer.player.PlayerViewModel
 import cn.vectory.syncplayer.settings.SyncSourceListScreen
@@ -22,9 +23,7 @@ import cn.vectory.syncplayer.settings.AboutScreen
 import cn.vectory.syncplayer.settings.SettingsViewModel
 import cn.vectory.syncplayer.sync.SyncPreviewScreen
 import cn.vectory.syncplayer.sync.SyncPreviewViewModel
-import cn.vectory.syncplayer.sync.DeletePreviewScreen
-import cn.vectory.syncplayer.sync.DeletePreviewViewModel
-import cn.vectory.syncplayer.debug.DebugLogScreen
+
 import androidx.hilt.navigation.compose.hiltViewModel
 
 @Composable
@@ -58,7 +57,10 @@ fun AppNavHost(debugLogger: DebugLogger) {
                 currentFolder = folder,
                 onNavigateToPlayer = { videoItemId ->
                     val currentFolder = viewModel.currentFolder.value
-                    navController.navigate(Route.Player.create(videoItemId, currentFolder))
+                    navController.navigate(Route.Player.create(videoItemId, currentFolder, "browser"))
+                },
+                onNavigateToSearch = {
+                    navController.navigate(Route.Search.route)
                 },
                 onNavigateToSyncSourceList = {
                     navController.navigate(Route.SyncSourceList.route, drawerNavOptions)
@@ -83,23 +85,29 @@ fun AppNavHost(debugLogger: DebugLogger) {
             route = Route.Player.route,
             arguments = listOf(
                 navArgument("videoItemId") { type = NavType.LongType },
-                navArgument("returnFolder") { type = NavType.StringType; defaultValue = "" }
+                navArgument("returnFolder") { type = NavType.StringType; defaultValue = "" },
+                navArgument("fromRoute") { type = NavType.StringType; defaultValue = "browser" }
             )
         ) { backStackEntry ->
             val videoItemId = backStackEntry.arguments?.getLong("videoItemId") ?: return@composable
+            val fromRoute = backStackEntry.arguments?.getString("fromRoute") ?: "browser"
             val viewModel: PlayerViewModel = hiltViewModel()
             PlayerScreen(
                 viewModel = viewModel,
                 videoItemId = videoItemId,
                 onExit = {
-                    navController.popBackStack(Route.Browser.route, inclusive = false)
+                    if (fromRoute == "search") {
+                        navController.popBackStack(Route.Search.route, inclusive = false)
+                    } else {
+                        navController.popBackStack(Route.Browser.route, inclusive = false)
+                    }
                 }
             )
         }
 
         composable(Route.SyncSourceList.route) {
             SyncSourceListScreen(
-                onNavigateBack = { navController.popBackStack(Route.Browser.route, inclusive = false) },
+                onNavigateBack = { navController.popBackStack() },
                 onNavigateToEdit = { sourceId ->
                     navController.navigate(Route.SyncSourceEdit.create(sourceId))
                 },
@@ -116,13 +124,14 @@ fun AppNavHost(debugLogger: DebugLogger) {
             )
         ) {
             SyncSourceEditScreen(
-                onNavigateBack = { navController.popBackStack(Route.Browser.route, inclusive = false) }
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToSourceList = { navController.popBackStack(Route.SyncSourceList.route, inclusive = true) }
             )
         }
 
         composable(Route.SyncRelationList.route) {
             SyncRelationListScreen(
-                onNavigateBack = { navController.popBackStack(Route.Browser.route, inclusive = false) },
+                onNavigateBack = { navController.popBackStack() },
                 onNavigateToEdit = { relationId ->
                     navController.navigate(Route.SyncRelationEdit.create(relationId))
                 },
@@ -131,9 +140,6 @@ fun AppNavHost(debugLogger: DebugLogger) {
                 },
                 onNavigateToSyncPreview = { relationId ->
                     navController.navigate(Route.SyncPreview.create(relationId))
-                },
-                onNavigateToDeletePreview = { relationId ->
-                    navController.navigate(Route.DeletePreview.create(relationId))
                 }
             )
         }
@@ -145,7 +151,8 @@ fun AppNavHost(debugLogger: DebugLogger) {
             )
         ) {
             SyncRelationEditScreen(
-                onNavigateBack = { navController.popBackStack(Route.Browser.route, inclusive = false) }
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToRelationList = { navController.popBackStack(Route.SyncRelationList.route, inclusive = true) }
             )
         }
 
@@ -158,20 +165,21 @@ fun AppNavHost(debugLogger: DebugLogger) {
             val viewModel: SyncPreviewViewModel = hiltViewModel()
             SyncPreviewScreen(
                 viewModel = viewModel,
-                onBack = { navController.popBackStack(Route.Browser.route, inclusive = false) },
+                onBack = { navController.popBackStack() },
             )
         }
 
-        composable(
-            route = Route.DeletePreview.route,
-            arguments = listOf(
-                navArgument("relationId") { type = NavType.LongType; defaultValue = 0L }
-            )
-        ) {
-            val viewModel: DeletePreviewViewModel = hiltViewModel()
-            DeletePreviewScreen(
-                viewModel = viewModel,
-                onBack = { navController.popBackStack(Route.Browser.route, inclusive = false) }
+
+        composable(Route.Search.route) {
+            SearchScreen(
+                onNavigateToFolder = { folderPath ->
+                    navController.popBackStack(Route.Search.route, inclusive = true)
+                    navController.navigate(Route.Browser.create(folderPath))
+                },
+                onNavigateToPlayer = { videoItemId ->
+                    navController.navigate(Route.Player.create(videoItemId, "", "search"))
+                },
+                onBack = { navController.popBackStack() }
             )
         }
 
@@ -179,17 +187,7 @@ fun AppNavHost(debugLogger: DebugLogger) {
             val viewModel: SettingsViewModel = hiltViewModel()
             PlaybackSettingsScreen(
                 viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack(Route.Browser.route, inclusive = false) },
-                onNavigateToDebugLog = {
-                    navController.navigate(Route.DebugLog.route)
-                }
-            )
-        }
-
-        composable(Route.DebugLog.route) {
-            DebugLogScreen(
-                debugLogger = debugLogger,
-                onNavigateBack = { navController.popBackStack(Route.Browser.route, inclusive = false) }
+                onNavigateBack = { navController.popBackStack() }
             )
         }
 
@@ -197,7 +195,7 @@ fun AppNavHost(debugLogger: DebugLogger) {
             val viewModel: SettingsViewModel = hiltViewModel()
             AboutScreen(
                 viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack(Route.Browser.route, inclusive = false) }
+                onNavigateBack = { navController.popBackStack() }
             )
         }
     }

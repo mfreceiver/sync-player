@@ -40,13 +40,15 @@ class BrowserViewModel @Inject constructor(
         ALL, VIDEO_ONLY, FAVORITES_ONLY
     }
 
+    private val prefs = context.getSharedPreferences("player_prefs", Context.MODE_PRIVATE)
+
     private val _currentFolder = MutableStateFlow("")
     val currentFolder: StateFlow<String> = _currentFolder.asStateFlow()
 
-    private val _sortMode = MutableStateFlow(globalSortMode)
+    private val _sortMode = MutableStateFlow(readDefaultSortMode())
     val sortMode: StateFlow<SortMode> = _sortMode.asStateFlow()
 
-    private val _filter = MutableStateFlow(globalFilter)
+    private val _filter = MutableStateFlow(readDefaultFilter())
     val filter: StateFlow<BrowseFilter> = _filter.asStateFlow()
 
     private val _error = MutableStateFlow<String?>(null)
@@ -171,12 +173,10 @@ class BrowserViewModel @Inject constructor(
     }
 
     fun setSortMode(mode: SortMode) {
-        globalSortMode = mode
         _sortMode.value = mode
     }
 
     fun setFilter(filter: BrowseFilter) {
-        globalFilter = filter
         _filter.value = filter
     }
 
@@ -243,9 +243,16 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    companion object {
-        private var globalSortMode = SortMode.FILENAME_ASC
-        private var globalFilter = BrowseFilter.ALL
+    private fun readDefaultSortMode(): SortMode = try {
+        SortMode.valueOf(prefs.getString("default_sort_mode", SortMode.FILENAME_ASC.name)!!)
+    } catch (_: Exception) {
+        SortMode.FILENAME_ASC
+    }
+
+    private fun readDefaultFilter(): BrowseFilter = try {
+        BrowseFilter.valueOf(prefs.getString("default_filter", BrowseFilter.ALL.name)!!)
+    } catch (_: Exception) {
+        BrowseFilter.ALL
     }
 
     fun getFolderVideoIds(): List<Long> {

@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,10 +21,7 @@ import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
@@ -32,24 +30,6 @@ class SyncSourceListViewModel @Inject constructor(
 ) : ViewModel() {
     val sources: StateFlow<List<SyncSource>> = syncSourceRepository.getAllFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    private val _deleteError = MutableStateFlow<String?>(null)
-    val deleteError: StateFlow<String?> = _deleteError.asStateFlow()
-
-    fun deleteSource(id: Long) {
-        viewModelScope.launch {
-            val count = syncSourceRepository.getRelationCount(id)
-            if (count > 0) {
-                _deleteError.value = "该同步源仍有 $count 个同步关系，请先删除所有同步关系"
-            } else {
-                syncSourceRepository.delete(id)
-            }
-        }
-    }
-
-    fun clearDeleteError() {
-        _deleteError.value = null
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -61,13 +41,11 @@ fun SyncSourceListScreen(
     viewModel: SyncSourceListViewModel = hiltViewModel()
 ) {
     val sources by viewModel.sources.collectAsStateWithLifecycle()
-    val deleteError by viewModel.deleteError.collectAsStateWithLifecycle()
-    var showDeleteDialog by remember { mutableStateOf<Long?>(null) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("同步源管理") },
+                title = { Text("数据源") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -86,7 +64,7 @@ fun SyncSourceListScreen(
                 modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text("尚未配置同步源，点击右下角 + 新增同步源")
+                Text("尚未配置数据源，点击右下角 + 新增数据源")
             }
         } else {
             LazyColumn(
@@ -108,12 +86,12 @@ fun SyncSourceListScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.End
                             ) {
-                                TextButton(onClick = { onNavigateToEdit(source.id) }) {
-                                    Text("编辑")
-                                }
-                                Spacer(Modifier.width(8.dp))
-                                TextButton(onClick = { showDeleteDialog = source.id }) {
-                                    Text("删除")
+                                IconButton(onClick = { onNavigateToEdit(source.id) }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "编辑",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                             }
                         }
@@ -121,39 +99,5 @@ fun SyncSourceListScreen(
                 }
             }
         }
-    }
-
-    if (deleteError != null) {
-        AlertDialog(
-            onDismissRequest = { viewModel.clearDeleteError() },
-            title = { Text("无法删除") },
-            text = { Text(deleteError ?: "") },
-            confirmButton = {
-                TextButton(onClick = { viewModel.clearDeleteError() }) {
-                    Text("确定")
-                }
-            }
-        )
-    }
-
-    if (showDeleteDialog != null) {
-        AlertDialog(
-            onDismissRequest = { showDeleteDialog = null },
-            title = { Text("删除同步源") },
-            text = { Text("确定要删除该同步源吗？") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showDeleteDialog?.let { viewModel.deleteSource(it) }
-                    showDeleteDialog = null
-                }) {
-                    Text("删除")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteDialog = null }) {
-                    Text("取消")
-                }
-            }
-        )
     }
 }

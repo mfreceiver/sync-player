@@ -42,6 +42,7 @@ fun BrowserScreen(
     viewModel: BrowserViewModel = hiltViewModel(),
     currentFolder: String = "",
     onNavigateToPlayer: (videoItemId: Long) -> Unit,
+    onNavigateToSearch: () -> Unit,
     onNavigateToSyncSourceList: () -> Unit,
     onNavigateToSyncRelationList: () -> Unit,
     onNavigateToPlaybackSettings: () -> Unit,
@@ -76,6 +77,14 @@ fun BrowserScreen(
         debugLogger.log("Compose", "BrowserScreen composed")
     }
 
+    LaunchedEffect(Unit) {
+        val target = BrowserNavigationStore.targetFolder
+        if (target != null) {
+            BrowserNavigationStore.targetFolder = null
+            viewModel.setFolder(target)
+        }
+    }
+
     BackHandler(enabled = folder.isNotEmpty()) {
         debugLogger.log("Nav", "Navigate up from folder: $folder")
         viewModel.navigateUp()
@@ -95,7 +104,7 @@ fun BrowserScreen(
                 Spacer(Modifier.height(8.dp))
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.Dns, contentDescription = null) },
-                    label = { Text("同步源管理") },
+                    label = { Text("数据源") },
                     selected = false,
                     onClick = {
                         scope.launch { drawerState.close() }
@@ -105,7 +114,7 @@ fun BrowserScreen(
                 )
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.Sync, contentDescription = null) },
-                    label = { Text("同步") },
+                    label = { Text("同步关系") },
                     selected = false,
                     onClick = {
                         scope.launch { drawerState.close() }
@@ -115,7 +124,7 @@ fun BrowserScreen(
                 )
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.PlayCircleOutline, contentDescription = null) },
-                    label = { Text("播放设置") },
+                    label = { Text("设置") },
                     selected = false,
                     onClick = {
                         scope.launch { drawerState.close() }
@@ -151,22 +160,25 @@ fun BrowserScreen(
                         }
                     },
                     title = {
-                        Column {
+                        val displayPath = folder.substringAfterLast('/')
+                        if (displayPath.isNotEmpty()) {
                             Text(
-                                text = "Sync Player",
+                                text = displayPath,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = if (folder.isEmpty()) "/" else folder,
-                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     },
                     actions = {
+                        IconButton(onClick = {
+                            debugLogger.log("Click", "Search button clicked")
+                            onNavigateToSearch()
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = "搜索"
+                            )
+                        }
                         if (currentRelationId != null) {
                             IconButton(onClick = {
                                 debugLogger.log("Click", "Sync button clicked, relationId=$currentRelationId")
@@ -192,8 +204,8 @@ fun BrowserScreen(
                                 debugLogger.log("Click", "Sort menu opened")
                                 showSortMenu = true
                             }) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.Sort,
+                                    Icon(
+                                    imageVector = Icons.Default.SwapVert,
                                     contentDescription = "排序筛选"
                                 )
                             }

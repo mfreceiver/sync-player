@@ -70,4 +70,10 @@ interface VideoItemDao {
 
     @Query("SELECT id FROM video_item ORDER BY fileName ASC")
     suspend fun getAllIdsSorted(): List<Long>
+
+    @Query("SELECT * FROM video_item WHERE fileName LIKE '%' || :query || '%' COLLATE NOCASE")
+    fun searchByFileName(query: String): Flow<List<VideoItemEntity>>
+
+    @Query("SELECT DISTINCT relativePath FROM video_item")
+    fun getAllRelativePaths(): Flow<List<String>>
 }

@@ -21,7 +21,7 @@ class SyncSourceEditViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
-    private val sourceId: Long = savedStateHandle.get<Long>("sourceId") ?: 0L
+    val sourceId: Long = savedStateHandle.get<Long>("sourceId") ?: 0L
 
     val name = MutableStateFlow("")
     val protocol = MutableStateFlow(SyncProtocol.SMB)
@@ -84,6 +84,26 @@ class SyncSourceEditViewModel @Inject constructor(
                 saveResult.value = "保存成功"
             } catch (e: Exception) {
                 saveResult.value = "保存失败: ${e.message}"
+            } finally {
+                isSaving.value = false
+            }
+        }
+    }
+
+    fun deleteSource() {
+        viewModelScope.launch {
+            isSaving.value = true
+            saveResult.value = null
+            try {
+                val count = syncSourceRepository.getRelationCount(sourceId)
+                if (count > 0) {
+                    saveResult.value = "该数据源仍有 $count 个同步关系，请先删除所有同步关系"
+                } else {
+                    syncSourceRepository.delete(sourceId)
+                    saveResult.value = "删除成功"
+                }
+            } catch (e: Exception) {
+                saveResult.value = "删除失败: ${e.message}"
             } finally {
                 isSaving.value = false
             }

@@ -42,4 +42,10 @@ class VideoRepository @Inject constructor(
         videoItemDao.deleteByFolderPath(folderPath)
 
     suspend fun getAllIdsSorted(): List<Long> = videoItemDao.getAllIdsSorted()
+
+    fun searchByFileName(query: String): Flow<List<VideoItemEntity>> =
+        videoItemDao.searchByFileName(query)
+
+    fun getAllRelativePaths(): Flow<List<String>> =
+        videoItemDao.getAllRelativePaths()
 }

@@ -2,8 +2,6 @@ package cn.vectory.syncplayer.data.local
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
-import androidx.room.migration.Migration
-import androidx.sqlite.db.SupportSQLiteDatabase
 import cn.vectory.syncplayer.data.local.dao.PlaybackRecordDao
 import cn.vectory.syncplayer.data.local.dao.SyncLogDao
 import cn.vectory.syncplayer.data.local.dao.SyncSourceDao
@@ -36,15 +34,4 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun videoMetadataCacheDao(): VideoMetadataCacheDao
     abstract fun syncSourceDao(): SyncSourceDao
     abstract fun syncRelationDao(): SyncRelationDao
-
-    companion object {
-        val MIGRATION_5_6 = object : Migration(5, 6) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "UPDATE video_item SET localAbsolutePath = REPLACE(localAbsolutePath, '/files/', '/files/userdata/') WHERE localAbsolutePath NOT LIKE '%/files/userdata/%'"
-                )
-                db.execSQL("DELETE FROM video_metadata_cache")
-            }
-        }
-    }
 }

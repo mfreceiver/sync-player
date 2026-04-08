@@ -24,7 +24,7 @@ class GesturePlayerView @JvmOverloads constructor(
     private val overlayText = TextView(context).apply {
         setTextColor(0xFFFFFFFF.toInt())
         textSize = 16f
-        setBackgroundColor(0x88000000.toInt())
+        setBackgroundColor(0x80000000.toInt())
         setPadding(24, 12, 24, 12)
         visibility = GONE
     }
@@ -178,7 +178,7 @@ class GesturePlayerView @JvmOverloads constructor(
         overlayText.text = text
         overlayText.visibility = VISIBLE
         overlayHideJob = CoroutineScope(Dispatchers.Main).launch {
-            delay(1500)
+            delay(750)
             overlayText.visibility = GONE
         }
     }

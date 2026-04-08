@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,7 +21,6 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 import javax.inject.Inject
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -31,12 +31,6 @@ class SyncRelationListViewModel @Inject constructor(
 ) : ViewModel() {
     val relationsWithSource = syncRelationRepository.getAllWithSourceFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    fun deleteRelation(id: Long) {
-        viewModelScope.launch {
-            syncRelationRepository.delete(id)
-        }
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -46,11 +40,9 @@ fun SyncRelationListScreen(
     onNavigateToEdit: (relationId: Long) -> Unit,
     onNavigateToCreate: () -> Unit,
     onNavigateToSyncPreview: (relationId: Long) -> Unit,
-    onNavigateToDeletePreview: (relationId: Long) -> Unit,
     viewModel: SyncRelationListViewModel = hiltViewModel()
 ) {
     val relations by viewModel.relationsWithSource.collectAsStateWithLifecycle()
-    var showDeleteDialog by remember { mutableStateOf<Long?>(null) }
 
     Scaffold(
         topBar = {
@@ -106,19 +98,19 @@ fun SyncRelationListScreen(
                             Spacer(Modifier.height(12.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 OutlinedButton(onClick = { onNavigateToSyncPreview(item.relation.id) }) {
                                     Text("同步", style = MaterialTheme.typography.labelSmall)
                                 }
-                                OutlinedButton(onClick = { onNavigateToDeletePreview(item.relation.id) }) {
-                                    Text("删除远端", style = MaterialTheme.typography.labelSmall)
-                                }
-                                TextButton(onClick = { onNavigateToEdit(item.relation.id) }) {
-                                    Text("编辑")
-                                }
-                                TextButton(onClick = { showDeleteDialog = item.relation.id }) {
-                                    Text("删除")
+                                Spacer(Modifier.weight(1f))
+                                IconButton(onClick = { onNavigateToEdit(item.relation.id) }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "编辑",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                             }
                         }
@@ -126,26 +118,5 @@ fun SyncRelationListScreen(
                 }
             }
         }
-    }
-
-    if (showDeleteDialog != null) {
-        AlertDialog(
-            onDismissRequest = { showDeleteDialog = null },
-            title = { Text("删除同步关系") },
-            text = { Text("确定要删除该同步关系吗？已同步的本地文件不会被删除。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showDeleteDialog?.let { viewModel.deleteRelation(it) }
-                    showDeleteDialog = null
-                }) {
-                    Text("删除")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteDialog = null }) {
-                    Text("取消")
-                }
-            }
-        )
     }
 }

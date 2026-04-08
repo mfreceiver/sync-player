@@ -147,7 +147,7 @@ class SyncRelationEditViewModel @Inject constructor(
             val sourceId = _selectedSourceId.value
             val source = _availableSources.value.find { it.id == sourceId }
             if (source == null) {
-                _error.value = "请先选择同步源"
+                _error.value = "请先选择数据源"
                 return@launch
             }
             _error.value = null
@@ -223,6 +223,13 @@ class SyncRelationEditViewModel @Inject constructor(
             } finally {
                 _isSaving.value = false
             }
+        }
+    }
+
+    fun deleteRelation() {
+        viewModelScope.launch {
+            if (relationId <= 0) return@launch
+            syncRelationRepository.delete(relationId)
         }
     }
 }

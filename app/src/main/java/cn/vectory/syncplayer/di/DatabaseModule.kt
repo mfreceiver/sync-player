@@ -40,7 +40,6 @@ object DatabaseModule {
             AppDatabase::class.java,
             "sync-player.db"
         )
-            .addMigrations(AppDatabase.MIGRATION_5_6)
             .fallbackToDestructiveMigration()
             .build()
     }
