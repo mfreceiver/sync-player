@@ -178,7 +178,7 @@ fun PlayerScreen(
         }
         override fun onDoubleTap() {
             val wasTrashed = playbackRecord?.isTrashed ?: false
-            gestureView.showIconOverlay("🗑", if (wasTrashed) "已从回收站恢复" else "已放入回收站")
+            gestureView.showGestureOverlay(if (wasTrashed) "已从回收站恢复" else "已放入回收站")
             viewModel.toggleTrashed()
         }
     }

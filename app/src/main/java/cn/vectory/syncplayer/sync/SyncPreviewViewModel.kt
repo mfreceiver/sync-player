@@ -47,6 +47,9 @@ class SyncPreviewViewModel @Inject constructor(
     private val _previewLoaded = MutableStateFlow(false)
     val previewLoaded = _previewLoaded.asStateFlow()
 
+    private val _syncComplete = MutableStateFlow(false)
+    val syncComplete = _syncComplete.asStateFlow()
+
     private val _syncMode = MutableStateFlow(SyncMode.DOWNLOAD)
     val syncMode = _syncMode.asStateFlow()
 
@@ -75,6 +78,7 @@ class SyncPreviewViewModel @Inject constructor(
             _isLoading.value = true
             _error.value = null
             _previewLoaded.value = false
+            _syncComplete.value = false
             try {
                 syncEngine.resetProgress()
                 if (_syncMode.value == SyncMode.DELETE) {
@@ -117,11 +121,16 @@ class SyncPreviewViewModel @Inject constructor(
 
     private fun observeSyncCompletion() {
         viewModelScope.launch {
-            syncEngine.progress.first { p ->
+            val result = syncEngine.progress.first { p ->
                 (p.relationId == relationId || p.relationId == 0L) &&
                     (p.phase == SyncPhase.COMPLETED || p.phase == SyncPhase.FAILED || p.phase == SyncPhase.CANCELLED)
             }
             _isSyncing.value = false
+            _syncComplete.value = true
+            if (result.phase == SyncPhase.COMPLETED) {
+                _toDownload.value = emptyList()
+                _toDelete.value = emptyList()
+            }
         }
     }
 
@@ -143,7 +152,7 @@ class SyncPreviewViewModel @Inject constructor(
                 syncEngine.executeDelete(relationId, actions)
                 _toDelete.value = emptyList()
                 _toDownload.value = emptyList()
-                _previewLoaded.value = false
+                _syncComplete.value = true
             } catch (e: Exception) {
                 _error.value = "删除失败: ${e.message}"
             } finally {

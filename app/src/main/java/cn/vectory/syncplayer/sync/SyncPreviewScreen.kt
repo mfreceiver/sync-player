@@ -31,6 +31,7 @@ fun SyncPreviewScreen(
     val isDeleting by viewModel.isDeleting.collectAsState()
     val syncMode by viewModel.syncMode.collectAsState()
     val previewLoaded by viewModel.previewLoaded.collectAsState()
+    val syncComplete by viewModel.syncComplete.collectAsState()
     val progress by viewModel.progress.collectAsState()
     var isNavigatingBack by remember { mutableStateOf(false) }
 
@@ -216,44 +217,77 @@ fun SyncPreviewScreen(
                         .fillMaxSize()
                         .padding(paddingValues)
                 ) {
-                    if (isSyncing) {
-                        SyncProgressCard(
-                            completedFiles = progress.completedFiles,
-                            totalFiles = progress.totalFiles,
-                            transferredBytes = progress.transferredBytes,
-                            totalBytes = progress.totalBytes,
-                            activeDownloads = progress.activeDownloads,
-                            currentFileName = progress.currentFileName,
-                            currentFileProgress = progress.currentFileProgress
-                        )
-                    }
-                    if (syncMode == SyncMode.DOWNLOAD) {
-                        SyncDownloadSummaryCard(
-                            downloadCount = toDownload.size,
-                            downloadSize = viewModel.totalDownloadSize,
-                            deleteCount = toDelete.size,
-                            deleteSize = viewModel.totalDeleteSize
-                        )
-                    } else {
-                        SyncDeleteSummaryCard(
-                            count = toDelete.size,
-                            totalSize = viewModel.totalDeleteSize
-                        )
-                    }
-                    if (syncMode == SyncMode.DOWNLOAD && toDelete.isNotEmpty()) {
-                        SyncDeleteWarningCard()
-                    }
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(vertical = 8.dp)
-                    ) {
-                        if (syncMode == SyncMode.DOWNLOAD) {
-                            items(toDownload, key = { it.relativePath }) { action ->
-                                SyncActionItem(action = action, isDownload = true)
+                    if (syncComplete) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer
+                            )
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(48.dp)
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = "同步已完成",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.height(16.dp))
+                                Button(onClick = { viewModel.loadPreview() }) {
+                                    Text("重新扫描")
+                                }
                             }
+                        }
+                    } else {
+                        if (isSyncing) {
+                            SyncProgressCard(
+                                completedFiles = progress.completedFiles,
+                                totalFiles = progress.totalFiles,
+                                transferredBytes = progress.transferredBytes,
+                                totalBytes = progress.totalBytes,
+                                activeDownloads = progress.activeDownloads,
+                                currentFileName = progress.currentFileName,
+                                currentFileProgress = progress.currentFileProgress
+                            )
+                        }
+                        if (syncMode == SyncMode.DOWNLOAD) {
+                            SyncDownloadSummaryCard(
+                                downloadCount = toDownload.size,
+                                downloadSize = viewModel.totalDownloadSize,
+                                deleteCount = toDelete.size,
+                                deleteSize = viewModel.totalDeleteSize
+                            )
                         } else {
-                            items(toDelete, key = { it.relativePath }) { action ->
-                                SyncActionItem(action = action, isDownload = false)
+                            SyncDeleteSummaryCard(
+                                count = toDelete.size,
+                                totalSize = viewModel.totalDeleteSize
+                            )
+                        }
+                        if (syncMode == SyncMode.DOWNLOAD && toDelete.isNotEmpty()) {
+                            SyncDeleteWarningCard()
+                        }
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(vertical = 8.dp)
+                        ) {
+                            if (syncMode == SyncMode.DOWNLOAD) {
+                                items(toDownload, key = { it.relativePath }) { action ->
+                                    SyncActionItem(action = action, isDownload = true)
+                                }
+                            } else {
+                                items(toDelete, key = { it.relativePath }) { action ->
+                                    SyncActionItem(action = action, isDownload = false)
+                                }
                             }
                         }
                     }

@@ -6,6 +6,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
@@ -38,6 +39,7 @@ import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.ui.components.FileStatusIcon
 import cn.vectory.syncplayer.ui.components.FolderIcon
 import cn.vectory.syncplayer.ui.components.Thumbnail
+import cn.vectory.syncplayer.ui.components.verticalScrollbar
 import cn.vectory.syncplayer.ui.util.buildMetadataLine
 import cn.vectory.syncplayer.ui.util.isVideoFile
 import kotlinx.coroutines.launch
@@ -280,10 +282,14 @@ fun BrowserScreen(
                 )
             }
         ) { paddingValues ->
+            val listState = rememberLazyListState()
+            LaunchedEffect(browseItems) { listState.scrollToItem(0) }
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues)
+                    .verticalScrollbar(listState)
             ) {
                 items(
                     items = browseItems,
