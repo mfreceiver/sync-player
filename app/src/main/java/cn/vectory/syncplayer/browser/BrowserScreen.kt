@@ -349,7 +349,12 @@ fun BrowserScreen(
         ) { paddingValues ->
             if (viewMode == BrowserViewModel.ViewMode.GRID) {
                 val gridState = rememberLazyGridState()
-                LaunchedEffect(folder) { gridState.scrollToItem(0) }
+                LaunchedEffect(folder) {
+                    val saved = viewModel.consumeScrollPosition(folder)
+                    if (saved != null) {
+                        gridState.scrollToItem(saved.first, saved.second)
+                    }
+                }
                 LazyVerticalGrid(
                     columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(gridColumns),
                     state = gridState,
@@ -394,6 +399,7 @@ fun BrowserScreen(
                                 onClick = {
                                     debugLogger.log("Click", "Open file: ${item.name}")
                                     if (isVideoFile(item.name)) {
+                                        viewModel.saveScrollPosition(folder, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
                                         onNavigateToPlayer(item.videoItemId!!, viewModel.getFolderVideoIds())
                                     } else {
                                         scope.launch { snackbarHostState.showSnackbar("该文件无法播放") }
@@ -434,7 +440,12 @@ fun BrowserScreen(
                 }
             } else {
                 val listState = rememberLazyListState()
-                LaunchedEffect(folder) { listState.scrollToItem(0) }
+                LaunchedEffect(folder) {
+                    val saved = viewModel.consumeScrollPosition(folder)
+                    if (saved != null) {
+                        listState.scrollToItem(saved.first, saved.second)
+                    }
+                }
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
@@ -465,6 +476,7 @@ fun BrowserScreen(
                                 onClick = {
                                     debugLogger.log("Click", "Open file: ${item.name}")
                                     if (isVideoFile(item.name)) {
+                                        viewModel.saveScrollPosition(folder, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
                                         onNavigateToPlayer(item.videoItemId!!, viewModel.getFolderVideoIds())
                                     } else {
                                         scope.launch { snackbarHostState.showSnackbar("该文件无法播放") }

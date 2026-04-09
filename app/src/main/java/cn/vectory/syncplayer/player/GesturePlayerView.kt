@@ -1,17 +1,12 @@
 package cn.vectory.syncplayer.player
 
 import android.content.Context
-import android.graphics.Typeface
 import android.media.AudioManager
 import android.util.AttributeSet
 import android.view.GestureDetector
-import android.view.Gravity
 import android.view.MotionEvent
 import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.TextView
 import androidx.media3.ui.PlayerView
-import kotlinx.coroutines.*
 import kotlin.math.abs
 
 
@@ -23,32 +18,6 @@ class GesturePlayerView @JvmOverloads constructor(
     private val playerView = PlayerView(context).apply {
         controllerAutoShow = false
         useController = false
-    }
-    private val overlayText = TextView(context).apply {
-        setTextColor(0xFFFFFFFF.toInt())
-        textSize = 16f
-        setBackgroundColor(0x80000000.toInt())
-        setPadding(24, 12, 24, 12)
-        visibility = GONE
-    }
-    private val iconOverlayLayout = LinearLayout(context).apply {
-        orientation = LinearLayout.VERTICAL
-        gravity = Gravity.CENTER
-        setBackgroundColor(0x80000000.toInt())
-        setPadding(40, 24, 40, 24)
-        visibility = GONE
-    }
-    private val iconOverlaySymbol = TextView(context).apply {
-        setTextColor(0xFFFFFFFF.toInt())
-        textSize = 36f
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-    }
-    private val iconOverlayLabel = TextView(context).apply {
-        setTextColor(0xFFFFFFFF.toInt())
-        textSize = 14f
-        gravity = Gravity.CENTER
-        setPadding(0, 8, 0, 0)
     }
 
     var gestureListener: GestureListener? = null
@@ -62,7 +31,6 @@ class GesturePlayerView @JvmOverloads constructor(
     private var touchStartY = 0f
     private var isInLeftHalf = false
     private var initialBrightness = 0f
-    private var overlayHideJob: Job? = null
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private var singleTapCallback: (() -> Unit)? = null
@@ -73,8 +41,13 @@ class GesturePlayerView @JvmOverloads constructor(
         fun onVolumeGestureStart()
         fun onVolumeChanged(totalDelta: Float)
         fun onBrightnessChanged(delta: Float)
-        fun onDoubleTap()
+        fun onDoubleTap(zone: DoubleTapZone)
+        fun onSeekOverlay(positionText: String) {}
+        fun onLongPressSpeedOverlay(multiplier: Float) {}
+        fun onHideOverlay() {}
     }
+
+    enum class DoubleTapZone { PREVIOUS, NEXT, CENTER }
 
     fun setOnSingleTapCallback(callback: (() -> Unit)?) {
         singleTapCallback = callback
@@ -82,14 +55,6 @@ class GesturePlayerView @JvmOverloads constructor(
 
     init {
         addView(playerView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        addView(overlayText, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-            gravity = Gravity.CENTER
-        })
-        iconOverlayLayout.addView(iconOverlaySymbol)
-        iconOverlayLayout.addView(iconOverlayLabel)
-        addView(iconOverlayLayout, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-            gravity = Gravity.CENTER
-        })
     }
 
     fun getPlayerView(): PlayerView = playerView
@@ -97,7 +62,7 @@ class GesturePlayerView @JvmOverloads constructor(
     private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onLongPress(e: MotionEvent) {
             isLongPressing = true
-            showOverlay("${speedMultiplier}x 倍速播放")
+            gestureListener?.onLongPressSpeedOverlay(speedMultiplier)
             gestureListener?.onSpeedUpChanged(true)
         }
 
@@ -136,7 +101,7 @@ class GesturePlayerView @JvmOverloads constructor(
                 seekOffsetMs = (dxFromStart * 100f).toLong()
                 val targetMs = (currentPosition + seekOffsetMs)
                     .coerceIn(0, videoDuration.coerceAtLeast(0))
-                showOverlay(formatTimeMs(targetMs))
+                gestureListener?.onSeekOverlay(formatTimeMs(targetMs))
                 return true
             }
 
@@ -159,7 +124,14 @@ class GesturePlayerView @JvmOverloads constructor(
         }
 
         override fun onDoubleTap(e: MotionEvent): Boolean {
-            gestureListener?.onDoubleTap()
+            val x = e.x
+            val w = width.toFloat()
+            val zone = when {
+                x < w / 4f -> DoubleTapZone.PREVIOUS
+                x > w * 3f / 4f -> DoubleTapZone.NEXT
+                else -> DoubleTapZone.CENTER
+            }
+            gestureListener?.onDoubleTap(zone)
             return true
         }
     })
@@ -180,7 +152,7 @@ class GesturePlayerView @JvmOverloads constructor(
                 if (isLongPressing) {
                     isLongPressing = false
                     gestureListener?.onSpeedUpChanged(false)
-                    hideOverlay()
+                    gestureListener?.onHideOverlay()
                 }
                 if (isSeeking) {
                     val clampedOffset = if (videoDuration > 0) {
@@ -191,7 +163,7 @@ class GesturePlayerView @JvmOverloads constructor(
                     gestureListener?.onSeekTo(clampedOffset)
                     isSeeking = false
                     seekOffsetMs = 0L
-                    hideOverlay()
+                    gestureListener?.onHideOverlay()
                 }
                 isAdjustingVertical = false
             }
@@ -200,47 +172,6 @@ class GesturePlayerView @JvmOverloads constructor(
             parent?.requestDisallowInterceptTouchEvent(true)
         }
         return true
-    }
-
-    fun showVolumeOverlay(volumePercent: Int) {
-        showOverlay("音量 $volumePercent%")
-    }
-
-    fun showBrightnessOverlay(brightnessPercent: Int) {
-        showOverlay("亮度 $brightnessPercent%")
-    }
-
-    fun showGestureOverlay(text: String) {
-        showOverlay(text)
-    }
-
-    fun showIconOverlay(symbol: String, label: String) {
-        overlayHideJob?.cancel()
-        hideOverlay()
-        iconOverlaySymbol.text = symbol
-        iconOverlayLabel.text = label
-        iconOverlayLayout.visibility = VISIBLE
-        overlayHideJob = CoroutineScope(Dispatchers.Main).launch {
-            delay(750)
-            iconOverlayLayout.visibility = GONE
-        }
-    }
-
-    private fun showOverlay(text: String) {
-        overlayHideJob?.cancel()
-        iconOverlayLayout.visibility = GONE
-        overlayText.text = text
-        overlayText.visibility = VISIBLE
-        overlayHideJob = CoroutineScope(Dispatchers.Main).launch {
-            delay(750)
-            overlayText.visibility = GONE
-        }
-    }
-
-    private fun hideOverlay() {
-        overlayHideJob?.cancel()
-        overlayText.visibility = GONE
-        iconOverlayLayout.visibility = GONE
     }
 
     private fun formatTimeMs(ms: Long): String {

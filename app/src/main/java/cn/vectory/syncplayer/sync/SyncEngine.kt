@@ -18,6 +18,7 @@ import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
+import cn.vectory.syncplayer.audio.AudioGainAnalyzer
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -56,6 +57,7 @@ class SyncEngine @Inject constructor(
     private val sftpFileClient: SftpFileClient,
     private val storagePaths: StoragePaths,
     private val userPrefs: UserPreferencesRepository,
+    private val audioGainAnalyzer: AudioGainAnalyzer,
     @ApplicationContext private val context: Context
 ) {
 
@@ -287,6 +289,15 @@ class SyncEngine @Inject constructor(
                                     val savedEntity = videoRepository.getByRelativePath(localRelPath)
                                     if (savedEntity != null) {
                                         videoMetadataExtractor.extractAndSave(savedEntity)
+                                    }
+                                    if (userPrefs.getAnalyzeOnDownload()) {
+                                        val refreshed = videoRepository.getByRelativePath(localRelPath)
+                                        if (refreshed != null && refreshed.audioGainDb == null) {
+                                            val gainResult = audioGainAnalyzer.analyze(refreshed.localAbsolutePath)
+                                            if (gainResult != null) {
+                                                videoRepository.upsert(refreshed.copy(audioGainDb = gainResult.gainDb))
+                                            }
+                                        }
                                     }
                                     syncLogRepository.log(
                                         action = "DOWNLOAD",

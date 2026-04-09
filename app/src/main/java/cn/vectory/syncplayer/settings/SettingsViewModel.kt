@@ -45,6 +45,15 @@ class SettingsViewModel @Inject constructor(
     private val _gridColumns = MutableStateFlow(3)
     val gridColumns: StateFlow<Int> = _gridColumns.asStateFlow()
 
+    private val _progressAlwaysVisible = MutableStateFlow(false)
+    val progressAlwaysVisible: StateFlow<Boolean> = _progressAlwaysVisible.asStateFlow()
+
+    private val _volumeBalance = MutableStateFlow(false)
+    val volumeBalance: StateFlow<Boolean> = _volumeBalance.asStateFlow()
+
+    private val _analyzeOnDownload = MutableStateFlow(false)
+    val analyzeOnDownload: StateFlow<Boolean> = _analyzeOnDownload.asStateFlow()
+
     val debugMode: StateFlow<Boolean> = debugLogger.enabled
     private val _previousSessionSummary = MutableStateFlow(debugLogger.getPreviousSessionSummary())
     val previousSessionSummary: StateFlow<String> = _previousSessionSummary.asStateFlow()
@@ -79,6 +88,9 @@ class SettingsViewModel @Inject constructor(
                 BrowserViewModel.ViewMode.LIST
             }
             _gridColumns.value = userPrefs.getGridColumns()
+            _progressAlwaysVisible.value = userPrefs.getProgressAlwaysVisible()
+            _volumeBalance.value = userPrefs.getVolumeBalance()
+            _analyzeOnDownload.value = userPrefs.getAnalyzeOnDownload()
         }
     }
 
@@ -120,6 +132,21 @@ class SettingsViewModel @Inject constructor(
     fun setGridColumns(columns: Int) {
         _gridColumns.value = columns.coerceIn(1, 5)
         viewModelScope.launch { userPrefs.setGridColumns(columns) }
+    }
+
+    fun setProgressAlwaysVisible(enabled: Boolean) {
+        _progressAlwaysVisible.value = enabled
+        viewModelScope.launch { userPrefs.setProgressAlwaysVisible(enabled) }
+    }
+
+    fun setVolumeBalance(enabled: Boolean) {
+        _volumeBalance.value = enabled
+        viewModelScope.launch { userPrefs.setVolumeBalance(enabled) }
+    }
+
+    fun setAnalyzeOnDownload(enabled: Boolean) {
+        _analyzeOnDownload.value = enabled
+        viewModelScope.launch { userPrefs.setAnalyzeOnDownload(enabled) }
     }
 
     fun clearLogs() {

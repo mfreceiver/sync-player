@@ -58,6 +58,8 @@ class BrowserViewModel @Inject constructor(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    private val _savedScrollInfo = MutableStateFlow<Triple<String, Int, Int>?>(null)
+
     private val _refreshTrigger = MutableStateFlow(0L)
 
     private val effectiveFolder = combine(_currentFolder, _refreshTrigger) { folder, _ -> folder }
@@ -276,6 +278,19 @@ class BrowserViewModel @Inject constructor(
 
     fun clearError() {
         _error.value = null
+    }
+
+    fun saveScrollPosition(folder: String, firstVisibleItemIndex: Int, firstVisibleItemScrollOffset: Int) {
+        _savedScrollInfo.value = Triple(folder, firstVisibleItemIndex, firstVisibleItemScrollOffset)
+    }
+
+    fun consumeScrollPosition(folder: String): Pair<Int, Int>? {
+        val saved = _savedScrollInfo.value
+        if (saved != null && saved.first == folder) {
+            _savedScrollInfo.value = null
+            return Pair(saved.second, saved.third)
+        }
+        return null
     }
 
     private fun repairMissingThumbnails(videos: List<VideoItemEntity>) {

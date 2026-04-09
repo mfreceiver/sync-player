@@ -9,20 +9,29 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
-import cn.vectory.syncplayer.ui.util.formatDuration
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -32,12 +41,28 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import cn.vectory.syncplayer.player.GesturePlayerView.DoubleTapZone
+import cn.vectory.syncplayer.ui.util.formatDuration
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.io.File
+import kotlin.math.pow
+
+private sealed class PlayerOverlay {
+    data class Seek(val positionText: String) : PlayerOverlay()
+    data class Volume(val percent: Int) : PlayerOverlay()
+    data class Brightness(val percent: Int) : PlayerOverlay()
+    data class SpeedUp(val multiplier: Float) : PlayerOverlay()
+    data object Previous : PlayerOverlay()
+    data object Next : PlayerOverlay()
+    data class TrashAction(val isIn: Boolean) : PlayerOverlay()
+}
 
 @Composable
 fun PlayerScreen(
@@ -51,13 +76,28 @@ fun PlayerScreen(
     val playbackRecord by viewModel.playbackRecord.collectAsStateWithLifecycle()
     val speedMultiplier by viewModel.speedMultiplier.collectAsStateWithLifecycle()
     val allVideoIds by viewModel.allVideoIds.collectAsStateWithLifecycle()
+    val currentGainDb by viewModel.currentGainDb.collectAsStateWithLifecycle()
+    val playbackSpeed by viewModel.playbackSpeed.collectAsStateWithLifecycle()
 
     var showControls by remember { mutableStateOf(true) }
     var currentVideoId by remember { mutableStateOf(videoItemId) }
+    var isPlaying by remember { mutableStateOf(true) }
+    var isLongPressing by remember { mutableStateOf(false) }
 
-    // Reactive time display — polls exoPlayer position/duration
     var currentPosition by remember { mutableLongStateOf(0L) }
     var currentDuration by remember { mutableLongStateOf(0L) }
+
+    var currentOverlay by remember { mutableStateOf<PlayerOverlay?>(null) }
+    val overlayHideJob = remember { mutableStateOf<Job?>(null) }
+
+    fun showOverlay(overlay: PlayerOverlay) {
+        currentOverlay = overlay
+        overlayHideJob.value?.cancel()
+        overlayHideJob.value = CoroutineScope(Dispatchers.Main).launch {
+            delay(750L)
+            currentOverlay = null
+        }
+    }
 
     val window = activity.window
     DisposableEffect(Unit) {
@@ -121,7 +161,10 @@ fun PlayerScreen(
             activity.requestedOrientation = it
         }
     }
-    // Reactive time polling
+    LaunchedEffect(currentGainDb) {
+        val linear = 10f.pow(currentGainDb / 20f)
+        exoPlayer.volume = linear.coerceIn(0f, 2f)
+    }
     LaunchedEffect(exoPlayer) {
         while (true) {
             gestureView.videoDuration = exoPlayer.duration.coerceAtLeast(0)
@@ -131,6 +174,11 @@ fun PlayerScreen(
             delay(200L)
         }
     }
+    LaunchedEffect(playbackSpeed) {
+        if (!isLongPressing) {
+            exoPlayer.playbackParameters = PlaybackParameters(playbackSpeed)
+        }
+    }
     DisposableEffect(Unit) {
         onDispose {
             viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
@@ -138,16 +186,56 @@ fun PlayerScreen(
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
+
     var initialVolume by remember { mutableIntStateOf(0) }
+    var lastAutoSwitchTime by remember { mutableLongStateOf(0L) }
+
+    fun doExit() {
+        viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
+        gestureView.getPlayerView().visibility = android.view.View.INVISIBLE
+        exoPlayer.stop()
+        onExit()
+    }
+
+    fun switchToVideo(newId: Long) {
+        viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
+        viewModel.resetForcedOrientation()
+        currentVideoId = newId
+        viewModel.loadVideo(newId)
+        showControls = true
+    }
+
+    DisposableEffect(exoPlayer) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) {
+                isPlaying = playing
+            }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) {
+                    val nextId = viewModel.getNextVideoId()
+                    if (nextId != null) {
+                        lastAutoSwitchTime = System.currentTimeMillis()
+                        switchToVideo(nextId)
+                    } else {
+                        doExit()
+                    }
+                }
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose { exoPlayer.removeListener(listener) }
+    }
+
     gestureView.setOnSingleTapCallback {
         showControls = !showControls
     }
     gestureView.gestureListener = object : GesturePlayerView.GestureListener {
         override fun onSpeedUpChanged(speedUp: Boolean) {
+            isLongPressing = speedUp
             if (speedUp) {
                 exoPlayer.playbackParameters = PlaybackParameters(speedMultiplier)
             } else {
-                exoPlayer.playbackParameters = PlaybackParameters(1.0f)
+                exoPlayer.playbackParameters = PlaybackParameters(playbackSpeed)
             }
         }
         override fun onSeekTo(offsetMs: Long) {
@@ -164,53 +252,57 @@ fun PlayerScreen(
             val newVolume = (initialVolume + (totalDelta * maxVolume).toInt()).coerceIn(0, maxVolume)
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVolume, 0)
             val percent = (newVolume * 100 / maxVolume).coerceIn(0, 100)
-            gestureView.showVolumeOverlay(percent)
+            showOverlay(PlayerOverlay.Volume(percent))
         }
         override fun onBrightnessChanged(delta: Float) {
-            val window = activity.window
             val attrs = window.attributes
             val current = if (attrs.screenBrightness < 0) 0.5f else attrs.screenBrightness
             val newBrightness = (current + delta).coerceIn(0f, 1f)
             attrs.screenBrightness = newBrightness
             window.attributes = attrs
             val percent = (newBrightness * 100).toInt()
-            gestureView.showBrightnessOverlay(percent)
+            showOverlay(PlayerOverlay.Brightness(percent))
         }
-        override fun onDoubleTap() {
-            val wasTrashed = playbackRecord?.isTrashed ?: false
-            gestureView.showGestureOverlay(if (wasTrashed) "已从回收站恢复" else "已放入回收站")
-            viewModel.toggleTrashed()
-        }
-    }
-    fun doExit() {
-        viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
-        gestureView.getPlayerView().visibility = android.view.View.INVISIBLE
-        exoPlayer.stop()
-        onExit()
-    }
-    fun switchToVideo(newId: Long) {
-        viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
-        viewModel.resetForcedOrientation()
-        currentVideoId = newId
-        viewModel.loadVideo(newId)
-        showControls = true
-    }
-    DisposableEffect(exoPlayer) {
-        val listener = object : Player.Listener {
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED) {
+        override fun onDoubleTap(zone: DoubleTapZone) {
+            when (zone) {
+                DoubleTapZone.PREVIOUS -> {
+                    showOverlay(PlayerOverlay.Previous)
+                    val prevId = viewModel.getPrevVideoId()
+                    if (prevId != null) switchToVideo(prevId)
+                }
+                DoubleTapZone.NEXT -> {
+                    val now = System.currentTimeMillis()
+                    if (now - lastAutoSwitchTime < 500L) return
+                    showOverlay(PlayerOverlay.Next)
                     val nextId = viewModel.getNextVideoId()
                     if (nextId != null) {
                         switchToVideo(nextId)
-                    } else {
-                        doExit()
                     }
+                }
+                DoubleTapZone.CENTER -> {
+                    val wasTrashed = playbackRecord?.isTrashed ?: false
+                    showOverlay(PlayerOverlay.TrashAction(!wasTrashed))
+                    viewModel.toggleTrashed()
                 }
             }
         }
-        exoPlayer.addListener(listener)
-        onDispose { exoPlayer.removeListener(listener) }
+        override fun onSeekOverlay(positionText: String) {
+            showOverlay(PlayerOverlay.Seek(positionText))
+        }
+        override fun onLongPressSpeedOverlay(multiplier: Float) {
+            showOverlay(PlayerOverlay.SpeedUp(multiplier))
+        }
+        override fun onHideOverlay() {
+            overlayHideJob.value?.cancel()
+            currentOverlay = null
+        }
     }
+
+    val progressAlwaysVisible by viewModel.progressAlwaysVisible.collectAsStateWithLifecycle()
+    var isUserSeeking by remember { mutableStateOf(false) }
+    var userSeekPosition by remember { mutableFloatStateOf(0f) }
+    var showSpeedMenu by remember { mutableStateOf(false) }
+
     BackHandler { doExit() }
     Box(
         modifier = Modifier
@@ -221,114 +313,310 @@ fun PlayerScreen(
             factory = { gestureView },
             modifier = Modifier.fillMaxSize()
         )
+
+        if (showControls || progressAlwaysVisible) {
+            TopProgressBar(
+                currentPosition = currentPosition,
+                currentDuration = currentDuration,
+                fileName = videoItem?.fileName ?: "",
+                isTrashed = playbackRecord?.isTrashed ?: false,
+                isUserSeeking = isUserSeeking,
+                userSeekPosition = userSeekPosition,
+                onSeekChange = { isUserSeeking = true; userSeekPosition = it },
+                onSeekConfirm = {
+                    exoPlayer.seekTo((it * currentDuration).toLong())
+                    isUserSeeking = false
+                },
+                onExit = { doExit() },
+                onToggleTrash = { viewModel.toggleTrashed() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+            )
+        }
+
         AnimatedVisibility(
             visible = showControls,
             enter = fadeIn(),
             exit = fadeOut()
         ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.TopStart)
-                        .statusBarsPadding()
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(onClick = { doExit() }) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = Color.White
-                        )
+            BottomToolbar(
+                isPlaying = isPlaying,
+                playbackSpeed = playbackSpeed,
+                showSpeedMenu = showSpeedMenu,
+                onShowSpeedMenuChange = { showSpeedMenu = it },
+                onPlayPause = {
+                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                },
+                onRewind = { exoPlayer.seekTo((exoPlayer.currentPosition - 10_000).coerceAtLeast(0)) },
+                onForward = { exoPlayer.seekTo((exoPlayer.currentPosition + 10_000).coerceAtMost(exoPlayer.duration.coerceAtLeast(0))) },
+                onSpeedChange = { speed ->
+                    viewModel.setPlaybackSpeed(speed)
+                    exoPlayer.playbackParameters = PlaybackParameters(speed)
+                    showSpeedMenu = false
+                },
+                isForcedOrientation = forcedOrientation != null,
+                onRotation = {
+                    val current = forcedOrientation ?: activity.requestedOrientation
+                    val newOrientation = if (current == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                        || current == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT) {
+                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    } else {
+                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
                     }
-                    Text(
-                        text = videoItem?.fileName ?: "",
-                        color = Color.White,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 8.dp),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                    viewModel.setForcedOrientation(newOrientation)
+                    activity.requestedOrientation = newOrientation
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+            )
+        }
+
+        PlayerOverlayView(currentOverlay)
+    }
+}
+
+@Composable
+private fun TopProgressBar(
+    currentPosition: Long,
+    currentDuration: Long,
+    fileName: String,
+    isTrashed: Boolean,
+    isUserSeeking: Boolean,
+    userSeekPosition: Float,
+    onSeekChange: (Float) -> Unit,
+    onSeekConfirm: (Float) -> Unit,
+    onExit: () -> Unit,
+    onToggleTrash: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.5f))
+            .statusBarsPadding()
+            .padding(horizontal = 4.dp, vertical = 4.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onExit, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Exit",
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+
+            Text(
+                text = formatDuration(
+                    if (isUserSeeking) (userSeekPosition * currentDuration).toLong() else currentPosition
+                ),
+                color = Color.White.copy(alpha = 0.7f),
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+
+            val sliderValue = if (isUserSeeking) {
+                userSeekPosition
+            } else if (currentDuration > 0) {
+                currentPosition.toFloat() / currentDuration.toFloat()
+            } else {
+                0f
+            }
+            Slider(
+                value = sliderValue,
+                onValueChange = onSeekChange,
+                onValueChangeFinished = { onSeekConfirm(userSeekPosition) },
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 4.dp),
+                colors = SliderDefaults.colors(
+                    thumbColor = Color.White,
+                    activeTrackColor = Color.White,
+                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                )
+            )
+
+            val remaining = currentDuration - currentPosition
+            Text(
+                text = if (remaining > 0) "-${formatDuration(remaining)}" else formatDuration(0L),
+                color = Color.White.copy(alpha = 0.7f),
+                style = MaterialTheme.typography.labelSmall
+            )
+
+            IconButton(onClick = onToggleTrash, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
+                    contentDescription = if (isTrashed) "Restore" else "Trash",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 44.dp)
+                .padding(bottom = 4.dp)
+        ) {
+            Text(
+                text = fileName,
+                color = Color.White.copy(alpha = 0.6f),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.align(Alignment.Center)
+            )
+        }
+    }
+}
+
+@Composable
+private fun BottomToolbar(
+    isPlaying: Boolean,
+    playbackSpeed: Float,
+    showSpeedMenu: Boolean,
+    onShowSpeedMenuChange: (Boolean) -> Unit,
+    onPlayPause: () -> Unit,
+    onRewind: () -> Unit,
+    onForward: () -> Unit,
+    onSpeedChange: (Float) -> Unit,
+    isForcedOrientation: Boolean,
+    onRotation: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(modifier = modifier) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color.Black.copy(alpha = 0.5f))
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box {
+                IconButton(onClick = { onShowSpeedMenuChange(!showSpeedMenu) }) {
+                    Icon(
+                        imageVector = Icons.Filled.Speed,
+                        contentDescription = "Speed",
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp)
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                    val isTrashed = playbackRecord?.isTrashed ?: false
-                    val extendedColors = LocalExtendedColors.current
-                    IconButton(onClick = { viewModel.toggleTrashed() }) {
-                        Icon(
-                            imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
-                            contentDescription = if (isTrashed) "从回收站恢复" else "放入回收站",
-                            tint = if (isTrashed) extendedColors.trashRed else Color.White
-                            )
-                        }
-                        IconButton(onClick = {
-                            val current = viewModel.forcedOrientation.value
-                                ?: activity.requestedOrientation
-                            val newOrientation = if (current == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                                || current == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT) {
-                                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                            } else {
-                                ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                            }
-                            viewModel.setForcedOrientation(newOrientation)
-                            activity.requestedOrientation = newOrientation
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.ScreenRotation,
-                                contentDescription = "旋转方向",
-                                tint = Color.White
-                            )
-                        }
+                }
+                DropdownMenu(
+                    expanded = showSpeedMenu,
+                    onDismissRequest = { onShowSpeedMenuChange(false) },
+                    modifier = Modifier.background(Color.Black.copy(alpha = 0.85f))
+                ) {
+                    listOf(1.0f, 1.5f, 2.0f).forEach { speed ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    if (speed == 1.0f) "1x" else "${speed}x",
+                                    color = if (playbackSpeed == speed) Color.White else Color.White.copy(alpha = 0.7f)
+                                )
+                            },
+                            onClick = { onSpeedChange(speed) },
+                            trailingIcon = if (playbackSpeed == speed) {
+                                { Text("✓", color = Color.White, style = MaterialTheme.typography.bodySmall) }
+                            } else null
+                        )
                     }
                 }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.BottomCenter)
-                        .navigationBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val currentIdx = allVideoIds.indexOf(currentVideoId)
-                    IconButton(
-                        onClick = {
-                            val prevId = viewModel.getPrevVideoId()
-                            if (prevId != null) switchToVideo(prevId)
-                        },
-                        enabled = currentIdx > 0
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SkipPrevious,
-                            contentDescription = "上一个",
-                            tint = Color.White
-                        )
-                    }
-                    Text(
-                        text = "${formatDuration(currentPosition)} / ${formatDuration(currentDuration)}",
-                        color = Color.White.copy(alpha = 0.7f),
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                    // Next button: exit player when at last video in folder
-                    IconButton(
-                        onClick = {
-                            val nextId = viewModel.getNextVideoId()
-                            if (nextId != null) {
-                                switchToVideo(nextId)
-                            } else {
-                                doExit()
-                            }
-                        }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SkipNext,
-                            contentDescription = "下一个",
-                            tint = Color.White
-                        )
-                    }
+            }
+
+            IconButton(onClick = onRewind) {
+                Icon(
+                    imageVector = Icons.Filled.FastRewind,
+                    contentDescription = "Rewind",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            IconButton(onClick = onPlayPause, modifier = Modifier.size(56.dp)) {
+                Icon(
+                    imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (isPlaying) "Pause" else "Play",
+                    tint = Color.White,
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+
+            IconButton(onClick = onForward) {
+                Icon(
+                    imageVector = Icons.Filled.FastForward,
+                    contentDescription = "Forward",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            IconButton(onClick = onRotation) {
+                Icon(
+                    imageVector = if (isForcedOrientation) Icons.Filled.Fullscreen else Icons.Filled.ScreenRotation,
+                    contentDescription = if (isForcedOrientation) "Fullscreen" else "Rotation",
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerOverlayView(overlay: PlayerOverlay?) {
+    if (overlay == null) return
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = Color.Black.copy(alpha = 0.6f),
+            tonalElevation = 0.dp
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val icon: ImageVector = when (overlay) {
+                    is PlayerOverlay.Seek -> Icons.Filled.Schedule
+                    is PlayerOverlay.Volume -> Icons.AutoMirrored.Filled.VolumeUp
+                    is PlayerOverlay.Brightness -> Icons.Filled.LightMode
+                    is PlayerOverlay.SpeedUp -> Icons.Filled.FastForward
+                    is PlayerOverlay.Previous -> Icons.Filled.SkipPrevious
+                    is PlayerOverlay.Next -> Icons.Filled.SkipNext
+                    is PlayerOverlay.TrashAction -> if (overlay.isIn) Icons.Filled.Delete else Icons.Outlined.DeleteOutline
                 }
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+
+                val text: String = when (overlay) {
+                    is PlayerOverlay.Seek -> overlay.positionText
+                    is PlayerOverlay.Volume -> "${overlay.percent}%"
+                    is PlayerOverlay.Brightness -> "${overlay.percent}%"
+                    is PlayerOverlay.SpeedUp -> "${overlay.multiplier}x"
+                    is PlayerOverlay.Previous -> "PREVIOUS"
+                    is PlayerOverlay.Next -> "NEXT"
+                    is PlayerOverlay.TrashAction -> if (overlay.isIn) "IN" else "OUT"
+                }
+                Text(
+                    text = text,
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
         }
     }

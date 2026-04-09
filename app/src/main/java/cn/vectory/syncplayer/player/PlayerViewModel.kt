@@ -37,12 +37,26 @@ class PlayerViewModel @Inject constructor(
     private val _allVideoIds = MutableStateFlow<List<Long>>(emptyList())
     val allVideoIds: StateFlow<List<Long>> = _allVideoIds.asStateFlow()
 
+    private val _progressAlwaysVisible = MutableStateFlow(false)
+    val progressAlwaysVisible: StateFlow<Boolean> = _progressAlwaysVisible.asStateFlow()
+
+    private val _volumeBalance = MutableStateFlow(false)
+    val volumeBalance: StateFlow<Boolean> = _volumeBalance.asStateFlow()
+
+    private val _currentGainDb = MutableStateFlow(0f)
+    val currentGainDb: StateFlow<Float> = _currentGainDb.asStateFlow()
+
+    private val _playbackSpeed = MutableStateFlow(1.0f)
+    val playbackSpeed: StateFlow<Float> = _playbackSpeed.asStateFlow()
+
     private val savedVideoIds: String? = savedStateHandle.get<String>("videoIds")
 
     init {
         loadFolderVideoIds()
         viewModelScope.launch {
             _speedMultiplier.value = userPrefs.getLongPressSpeed()
+            _progressAlwaysVisible.value = userPrefs.getProgressAlwaysVisible()
+            _volumeBalance.value = userPrefs.getVolumeBalance()
             val prefStr = userPrefs.getOrientation()
             _orientationPreference.value = try {
                 OrientationPreference.valueOf(prefStr ?: OrientationPreference.FOLLOW_VIDEO.name)
@@ -74,6 +88,8 @@ class PlayerViewModel @Inject constructor(
             _videoItem.value = video
             if (video != null) {
                 _playbackRecord.value = playbackRepository.getByVideoId(video.id)
+                val gain = video.audioGainDb ?: 0f
+                _currentGainDb.value = if (_volumeBalance.value && video.audioGainDb != null) gain else 0f
             }
         }
     }
@@ -133,5 +149,14 @@ class PlayerViewModel @Inject constructor(
         val currentId = _videoItem.value?.id ?: return null
         val idx = ids.indexOf(currentId)
         return if (idx >= 0 && idx < ids.size - 1) ids[idx + 1] else null
+    }
+
+    fun setPlaybackSpeed(speed: Float) {
+        _playbackSpeed.value = speed
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        _playbackSpeed.value = 1.0f
     }
 }
