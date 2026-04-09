@@ -42,7 +42,7 @@ class GesturePlayerView @JvmOverloads constructor(
         fun onVolumeChanged(totalDelta: Float)
         fun onBrightnessChanged(delta: Float)
         fun onDoubleTap(zone: DoubleTapZone)
-        fun onSeekOverlay(positionText: String) {}
+        fun onSeekOverlay(positionMs: Long, durationMs: Long) {}
         fun onLongPressSpeedOverlay(multiplier: Float) {}
         fun onHideOverlay() {}
     }
@@ -101,7 +101,7 @@ class GesturePlayerView @JvmOverloads constructor(
                 seekOffsetMs = (dxFromStart * 100f).toLong()
                 val targetMs = (currentPosition + seekOffsetMs)
                     .coerceIn(0, videoDuration.coerceAtLeast(0))
-                gestureListener?.onSeekOverlay(formatTimeMs(targetMs))
+                gestureListener?.onSeekOverlay(targetMs, videoDuration)
                 return true
             }
 

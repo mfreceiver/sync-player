@@ -59,7 +59,7 @@ import java.io.File
 import kotlin.math.pow
 
 private sealed class PlayerOverlay {
-    data class Seek(val positionText: String) : PlayerOverlay()
+    data class Seek(val positionMs: Long, val durationMs: Long) : PlayerOverlay()
     data class Volume(val percent: Int) : PlayerOverlay()
     data class Brightness(val percent: Int) : PlayerOverlay()
     data class SpeedUp(val multiplier: Float) : PlayerOverlay()
@@ -284,8 +284,8 @@ fun PlayerScreen(
                 }
             }
         }
-        override fun onSeekOverlay(positionText: String) {
-            showOverlay(PlayerOverlay.Seek(positionText))
+        override fun onSeekOverlay(positionMs: Long, durationMs: Long) {
+            showOverlay(PlayerOverlay.Seek(positionMs, durationMs))
         }
         override fun onLongPressSpeedOverlay(multiplier: Float) {
             showOverlay(PlayerOverlay.SpeedUp(multiplier))
@@ -479,6 +479,9 @@ private fun ThinProgressSlider(
     onProgressChangeFinished: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val currentOnChange by rememberUpdatedState(onProgressChange)
+    val currentOnFinished by rememberUpdatedState(onProgressChangeFinished)
+
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(2.dp))
@@ -486,20 +489,17 @@ private fun ThinProgressSlider(
                 awaitPointerEventScope {
                     while (true) {
                         val down = awaitFirstDown(requireUnconsumed = false)
-                        val startPos = down.position
-                        onProgressChange((startPos.x / size.width).coerceIn(0f, 1f))
+                        currentOnChange((down.position.x / size.width).coerceIn(0f, 1f))
                         down.consume()
 
-                        var dragSucceeded = false
                         do {
                             val event = awaitPointerEvent()
                             val change = event.changes.first()
                             change.consume()
-                            onProgressChange((change.position.x / size.width).coerceIn(0f, 1f))
-                            dragSucceeded = true
+                            currentOnChange((change.position.x / size.width).coerceIn(0f, 1f))
                         } while (change.pressed)
 
-                        onProgressChangeFinished()
+                        currentOnFinished()
                     }
                 }
             }
@@ -688,7 +688,7 @@ private fun PlayerOverlayView(overlay: PlayerOverlay?) {
                 )
 
                 val text: String = when (overlay) {
-                    is PlayerOverlay.Seek -> overlay.positionText
+                    is PlayerOverlay.Seek -> "${formatDuration(overlay.positionMs)} / ${formatDuration(overlay.durationMs)}"
                     is PlayerOverlay.Volume -> "${overlay.percent}%"
                     is PlayerOverlay.Brightness -> "${overlay.percent}%"
                     is PlayerOverlay.SpeedUp -> "${overlay.multiplier}x"
