@@ -217,7 +217,7 @@ fun SyncPreviewScreen(
                         .fillMaxSize()
                         .padding(paddingValues)
                 ) {
-                    if (error != null && (isSyncing || isDeleting || syncComplete)) {
+                    if (error != null) {
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()

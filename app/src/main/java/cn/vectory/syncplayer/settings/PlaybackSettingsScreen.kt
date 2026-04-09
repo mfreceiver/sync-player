@@ -179,7 +179,7 @@ fun PlaybackSettingsScreen(
                         Text("网格列数", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(8.dp))
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(2, 3, 4, 5).forEach { col ->
+                            listOf(1, 2, 3, 4, 5).forEach { col ->
                                 FilterChip(
                                     selected = gridColumns == col,
                                     onClick = { viewModel.setGridColumns(col) },

@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -58,7 +59,7 @@ import cn.vectory.syncplayer.ui.util.isVideoFile
 import kotlinx.coroutines.launch
 import cn.vectory.syncplayer.debug.DebugLogger
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun BrowserScreen(
     viewModel: BrowserViewModel = hiltViewModel(),
@@ -328,7 +329,7 @@ fun BrowserScreen(
                                             style = MaterialTheme.typography.labelMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
-                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                             listOf(1, 2, 3, 4, 5).forEach { col ->
                                                 FilterChip(
                                                     selected = gridColumns == col,

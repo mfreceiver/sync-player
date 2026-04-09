@@ -165,10 +165,14 @@ class SyncPreviewViewModel @Inject constructor(
             _isDeleting.value = true
             _error.value = null
             try {
-                syncEngine.executeDelete(relationId, actions)
-                _toDelete.value = emptyList()
-                _toDownload.value = emptyList()
-                _syncComplete.value = true
+                val success = syncEngine.executeDelete(relationId, actions)
+                if (success) {
+                    _toDelete.value = emptyList()
+                    _toDownload.value = emptyList()
+                    _syncComplete.value = true
+                } else {
+                    _error.value = "删除失败，请检查网络连接后重试"
+                }
             } catch (e: Exception) {
                 _error.value = "删除失败: ${e.message}"
             } finally {
