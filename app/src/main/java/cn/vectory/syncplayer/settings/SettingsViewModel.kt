@@ -47,9 +47,6 @@ class SettingsViewModel @Inject constructor(
     private val _volumeBalance = MutableStateFlow(false)
     val volumeBalance: StateFlow<Boolean> = _volumeBalance.asStateFlow()
 
-    private val _analyzeOnDownload = MutableStateFlow(false)
-    val analyzeOnDownload: StateFlow<Boolean> = _analyzeOnDownload.asStateFlow()
-
     val debugMode: StateFlow<Boolean> = debugLogger.enabled
     private val _previousSessionSummary = MutableStateFlow(debugLogger.getPreviousSessionSummary())
     val previousSessionSummary: StateFlow<String> = _previousSessionSummary.asStateFlow()
@@ -80,7 +77,6 @@ class SettingsViewModel @Inject constructor(
             _gridColumns.value = userPrefs.getGridColumns()
             _progressAlwaysVisible.value = userPrefs.getProgressAlwaysVisible()
             _volumeBalance.value = userPrefs.getVolumeBalance()
-            _analyzeOnDownload.value = userPrefs.getAnalyzeOnDownload()
         }
     }
 
@@ -127,11 +123,6 @@ class SettingsViewModel @Inject constructor(
     fun setVolumeBalance(enabled: Boolean) {
         _volumeBalance.value = enabled
         viewModelScope.launch { userPrefs.setVolumeBalance(enabled) }
-    }
-
-    fun setAnalyzeOnDownload(enabled: Boolean) {
-        _analyzeOnDownload.value = enabled
-        viewModelScope.launch { userPrefs.setAnalyzeOnDownload(enabled) }
     }
 
     fun clearLogs() {

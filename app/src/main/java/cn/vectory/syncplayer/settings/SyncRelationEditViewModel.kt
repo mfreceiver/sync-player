@@ -13,6 +13,8 @@ import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
+import cn.vectory.syncplayer.sync.classifyRemoteError
+import cn.vectory.syncplayer.sync.RemoteBrowseError
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -69,6 +71,9 @@ class SyncRelationEditViewModel @Inject constructor(
 
     private val _error = MutableStateFlow<String?>(null)
     val error = _error.asStateFlow()
+
+    private val _browseError = MutableStateFlow<RemoteBrowseError?>(null)
+    val browseError = _browseError.asStateFlow()
 
     init {
         loadSources()
@@ -151,6 +156,7 @@ class SyncRelationEditViewModel @Inject constructor(
                 return@launch
             }
             _error.value = null
+            _browseError.value = null
             try {
                 val client = when (source.protocol) {
                     SyncProtocol.SMB -> smbFileClient
@@ -160,13 +166,17 @@ class SyncRelationEditViewModel @Inject constructor(
                 _remoteDirectories.value = client.listDirectories(_currentRemoteBrowsePath.value)
                 client.disconnect()
             } catch (e: Exception) {
-                _error.value = "浏览远程目录失败: ${e.message}"
+                _browseError.value = classifyRemoteError(e)
                 try { when (source.protocol) {
                     SyncProtocol.SMB -> smbFileClient.disconnect()
                     SyncProtocol.SFTP -> sftpFileClient.disconnect()
                 } } catch (_: Exception) {}
             }
         }
+    }
+
+    fun clearBrowseError() {
+        _browseError.value = null
     }
 
     fun navigateRemoteUp() {

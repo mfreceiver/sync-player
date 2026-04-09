@@ -24,7 +24,8 @@ data class SyncProgress(
     val relationId: Long = 0,
     val relationName: String = "",
     val localBasePath: String = "",
-    val startTimeMs: Long = 0
+    val startTimeMs: Long = 0,
+    val completedPaths: Set<String> = emptySet()
 ) {
     val downloadPercent: Int
         get() = if (totalBytes > 0) (transferredBytes * 100 / totalBytes).toInt() else 0

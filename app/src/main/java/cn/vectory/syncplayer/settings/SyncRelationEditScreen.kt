@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
+import cn.vectory.syncplayer.sync.RemoteBrowseError
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -41,6 +42,7 @@ fun SyncRelationEditScreen(
     val localDirs by viewModel.localDirectories.collectAsStateWithLifecycle()
     val currentLocalPath by viewModel.currentLocalBrowsePath.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
+    val browseError by viewModel.browseError.collectAsStateWithLifecycle()
     val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
     val saveResult by viewModel.saveResult.collectAsStateWithLifecycle()
 
@@ -49,8 +51,21 @@ fun SyncRelationEditScreen(
     var sourceExpanded by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isNavigatingBack by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(browseError) {
+        val err = browseError ?: return@LaunchedEffect
+        val msg = when (err) {
+            RemoteBrowseError.PATH_NOT_FOUND -> "远程路径不存在，请检查路径是否正确"
+            RemoteBrowseError.TIMEOUT -> "连接服务器超时，请检查网络连接"
+            RemoteBrowseError.OTHER -> "浏览远程目录失败"
+        }
+        snackbarHostState.showSnackbar(msg)
+        viewModel.clearBrowseError()
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(if (viewModel.relationId > 0) "编辑同步关系" else "新增同步关系") },

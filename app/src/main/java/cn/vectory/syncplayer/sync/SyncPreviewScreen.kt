@@ -293,10 +293,21 @@ fun SyncPreviewScreen(
                                 currentFileProgress = progress.currentFileProgress
                             )
                         }
-                        val currentItemsEmpty = if (syncMode == SyncMode.DOWNLOAD) {
-                            toDownload.isEmpty() && toDelete.isEmpty()
+                        val completedPaths = progress.completedPaths
+                        val remainingToDownload = if (isSyncing) {
+                            toDownload.filter { it.relativePath !in completedPaths }
                         } else {
-                            toDelete.isEmpty()
+                            toDownload
+                        }
+                        val remainingToDelete = if (isSyncing || isDeleting) {
+                            toDelete.filter { it.relativePath !in completedPaths }
+                        } else {
+                            toDelete
+                        }
+                        val currentItemsEmpty = if (syncMode == SyncMode.DOWNLOAD) {
+                            remainingToDownload.isEmpty() && remainingToDelete.isEmpty()
+                        } else {
+                            remainingToDelete.isEmpty()
                         }
                         if (currentItemsEmpty && !isSyncing && !isDeleting) {
                             Card(
@@ -330,23 +341,23 @@ fun SyncPreviewScreen(
                             }
                         }
                         if (syncMode == SyncMode.DOWNLOAD) {
-                            if (toDownload.isNotEmpty() || toDelete.isNotEmpty()) {
+                            if (!isSyncing && (remainingToDownload.isNotEmpty() || remainingToDelete.isNotEmpty())) {
                                 SyncDownloadSummaryCard(
-                                    downloadCount = toDownload.size,
-                                    downloadSize = viewModel.totalDownloadSize,
-                                    deleteCount = toDelete.size,
-                                    deleteSize = viewModel.totalDeleteSize
+                                    downloadCount = remainingToDownload.size,
+                                    downloadSize = remainingToDownload.sumOf { it.fileSize },
+                                    deleteCount = remainingToDelete.size,
+                                    deleteSize = remainingToDelete.sumOf { it.fileSize }
                                 )
                             }
                         } else {
-                            if (toDelete.isNotEmpty()) {
+                            if (!isDeleting && remainingToDelete.isNotEmpty()) {
                                 SyncDeleteSummaryCard(
-                                    count = toDelete.size,
-                                    totalSize = viewModel.totalDeleteSize
+                                    count = remainingToDelete.size,
+                                    totalSize = remainingToDelete.sumOf { it.fileSize }
                                 )
                             }
                         }
-                        if (syncMode == SyncMode.DOWNLOAD && toDelete.isNotEmpty()) {
+                        if (syncMode == SyncMode.DOWNLOAD && remainingToDelete.isNotEmpty() && !isSyncing) {
                             SyncDeleteWarningCard()
                         }
                         LazyColumn(
@@ -354,11 +365,11 @@ fun SyncPreviewScreen(
                             contentPadding = PaddingValues(vertical = 8.dp)
                         ) {
                             if (syncMode == SyncMode.DOWNLOAD) {
-                                items(toDownload, key = { it.relativePath }) { action ->
+                                items(remainingToDownload, key = { it.relativePath }) { action ->
                                     SyncActionItem(action = action, isDownload = true)
                                 }
                             } else {
-                                items(toDelete, key = { it.relativePath }) { action ->
+                                items(remainingToDelete, key = { it.relativePath }) { action ->
                                     SyncActionItem(action = action, isDownload = false)
                                 }
                             }

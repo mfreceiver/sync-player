@@ -18,7 +18,6 @@ import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
-import cn.vectory.syncplayer.audio.AudioGainAnalyzer
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -57,7 +56,6 @@ class SyncEngine @Inject constructor(
     private val sftpFileClient: SftpFileClient,
     private val storagePaths: StoragePaths,
     private val userPrefs: UserPreferencesRepository,
-    private val audioGainAnalyzer: AudioGainAnalyzer,
     @ApplicationContext private val context: Context
 ) {
 
@@ -208,6 +206,7 @@ class SyncEngine @Inject constructor(
         val totalDownloadBytes = toDownload.sumOf { it.fileSize }
         val activeDownloadsMutex = Mutex()
         val activeDownloadsMap = mutableMapOf<String, ActiveDownload>()
+        val completedPathsSet = mutableSetOf<String>()
 
         val localRoot = getLocalSyncRoot(relation)
         cleanupTempFiles(localRoot)
@@ -290,15 +289,6 @@ class SyncEngine @Inject constructor(
                                     if (savedEntity != null) {
                                         videoMetadataExtractor.extractAndSave(savedEntity)
                                     }
-                                    if (userPrefs.getAnalyzeOnDownload()) {
-                                        val refreshed = videoRepository.getByRelativePath(localRelPath)
-                                        if (refreshed != null && refreshed.audioGainDb == null) {
-                                            val gainResult = audioGainAnalyzer.analyze(refreshed.localAbsolutePath)
-                                            if (gainResult != null) {
-                                                videoRepository.upsert(refreshed.copy(audioGainDb = gainResult.gainDb))
-                                            }
-                                        }
-                                    }
                                     syncLogRepository.log(
                                         action = "DOWNLOAD",
                                         relativePath = localRelPath,
@@ -319,6 +309,7 @@ class SyncEngine @Inject constructor(
                                 }
                                 completedCount.incrementAndGet()
                                 activeDownloadsMutex.withLock {
+                                    completedPathsSet.add(action.relativePath)
                                     updateActiveDownloadsState(activeDownloadsMap, totalBytesTransferred.get(), totalDownloadBytes, completedCount.get(), totalActions)
                                 }
                             } finally {
@@ -350,6 +341,8 @@ class SyncEngine @Inject constructor(
                     fileSize = action.fileSize
                 )
                 completedCount.incrementAndGet()
+                completedPathsSet.add(action.relativePath)
+                _progress.value = _progress.value.copy(completedPaths = completedPathsSet.toSet())
             }
 
             _progress.value = SyncProgress(
@@ -404,7 +397,8 @@ class SyncEngine @Inject constructor(
         transferredSoFar: Long,
         totalDownloadBytes: Long,
         completedFiles: Int,
-        totalFiles: Int
+        totalFiles: Int,
+        completedPaths: Set<String> = _progress.value.completedPaths
     ) {
         val activeTransferred = activeDownloadsMap.values.sumOf { it.transferredBytes }
         _progress.value = _progress.value.copy(
@@ -414,7 +408,8 @@ class SyncEngine @Inject constructor(
             completedFiles = completedFiles,
             totalFiles = totalFiles,
             currentFileName = activeDownloadsMap.values.firstOrNull()?.fileName ?: _progress.value.currentFileName,
-            currentFileProgress = activeDownloadsMap.values.firstOrNull()?.progress ?: _progress.value.currentFileProgress
+            currentFileProgress = activeDownloadsMap.values.firstOrNull()?.progress ?: _progress.value.currentFileProgress,
+            completedPaths = completedPaths
         )
     }
 

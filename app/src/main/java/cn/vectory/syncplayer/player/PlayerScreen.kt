@@ -95,6 +95,9 @@ fun PlayerScreen(
     var currentOverlay by remember { mutableStateOf<PlayerOverlay?>(null) }
     val overlayHideJob = remember { mutableStateOf<Job?>(null) }
 
+    var isGestureSeeking by remember { mutableStateOf(false) }
+    var gestureSeekPosition by remember { mutableFloatStateOf(0f) }
+
     fun showOverlay(overlay: PlayerOverlay) {
         currentOverlay = overlay
         overlayHideJob.value?.cancel()
@@ -239,6 +242,7 @@ fun PlayerScreen(
         override fun onSeekTo(offsetMs: Long) {
             val newPos = (exoPlayer.currentPosition + offsetMs).coerceIn(0, exoPlayer.duration.coerceAtLeast(0))
             exoPlayer.seekTo(newPos)
+            isGestureSeeking = false
         }
         override fun onVolumeGestureStart() {
             val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
@@ -285,6 +289,10 @@ fun PlayerScreen(
             }
         }
         override fun onSeekOverlay(positionMs: Long, durationMs: Long) {
+            if (durationMs > 0) {
+                isGestureSeeking = true
+                gestureSeekPosition = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+            }
             showOverlay(PlayerOverlay.Seek(positionMs, durationMs))
         }
         override fun onLongPressSpeedOverlay(multiplier: Float) {
@@ -293,6 +301,7 @@ fun PlayerScreen(
         override fun onHideOverlay() {
             overlayHideJob.value?.cancel()
             currentOverlay = null
+            isGestureSeeking = false
         }
     }
 
@@ -320,6 +329,8 @@ fun PlayerScreen(
                 isTrashed = playbackRecord?.isTrashed ?: false,
                 isUserSeeking = isUserSeeking,
                 userSeekPosition = userSeekPosition,
+                isGestureSeeking = isGestureSeeking,
+                gestureSeekPosition = gestureSeekPosition,
                 onSeekChange = { isUserSeeking = true; userSeekPosition = it },
                 onSeekConfirm = {
                     exoPlayer.seekTo((it * currentDuration).toLong())
@@ -393,18 +404,19 @@ private fun TopProgressBar(
     isTrashed: Boolean,
     isUserSeeking: Boolean,
     userSeekPosition: Float,
+    isGestureSeeking: Boolean,
+    gestureSeekPosition: Float,
     onSeekChange: (Float) -> Unit,
     onSeekConfirm: (Float) -> Unit,
     onExit: () -> Unit,
     onToggleTrash: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val sliderValue = if (isUserSeeking) {
-        userSeekPosition
-    } else if (currentDuration > 0) {
-        currentPosition.toFloat() / currentDuration.toFloat()
-    } else {
-        0f
+    val sliderValue = when {
+        isUserSeeking -> userSeekPosition
+        isGestureSeeking -> gestureSeekPosition
+        currentDuration > 0 -> currentPosition.toFloat() / currentDuration.toFloat()
+        else -> 0f
     }
 
     Column(
@@ -455,10 +467,14 @@ private fun TopProgressBar(
         ThinProgressSlider(
             progress = sliderValue,
             elapsed = formatDuration(
-                if (isUserSeeking) (userSeekPosition * currentDuration).toLong() else currentPosition
+                when {
+                    isUserSeeking -> (userSeekPosition * currentDuration).toLong()
+                    isGestureSeeking -> (gestureSeekPosition * currentDuration).toLong()
+                    else -> currentPosition
+                }
             ),
             totalDuration = formatDuration(currentDuration),
-            isUserSeeking = isUserSeeking,
+            isUserSeeking = isUserSeeking || isGestureSeeking,
             onProgressChange = onSeekChange,
             onProgressChangeFinished = { onSeekConfirm(userSeekPosition) },
             modifier = Modifier

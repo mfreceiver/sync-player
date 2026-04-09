@@ -30,5 +30,8 @@ sealed class Route(val route: String) {
     }
     data object Search : Route("search")
     data object PlaybackSettings : Route("playback_settings")
+    data object GainAnalysis : Route("gain_analysis/{relationId}") {
+        fun create(relationId: Long): String = "gain_analysis/$relationId"
+    }
     data object About : Route("about")
 }

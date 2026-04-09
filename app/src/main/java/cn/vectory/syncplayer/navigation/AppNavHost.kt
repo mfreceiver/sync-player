@@ -25,6 +25,7 @@ import cn.vectory.syncplayer.settings.SyncRelationEditScreen
 import cn.vectory.syncplayer.settings.PlaybackSettingsScreen
 import cn.vectory.syncplayer.settings.AboutScreen
 import cn.vectory.syncplayer.settings.SettingsViewModel
+import cn.vectory.syncplayer.settings.GainAnalysisScreen
 import cn.vectory.syncplayer.sync.SyncPreviewScreen
 import cn.vectory.syncplayer.sync.SyncPreviewViewModel
 
@@ -148,6 +149,9 @@ fun AppNavHost(debugLogger: DebugLogger, navController: NavHostController = reme
                 },
                 onNavigateToSyncPreview = { relationId ->
                     navController.navigate(Route.SyncPreview.create(relationId, "download"))
+                },
+                onNavigateToGainAnalysis = { relationId ->
+                    navController.navigate(Route.GainAnalysis.create(relationId))
                 }
             )
         }
@@ -197,6 +201,17 @@ fun AppNavHost(debugLogger: DebugLogger, navController: NavHostController = reme
             PlaybackSettingsScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Route.GainAnalysis.route,
+            arguments = listOf(
+                navArgument("relationId") { type = NavType.LongType; defaultValue = 0L }
+            )
+        ) {
+            GainAnalysisScreen(
+                onBack = { navController.popBackStack() }
             )
         }
 

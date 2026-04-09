@@ -33,7 +33,6 @@ fun PlaybackSettingsScreen(
     val gridColumns by viewModel.gridColumns.collectAsStateWithLifecycle()
     val progressAlwaysVisible by viewModel.progressAlwaysVisible.collectAsStateWithLifecycle()
     val volumeBalance by viewModel.volumeBalance.collectAsStateWithLifecycle()
-    val analyzeOnDownload by viewModel.analyzeOnDownload.collectAsStateWithLifecycle()
     var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -164,30 +163,6 @@ fun PlaybackSettingsScreen(
                         Switch(
                             checked = volumeBalance,
                             onCheckedChange = { viewModel.setVolumeBalance(it) }
-                        )
-                    }
-                }
-            }
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("下载时分析音量", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "同步下载文件时自动分析音量增益，便于音量均衡使用",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("启用", style = MaterialTheme.typography.bodyMedium)
-                        Switch(
-                            checked = analyzeOnDownload,
-                            onCheckedChange = { viewModel.setAnalyzeOnDownload(it) }
                         )
                     }
                 }

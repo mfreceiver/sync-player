@@ -7,7 +7,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,70 +18,24 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.data.model.SyncRelationWithSource
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
-import cn.vectory.syncplayer.data.repository.VideoRepository
-import cn.vectory.syncplayer.audio.AudioGainAnalyzer
-import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import java.text.SimpleDateFormat
 import java.util.Locale
 
 @HiltViewModel
 class SyncRelationListViewModel @Inject constructor(
-    private val syncRelationRepository: SyncRelationRepository,
-    private val videoRepository: VideoRepository,
-    private val audioGainAnalyzer: AudioGainAnalyzer
+    private val syncRelationRepository: SyncRelationRepository
 ) : ViewModel() {
     val relationsWithSource = syncRelationRepository.getAllWithSourceFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    private val _analysisProgress = MutableStateFlow<VolumeAnalysisProgress?>(null)
-    val analysisProgress = _analysisProgress.asStateFlow()
-
-    fun analyzeRelation(relationId: Long) {
-        viewModelScope.launch {
-            val videos = videoRepository.getBySyncRelationId(relationId)
-                .filter { it.audioGainDb == null }
-            if (videos.isEmpty()) {
-                _analysisProgress.value = VolumeAnalysisProgress(0, 0, true)
-                _analysisProgress.value = null
-                return@launch
-            }
-            _analysisProgress.value = VolumeAnalysisProgress(0, videos.size, false)
-            val semaphore = Semaphore(3)
-            val completed = java.util.concurrent.atomic.AtomicInteger(0)
-            withContext(Dispatchers.IO) {
-                videos.map { video ->
-                    async {
-                        semaphore.withPermit {
-                            val result = audioGainAnalyzer.analyze(video.localAbsolutePath)
-                            if (result != null) {
-                                videoRepository.upsert(video.copy(audioGainDb = result.gainDb))
-                            }
-                            val done = completed.incrementAndGet()
-                            _analysisProgress.value = VolumeAnalysisProgress(done, videos.size, false)
-                        }
-                    }
-                }.awaitAll()
-            }
-            _analysisProgress.value = VolumeAnalysisProgress(videos.size, videos.size, true)
-            _analysisProgress.value = null
-        }
-    }
 }
-
-data class VolumeAnalysisProgress(val completed: Int, val total: Int, val isDone: Boolean)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,10 +44,10 @@ fun SyncRelationListScreen(
     onNavigateToEdit: (relationId: Long) -> Unit,
     onNavigateToCreate: () -> Unit,
     onNavigateToSyncPreview: (relationId: Long) -> Unit,
+    onNavigateToGainAnalysis: (relationId: Long) -> Unit = {},
     viewModel: SyncRelationListViewModel = hiltViewModel()
 ) {
     val relations by viewModel.relationsWithSource.collectAsStateWithLifecycle()
-    val analysisProgress by viewModel.analysisProgress.collectAsStateWithLifecycle()
     var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -165,27 +118,8 @@ fun SyncRelationListScreen(
                                 OutlinedButton(onClick = { onNavigateToSyncPreview(item.relation.id) }) {
                                     Text("同步", style = MaterialTheme.typography.labelSmall)
                                 }
-                                val progress = analysisProgress
-                                OutlinedButton(
-                                    onClick = { viewModel.analyzeRelation(item.relation.id) },
-                                    enabled = progress == null
-                                ) {
-                                    if (progress != null && !progress.isDone) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(14.dp),
-                                            strokeWidth = 2.dp
-                                        )
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("${progress.completed}/${progress.total}", style = MaterialTheme.typography.labelSmall)
-                                    } else {
-                                        Icon(
-                                            Icons.AutoMirrored.Filled.VolumeUp,
-                                            contentDescription = "分析音量",
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("音量", style = MaterialTheme.typography.labelSmall)
-                                    }
+                                OutlinedButton(onClick = { onNavigateToGainAnalysis(item.relation.id) }) {
+                                    Text("增益分析", style = MaterialTheme.typography.labelSmall)
                                 }
                                 Spacer(Modifier.weight(1f))
                                 IconButton(onClick = { onNavigateToEdit(item.relation.id) }) {
