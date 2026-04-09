@@ -183,7 +183,7 @@ fun PlaybackSettingsScreen(
                                 FilterChip(
                                     selected = gridColumns == col,
                                     onClick = { viewModel.setGridColumns(col) },
-                                    label = { Text("$col 列", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                                    label = { Text("$col", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                                 )
                             }
                         }

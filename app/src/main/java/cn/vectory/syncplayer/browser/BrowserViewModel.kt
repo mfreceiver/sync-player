@@ -221,6 +221,10 @@ class BrowserViewModel @Inject constructor(
 
     fun createFolder(parentPath: String, folderName: String) {
         viewModelScope.launch {
+            if (parentPath.isNotEmpty() && isFileInBaseDir(parentPath)) {
+                _error.value = "同步基目录内无法手动创建文件夹"
+                return@launch
+            }
             val newDir = if (parentPath.isEmpty()) {
                 File(storagePaths.userdataRoot, folderName)
             } else {
@@ -290,6 +294,11 @@ class BrowserViewModel @Inject constructor(
 
     fun toggleTrashed(videoItemId: Long) {
         viewModelScope.launch {
+            val video = videoRepository.getById(videoItemId)
+            if (video == null || !isFileInBaseDir(video.relativePath)) {
+                _error.value = "仅同步基目录内的文件可标记回收站"
+                return@launch
+            }
             playbackRepository.toggleTrashed(videoItemId)
         }
     }

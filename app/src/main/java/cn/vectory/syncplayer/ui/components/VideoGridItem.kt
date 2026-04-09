@@ -108,9 +108,9 @@ internal fun VideoGridItem(
 
             if (progress > 0f) {
                 val progressColor = if (isCompleted) {
-                    extendedColors.successGreen
+                    Color(0xFF69F0AE) // Green A200 — vivid green for completed
                 } else {
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                    Color(0xFF76FF03) // Green A400 — bright vivid green for in-progress
                 }
 
                 Canvas(
@@ -120,7 +120,7 @@ internal fun VideoGridItem(
                 ) {
                     val barHeight = 3.dp.toPx()
                     drawRect(
-                        color = Color.White.copy(alpha = 0.15f),
+                        color = Color.White.copy(alpha = 0.25f),
                         topLeft = Offset(0f, size.height - barHeight),
                         size = Size(size.width, barHeight)
                     )

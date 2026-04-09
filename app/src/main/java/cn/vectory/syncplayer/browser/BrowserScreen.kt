@@ -40,6 +40,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -217,14 +219,16 @@ fun BrowserScreen(
                                 )
                             }
                         }
-                        IconButton(onClick = {
-                            debugLogger.log("Click", "Create folder dialog opened")
-                            showCreateFolderDialog = true
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.CreateNewFolder,
-                                contentDescription = "新建文件夹"
-                            )
+                        if (currentRelationId == null) {
+                            IconButton(onClick = {
+                                debugLogger.log("Click", "Create folder dialog opened")
+                                showCreateFolderDialog = true
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Default.CreateNewFolder,
+                                    contentDescription = "新建文件夹"
+                                )
+                            }
                         }
                         Box {
                             IconButton(onClick = {
@@ -245,104 +249,100 @@ fun BrowserScreen(
                                     "排序",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                                    modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp)
                                 )
-                                DropdownMenuItem(
-                                    text = { Text("文件名 A→Z") },
-                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_ASC); debugLogger.log("Click","Sort: FILENAME_ASC"); showSortMenu = false },
-                                    leadingIcon = { Icon(Icons.Default.SortByAlpha, null, modifier = Modifier.size(18.dp)) },
-                                    trailingIcon = { if (sortMode == BrowserViewModel.SortMode.FILENAME_ASC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("文件名 Z→A") },
-                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_DESC); debugLogger.log("Click","Sort: FILENAME_DESC"); showSortMenu = false },
-                                    leadingIcon = { Icon(Icons.Default.SortByAlpha, null, modifier = Modifier.size(18.dp)) },
-                                    trailingIcon = { if (sortMode == BrowserViewModel.SortMode.FILENAME_DESC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("时长 短→长") },
-                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_ASC); debugLogger.log("Click","Sort: DURATION_ASC"); showSortMenu = false },
-                                    leadingIcon = { Icon(Icons.Default.Schedule, null, modifier = Modifier.size(18.dp)) },
-                                    trailingIcon = { if (sortMode == BrowserViewModel.SortMode.DURATION_ASC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("时长 长→短") },
-                                    onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_DESC); debugLogger.log("Click","Sort: DURATION_DESC"); showSortMenu = false },
-                                    leadingIcon = { Icon(Icons.Default.Schedule, null, modifier = Modifier.size(18.dp)) },
-                                    trailingIcon = { if (sortMode == BrowserViewModel.SortMode.DURATION_DESC) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                                )
-                                HorizontalDivider()
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    SortOptionChip(
+                                        selected = sortMode == BrowserViewModel.SortMode.FILENAME_ASC,
+                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_ASC); debugLogger.log("Click","Sort: FILENAME_ASC"); showSortMenu = false },
+                                        mainIcon = Icons.Default.SortByAlpha,
+                                        ascending = true
+                                    )
+                                    SortOptionChip(
+                                        selected = sortMode == BrowserViewModel.SortMode.FILENAME_DESC,
+                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_DESC); debugLogger.log("Click","Sort: FILENAME_DESC"); showSortMenu = false },
+                                        mainIcon = Icons.Default.SortByAlpha,
+                                        ascending = false
+                                    )
+                                    SortOptionChip(
+                                        selected = sortMode == BrowserViewModel.SortMode.DURATION_ASC,
+                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_ASC); debugLogger.log("Click","Sort: DURATION_ASC"); showSortMenu = false },
+                                        mainIcon = Icons.Default.Schedule,
+                                        ascending = true
+                                    )
+                                    SortOptionChip(
+                                        selected = sortMode == BrowserViewModel.SortMode.DURATION_DESC,
+                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_DESC); debugLogger.log("Click","Sort: DURATION_DESC"); showSortMenu = false },
+                                        mainIcon = Icons.Default.Schedule,
+                                        ascending = false
+                                    )
+                                }
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                                 Text(
                                     "筛选",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                                    modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
                                 )
-                                DropdownMenuItem(
-                                    text = { Text("全部") },
-                                    onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.ALL); debugLogger.log("Click","Filter: ALL"); showSortMenu = false },
-                                    leadingIcon = { Icon(Icons.Default.FilterList, null, modifier = Modifier.size(18.dp)) },
-                                    trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.ALL) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("仅视频") },
-                                    onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.VIDEO_ONLY); debugLogger.log("Click","Filter: VIDEO_ONLY"); showSortMenu = false },
-                                    leadingIcon = { Icon(Icons.Default.VideoFile, null, modifier = Modifier.size(18.dp)) },
-                                    trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.VIDEO_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("仅回收站") },
-                                    onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.TRASHED_ONLY); debugLogger.log("Click","Filter: TRASHED_ONLY"); showSortMenu = false },
-                                    leadingIcon = { Icon(Icons.Default.Delete, null, modifier = Modifier.size(18.dp)) },
-                                    trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.TRASHED_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                                )
-                                HorizontalDivider()
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    IconOptionChip(
+                                        selected = filter == BrowserViewModel.BrowseFilter.ALL,
+                                        onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.ALL); debugLogger.log("Click","Filter: ALL"); showSortMenu = false }
+                                    ) { Icon(Icons.Default.FilterList, null, modifier = Modifier.size(20.dp)) }
+                                    IconOptionChip(
+                                        selected = filter == BrowserViewModel.BrowseFilter.VIDEO_ONLY,
+                                        onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.VIDEO_ONLY); debugLogger.log("Click","Filter: VIDEO_ONLY"); showSortMenu = false }
+                                    ) { Icon(Icons.Default.VideoFile, null, modifier = Modifier.size(20.dp)) }
+                                    IconOptionChip(
+                                        selected = filter == BrowserViewModel.BrowseFilter.TRASHED_ONLY,
+                                        onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.TRASHED_ONLY); debugLogger.log("Click","Filter: TRASHED_ONLY"); showSortMenu = false }
+                                    ) { Icon(Icons.Default.Delete, null, modifier = Modifier.size(20.dp)) }
+                                }
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                                 Text(
                                     "视图",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                                    modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
                                 )
-                                DropdownMenuItem(
-                                    text = { Text("列表") },
-                                    onClick = { viewModel.setViewMode(BrowserViewModel.ViewMode.LIST); showSortMenu = false },
-                                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.ViewList, null, modifier = Modifier.size(18.dp)) },
-                                    trailingIcon = { if (viewMode == BrowserViewModel.ViewMode.LIST) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("图标") },
-                                    onClick = { viewModel.setViewMode(BrowserViewModel.ViewMode.GRID); showSortMenu = false },
-                                    leadingIcon = { Icon(Icons.Default.Apps, null, modifier = Modifier.size(18.dp)) },
-                                    trailingIcon = { if (viewMode == BrowserViewModel.ViewMode.GRID) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
-                                )
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    IconOptionChip(
+                                        selected = viewMode == BrowserViewModel.ViewMode.LIST,
+                                        onClick = { viewModel.setViewMode(BrowserViewModel.ViewMode.LIST); showSortMenu = false }
+                                    ) { Icon(Icons.AutoMirrored.Filled.ViewList, null, modifier = Modifier.size(20.dp)) }
+                                    IconOptionChip(
+                                        selected = viewMode == BrowserViewModel.ViewMode.GRID,
+                                        onClick = { viewModel.setViewMode(BrowserViewModel.ViewMode.GRID); showSortMenu = false }
+                                    ) { Icon(Icons.Default.Apps, null, modifier = Modifier.size(20.dp)) }
+                                }
                                 if (viewMode == BrowserViewModel.ViewMode.GRID) {
-                                    HorizontalDivider()
+                                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                                     Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        Text(
-                                            "栏数",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                            listOf(1, 2, 3, 4, 5).forEach { col ->
-                                                FilterChip(
-                                                    selected = gridColumns == col,
-                                                    onClick = { viewModel.setGridColumns(col) },
-                                                    label = { Text("$col") },
-                                                    modifier = Modifier.height(28.dp)
-                                                )
-                                            }
+                                        listOf(1, 2, 3, 4, 5).forEach { col ->
+                                            FilterChip(
+                                                selected = gridColumns == col,
+                                                onClick = { viewModel.setGridColumns(col) },
+                                                label = { Text("$col") },
+                                                modifier = Modifier.height(28.dp)
+                                            )
                                         }
                                     }
                                 }
                             }
                         }
+
                     }
                 )
             }
@@ -373,7 +373,11 @@ fun BrowserScreen(
                                     debugLogger.log("Click", "Open folder: ${item.relativePath}")
                                     viewModel.setFolder(item.relativePath)
                                 },
-                                onLongClick = { showFolderContextMenu = item }
+                                onLongClick = {
+                                    if (!item.isSyncBaseDir && !item.containsSyncBaseDir) {
+                                        showFolderContextMenu = item
+                                    }
+                                }
                             )
                         } else {
                             VideoGridItem(
@@ -449,7 +453,11 @@ fun BrowserScreen(
                                     debugLogger.log("Click", "Open folder: ${item.relativePath}")
                                     viewModel.setFolder(item.relativePath)
                                 },
-                                onLongClick = { showFolderContextMenu = item }
+                                onLongClick = {
+                                    if (!item.isSyncBaseDir && !item.containsSyncBaseDir) {
+                                        showFolderContextMenu = item
+                                    }
+                                }
                             )
                         } else {
                             FileItem(
@@ -550,11 +558,13 @@ fun BrowserScreen(
                         }) {
                             Text("分享")
                         }
-                        TextButton(onClick = {
-                            viewModel.toggleTrashed(item.videoItemId!!)
-                            showContextMenu = null
-                        }) {
-                            Text(if (item.isTrashed) "从回收站恢复" else "放入回收站")
+                        if (viewModel.isFileInBaseDir(item.relativePath)) {
+                            TextButton(onClick = {
+                                viewModel.toggleTrashed(item.videoItemId!!)
+                                showContextMenu = null
+                            }) {
+                                Text(if (item.isTrashed) "从回收站恢复" else "放入回收站")
+                            }
                         }
                         if (!viewModel.isFileInBaseDir(item.relativePath)) {
                             TextButton(onClick = {
@@ -735,5 +745,48 @@ private fun FileItem(
             playbackPosition = item.playbackPosition,
             playbackDuration = item.playbackDuration
         )
+    }
+}
+
+@Composable
+private fun IconOptionChip(
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: @Composable () -> Unit
+) {
+    Surface(
+        modifier = modifier.size(40.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+        contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+        onClick = onClick
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+            icon()
+        }
+    }
+}
+
+@Composable
+private fun SortOptionChip(
+    selected: Boolean,
+    onClick: () -> Unit,
+    mainIcon: ImageVector,
+    ascending: Boolean,
+    modifier: Modifier = Modifier
+) {
+    IconOptionChip(selected = selected, onClick = onClick, modifier = modifier) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Icon(mainIcon, null, modifier = Modifier.size(18.dp))
+            Icon(
+                if (ascending) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+                null,
+                modifier = Modifier.size(12.dp)
+            )
+        }
     }
 }
