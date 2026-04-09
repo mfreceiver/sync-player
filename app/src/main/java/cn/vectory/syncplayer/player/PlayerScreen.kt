@@ -8,6 +8,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -24,14 +26,17 @@ import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,6 +67,7 @@ private sealed class PlayerOverlay {
     data object Previous : PlayerOverlay()
     data object Next : PlayerOverlay()
     data class TrashAction(val isIn: Boolean) : PlayerOverlay()
+    data class Orientation(val label: String) : PlayerOverlay()
 }
 
 @Composable
@@ -320,6 +326,7 @@ fun PlayerScreen(
                 currentDuration = currentDuration,
                 fileName = videoItem?.fileName ?: "",
                 isTrashed = playbackRecord?.isTrashed ?: false,
+                showStatusBar = showControls,
                 isUserSeeking = isUserSeeking,
                 userSeekPosition = userSeekPosition,
                 onSeekChange = { isUserSeeking = true; userSeekPosition = it },
@@ -357,15 +364,28 @@ fun PlayerScreen(
                 },
                 isForcedOrientation = forcedOrientation != null,
                 onRotation = {
-                    val current = forcedOrientation ?: activity.requestedOrientation
-                    val newOrientation = if (current == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                        || current == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT) {
-                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    if (forcedOrientation != null) {
+                        viewModel.resetForcedOrientation()
+                        val item = videoItem
+                        if (item != null) {
+                            activity.requestedOrientation = viewModel.resolveOrientation(item.width, item.height)
+                        } else {
+                            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                        }
+                        showOverlay(PlayerOverlay.Orientation("ROTATION"))
                     } else {
-                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                        val current = activity.requestedOrientation
+                        val isPortrait = current == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                            || current == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                        val newOrientation = if (isPortrait) {
+                            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                        } else {
+                            ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                        }
+                        viewModel.setForcedOrientation(newOrientation)
+                        activity.requestedOrientation = newOrientation
+                        showOverlay(PlayerOverlay.Orientation("FULLSCREEN"))
                     }
-                    viewModel.setForcedOrientation(newOrientation)
-                    activity.requestedOrientation = newOrientation
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -383,6 +403,7 @@ private fun TopProgressBar(
     currentDuration: Long,
     fileName: String,
     isTrashed: Boolean,
+    showStatusBar: Boolean,
     isUserSeeking: Boolean,
     userSeekPosition: Float,
     onSeekChange: (Float) -> Unit,
@@ -391,85 +412,136 @@ private fun TopProgressBar(
     onToggleTrash: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val sliderValue = if (isUserSeeking) {
+        userSeekPosition
+    } else if (currentDuration > 0) {
+        currentPosition.toFloat() / currentDuration.toFloat()
+    } else {
+        0f
+    }
+
     Column(
         modifier = modifier
             .background(Color.Black.copy(alpha = 0.5f))
-            .statusBarsPadding()
-            .padding(horizontal = 4.dp, vertical = 4.dp)
+            .then(if (showStatusBar) Modifier.statusBarsPadding() else Modifier)
+            .padding(horizontal = 12.dp)
+            .padding(top = 8.dp, bottom = 8.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            IconButton(onClick = onExit, modifier = Modifier.size(40.dp)) {
+            IconButton(onClick = onExit, modifier = Modifier.size(36.dp)) {
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "Exit",
                     tint = Color.White,
-                    modifier = Modifier.size(22.dp)
+                    modifier = Modifier.size(20.dp)
                 )
             }
 
             Text(
-                text = formatDuration(
-                    if (isUserSeeking) (userSeekPosition * currentDuration).toLong() else currentPosition
-                ),
-                color = Color.White.copy(alpha = 0.7f),
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(start = 4.dp)
-            )
-
-            val sliderValue = if (isUserSeeking) {
-                userSeekPosition
-            } else if (currentDuration > 0) {
-                currentPosition.toFloat() / currentDuration.toFloat()
-            } else {
-                0f
-            }
-            Slider(
-                value = sliderValue,
-                onValueChange = onSeekChange,
-                onValueChangeFinished = { onSeekConfirm(userSeekPosition) },
+                text = fileName,
+                color = Color.White.copy(alpha = 0.8f),
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 4.dp),
-                colors = SliderDefaults.colors(
-                    thumbColor = Color.White,
-                    activeTrackColor = Color.White,
-                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
-                )
+                    .padding(horizontal = 12.dp)
             )
 
-            val remaining = currentDuration - currentPosition
-            Text(
-                text = if (remaining > 0) "-${formatDuration(remaining)}" else formatDuration(0L),
-                color = Color.White.copy(alpha = 0.7f),
-                style = MaterialTheme.typography.labelSmall
-            )
-
-            IconButton(onClick = onToggleTrash, modifier = Modifier.size(40.dp)) {
+            IconButton(onClick = onToggleTrash, modifier = Modifier.size(36.dp)) {
                 Icon(
                     imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
                     contentDescription = if (isTrashed) "Restore" else "Trash",
                     tint = Color.White,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }
 
-        Box(
+        ThinProgressSlider(
+            progress = sliderValue,
+            elapsed = formatDuration(
+                if (isUserSeeking) (userSeekPosition * currentDuration).toLong() else currentPosition
+            ),
+            remaining = {
+                val r = currentDuration - (
+                    if (isUserSeeking) (userSeekPosition * currentDuration).toLong() else currentPosition
+                )
+                if (r > 0) "-${formatDuration(r)}" else formatDuration(0L)
+            }(),
+            onProgressChange = onSeekChange,
+            onProgressChangeFinished = { onSeekConfirm(userSeekPosition) },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 44.dp)
-                .padding(bottom = 4.dp)
+                .height(24.dp)
+                .padding(horizontal = 4.dp)
+        )
+    }
+}
+
+@Composable
+private fun ThinProgressSlider(
+    progress: Float,
+    elapsed: String,
+    remaining: String,
+    onProgressChange: (Float) -> Unit,
+    onProgressChangeFinished: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(2.dp))
+            .pointerInput(Unit) {
+                detectTapGestures { offset ->
+                    onProgressChange((offset.x / size.width).coerceIn(0f, 1f))
+                    onProgressChangeFinished()
+                }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        onProgressChange((offset.x / size.width).coerceIn(0f, 1f))
+                    },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        onProgressChange((change.position.x / size.width).coerceIn(0f, 1f))
+                    },
+                    onDragEnd = { onProgressChangeFinished() },
+                    onDragCancel = { onProgressChangeFinished() }
+                )
+            }
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.White.copy(alpha = 0.3f))
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(progress)
+                .background(Color.White)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = fileName,
-                color = Color.White.copy(alpha = 0.6f),
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.align(Alignment.Center)
+                text = elapsed,
+                color = Color.Black.copy(alpha = 0.7f),
+                style = MaterialTheme.typography.labelSmall
+            )
+            Text(
+                text = remaining,
+                color = Color.White.copy(alpha = 0.7f),
+                style = MaterialTheme.typography.labelSmall
             )
         }
     }
@@ -595,6 +667,7 @@ private fun PlayerOverlayView(overlay: PlayerOverlay?) {
                     is PlayerOverlay.Previous -> Icons.Filled.SkipPrevious
                     is PlayerOverlay.Next -> Icons.Filled.SkipNext
                     is PlayerOverlay.TrashAction -> if (overlay.isIn) Icons.Filled.Delete else Icons.Outlined.DeleteOutline
+                    is PlayerOverlay.Orientation -> Icons.Filled.ScreenRotation
                 }
                 Icon(
                     imageVector = icon,
@@ -611,6 +684,7 @@ private fun PlayerOverlayView(overlay: PlayerOverlay?) {
                     is PlayerOverlay.Previous -> "PREVIOUS"
                     is PlayerOverlay.Next -> "NEXT"
                     is PlayerOverlay.TrashAction -> if (overlay.isIn) "IN" else "OUT"
+                    is PlayerOverlay.Orientation -> overlay.label
                 }
                 Text(
                     text = text,
