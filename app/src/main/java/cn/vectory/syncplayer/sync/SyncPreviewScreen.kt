@@ -293,6 +293,42 @@ fun SyncPreviewScreen(
                                 currentFileProgress = progress.currentFileProgress
                             )
                         }
+                        val currentItemsEmpty = if (syncMode == SyncMode.DOWNLOAD) {
+                            toDownload.isEmpty() && toDelete.isEmpty()
+                        } else {
+                            toDelete.isEmpty()
+                        }
+                        if (currentItemsEmpty && !isSyncing && !isDeleting) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                                )
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(36.dp)
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        text = "已同步，无需操作",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+                        }
                         if (syncMode == SyncMode.DOWNLOAD) {
                             if (toDownload.isNotEmpty() || toDelete.isNotEmpty()) {
                                 SyncDownloadSummaryCard(

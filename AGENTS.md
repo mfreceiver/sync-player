@@ -54,6 +54,13 @@ app/src/main/java/cn/vectory/syncplayer/
 - **Architecture**: MVVM + Repository, Hilt DI, StateFlow for ViewModel → UI
 - **Single Activity**: all screens are `@Composable`, navigated via Navigation Compose
 - **Player**: Media3 ExoPlayer, gesture controls (swipe seek/volume/brightness, long-press speed, double-tap actions)
+  - Top bar: filename row (exit/trash) + thumbless progress bar with inline time
+  - Bottom toolbar: speed/rewind/play-pause/forward/rotation (non-immersive only)
+  - Overlays: iOS-style icon+text pills (volume, brightness, speed, trash IN/OUT, previous/next, orientation)
+  - Orientation toggle: ROTATION (system direction) ↔ FULLSCREEN (video-matched direction), persists across videos, resets on exit
+  - Playback speed (1x/1.5x/2x): persists across videos, resets on exit
+  - System status bar always hidden in player
+  - `progressAlwaysVisible`: shows top bar in immersive mode without bottom toolbar
 - **Sync**: mirror sync (remote → local), dry-run first, foreground service
 - **Versioning**: bump versionCode + versionName in `app/build.gradle.kts` after every commit+push
 - **Commit style**: `feat:` / `fix:` prefix

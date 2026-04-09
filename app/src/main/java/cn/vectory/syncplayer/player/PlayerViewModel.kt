@@ -158,5 +158,6 @@ class PlayerViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         _playbackSpeed.value = 1.0f
+        _forcedOrientation.value = null
     }
 }

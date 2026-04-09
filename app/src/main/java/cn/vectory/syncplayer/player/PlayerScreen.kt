@@ -109,19 +109,12 @@ fun PlayerScreen(
     DisposableEffect(Unit) {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        insetsController.hide(WindowInsetsCompat.Type.systemBars())
         insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         onDispose {
             WindowCompat.setDecorFitsSystemWindows(window, true)
             val restoreController = WindowCompat.getInsetsController(window, window.decorView)
             restoreController.show(WindowInsetsCompat.Type.systemBars())
-        }
-    }
-    LaunchedEffect(showControls) {
-        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-        if (showControls) {
-            insetsController.show(WindowInsetsCompat.Type.systemBars())
-        } else {
-            insetsController.hide(WindowInsetsCompat.Type.systemBars())
         }
     }
 
@@ -205,7 +198,6 @@ fun PlayerScreen(
 
     fun switchToVideo(newId: Long) {
         viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
-        viewModel.resetForcedOrientation()
         currentVideoId = newId
         viewModel.loadVideo(newId)
         showControls = true
@@ -326,7 +318,6 @@ fun PlayerScreen(
                 currentDuration = currentDuration,
                 fileName = videoItem?.fileName ?: "",
                 isTrashed = playbackRecord?.isTrashed ?: false,
-                showStatusBar = showControls,
                 isUserSeeking = isUserSeeking,
                 userSeekPosition = userSeekPosition,
                 onSeekChange = { isUserSeeking = true; userSeekPosition = it },
@@ -342,55 +333,51 @@ fun PlayerScreen(
             )
         }
 
-        AnimatedVisibility(
-            visible = showControls,
-            enter = fadeIn(),
-            exit = fadeOut()
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
         ) {
-            BottomToolbar(
-                isPlaying = isPlaying,
-                playbackSpeed = playbackSpeed,
-                showSpeedMenu = showSpeedMenu,
-                onShowSpeedMenuChange = { showSpeedMenu = it },
-                onPlayPause = {
-                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                },
-                onRewind = { exoPlayer.seekTo((exoPlayer.currentPosition - 10_000).coerceAtLeast(0)) },
-                onForward = { exoPlayer.seekTo((exoPlayer.currentPosition + 10_000).coerceAtMost(exoPlayer.duration.coerceAtLeast(0))) },
-                onSpeedChange = { speed ->
-                    viewModel.setPlaybackSpeed(speed)
-                    exoPlayer.playbackParameters = PlaybackParameters(speed)
-                    showSpeedMenu = false
-                },
-                isForcedOrientation = forcedOrientation != null,
-                onRotation = {
-                    if (forcedOrientation != null) {
-                        viewModel.resetForcedOrientation()
-                        val item = videoItem
-                        if (item != null) {
-                            activity.requestedOrientation = viewModel.resolveOrientation(item.width, item.height)
-                        } else {
+            AnimatedVisibility(
+                visible = showControls,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                BottomToolbar(
+                    isPlaying = isPlaying,
+                    playbackSpeed = playbackSpeed,
+                    showSpeedMenu = showSpeedMenu,
+                    onShowSpeedMenuChange = { showSpeedMenu = it },
+                    onPlayPause = {
+                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                    },
+                    onRewind = { exoPlayer.seekTo((exoPlayer.currentPosition - 10_000).coerceAtLeast(0)) },
+                    onForward = { exoPlayer.seekTo((exoPlayer.currentPosition + 10_000).coerceAtMost(exoPlayer.duration.coerceAtLeast(0))) },
+                    onSpeedChange = { speed ->
+                        viewModel.setPlaybackSpeed(speed)
+                        exoPlayer.playbackParameters = PlaybackParameters(speed)
+                        showSpeedMenu = false
+                    },
+                    isForcedOrientation = forcedOrientation != null,
+                    onRotation = {
+                        if (forcedOrientation != null) {
+                            viewModel.resetForcedOrientation()
                             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                        }
-                        showOverlay(PlayerOverlay.Orientation("ROTATION"))
-                    } else {
-                        val current = activity.requestedOrientation
-                        val isPortrait = current == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                            || current == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                        val newOrientation = if (isPortrait) {
-                            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                            showOverlay(PlayerOverlay.Orientation("ROTATION"))
                         } else {
-                            ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                            val item = videoItem ?: return@BottomToolbar
+                            val orientation = if ((item.width ?: 0) >= (item.height ?: 0)) {
+                                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                            } else {
+                                ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                            }
+                            viewModel.setForcedOrientation(orientation)
+                            activity.requestedOrientation = orientation
+                            showOverlay(PlayerOverlay.Orientation("FULLSCREEN"))
                         }
-                        viewModel.setForcedOrientation(newOrientation)
-                        activity.requestedOrientation = newOrientation
-                        showOverlay(PlayerOverlay.Orientation("FULLSCREEN"))
                     }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-            )
+                )
+            }
         }
 
         PlayerOverlayView(currentOverlay)
@@ -403,7 +390,6 @@ private fun TopProgressBar(
     currentDuration: Long,
     fileName: String,
     isTrashed: Boolean,
-    showStatusBar: Boolean,
     isUserSeeking: Boolean,
     userSeekPosition: Float,
     onSeekChange: (Float) -> Unit,
@@ -423,16 +409,16 @@ private fun TopProgressBar(
     Column(
         modifier = modifier
             .background(Color.Black.copy(alpha = 0.5f))
-            .then(if (showStatusBar) Modifier.statusBarsPadding() else Modifier)
             .padding(horizontal = 12.dp)
             .padding(top = 8.dp, bottom = 8.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+        Box(
+            modifier = Modifier.fillMaxWidth()
         ) {
-            IconButton(onClick = onExit, modifier = Modifier.size(36.dp)) {
+            IconButton(
+                onClick = onExit,
+                modifier = Modifier.size(36.dp).align(Alignment.CenterStart)
+            ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "Exit",
@@ -448,11 +434,14 @@ private fun TopProgressBar(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 12.dp)
+                    .align(Alignment.Center)
+                    .padding(horizontal = 48.dp)
             )
 
-            IconButton(onClick = onToggleTrash, modifier = Modifier.size(36.dp)) {
+            IconButton(
+                onClick = onToggleTrash,
+                modifier = Modifier.size(36.dp).align(Alignment.CenterEnd)
+            ) {
                 Icon(
                     imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
                     contentDescription = if (isTrashed) "Restore" else "Trash",
@@ -467,12 +456,8 @@ private fun TopProgressBar(
             elapsed = formatDuration(
                 if (isUserSeeking) (userSeekPosition * currentDuration).toLong() else currentPosition
             ),
-            remaining = {
-                val r = currentDuration - (
-                    if (isUserSeeking) (userSeekPosition * currentDuration).toLong() else currentPosition
-                )
-                if (r > 0) "-${formatDuration(r)}" else formatDuration(0L)
-            }(),
+            totalDuration = formatDuration(currentDuration),
+            isUserSeeking = isUserSeeking,
             onProgressChange = onSeekChange,
             onProgressChangeFinished = { onSeekConfirm(userSeekPosition) },
             modifier = Modifier
@@ -487,7 +472,8 @@ private fun TopProgressBar(
 private fun ThinProgressSlider(
     progress: Float,
     elapsed: String,
-    remaining: String,
+    totalDuration: String,
+    isUserSeeking: Boolean,
     onProgressChange: (Float) -> Unit,
     onProgressChangeFinished: () -> Unit,
     modifier: Modifier = Modifier
@@ -534,15 +520,17 @@ private fun ThinProgressSlider(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = elapsed,
+                text = if (isUserSeeking) "$elapsed / $totalDuration" else elapsed,
                 color = Color.Black.copy(alpha = 0.7f),
                 style = MaterialTheme.typography.labelSmall
             )
-            Text(
-                text = remaining,
-                color = Color.White.copy(alpha = 0.7f),
-                style = MaterialTheme.typography.labelSmall
-            )
+            if (!isUserSeeking) {
+                Text(
+                    text = totalDuration,
+                    color = Color.White.copy(alpha = 0.7f),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
         }
     }
 }
@@ -667,7 +655,7 @@ private fun PlayerOverlayView(overlay: PlayerOverlay?) {
                     is PlayerOverlay.Previous -> Icons.Filled.SkipPrevious
                     is PlayerOverlay.Next -> Icons.Filled.SkipNext
                     is PlayerOverlay.TrashAction -> if (overlay.isIn) Icons.Filled.Delete else Icons.Outlined.DeleteOutline
-                    is PlayerOverlay.Orientation -> Icons.Filled.ScreenRotation
+                    is PlayerOverlay.Orientation -> if (overlay.label == "FULLSCREEN") Icons.Filled.Fullscreen else Icons.Filled.ScreenRotation
                 }
                 Icon(
                     imageVector = icon,

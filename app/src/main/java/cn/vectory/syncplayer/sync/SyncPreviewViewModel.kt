@@ -75,6 +75,7 @@ class SyncPreviewViewModel @Inject constructor(
 
     fun setSyncMode(mode: SyncMode) {
         _syncMode.value = mode
+        _syncComplete.value = false
     }
 
     fun loadPreview() {
