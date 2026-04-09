@@ -374,7 +374,7 @@ fun BrowserScreen(
                                     viewModel.setFolder(item.relativePath)
                                 },
                                 onLongClick = {
-                                    if (!item.isSyncBaseDir && !item.containsSyncBaseDir) {
+                                    if (!item.isSyncBaseDir && !item.containsSyncBaseDir && !item.isInSyncBaseDir) {
                                         showFolderContextMenu = item
                                     }
                                 }
@@ -454,7 +454,7 @@ fun BrowserScreen(
                                     viewModel.setFolder(item.relativePath)
                                 },
                                 onLongClick = {
-                                    if (!item.isSyncBaseDir && !item.containsSyncBaseDir) {
+                                    if (!item.isSyncBaseDir && !item.containsSyncBaseDir && !item.isInSyncBaseDir) {
                                         showFolderContextMenu = item
                                     }
                                 }
@@ -588,7 +588,7 @@ fun BrowserScreen(
             onDismissRequest = { showFolderContextMenu = null },
             title = { Text(item.name) },
             confirmButton = {
-                if (!item.isSyncBaseDir && !item.containsSyncBaseDir) {
+                if (!item.isSyncBaseDir && !item.containsSyncBaseDir && !item.isInSyncBaseDir) {
                     TextButton(
                         onClick = {
                             viewModel.deleteFolder(item.relativePath)

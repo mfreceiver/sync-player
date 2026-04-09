@@ -21,5 +21,6 @@ data class BrowseItem(
     val isCompleted: Boolean = false,
     val isTrashed: Boolean = false,
     val isSyncBaseDir: Boolean = false,
-    val containsSyncBaseDir: Boolean = false
+    val containsSyncBaseDir: Boolean = false,
+    val isInSyncBaseDir: Boolean = false
 )

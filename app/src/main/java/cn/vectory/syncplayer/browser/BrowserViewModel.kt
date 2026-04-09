@@ -140,7 +140,8 @@ class BrowserViewModel @Inject constructor(
                 relativePath = fullPath,
                 isDirectory = true,
                 isSyncBaseDir = baseDirSet.contains(fullPath),
-                containsSyncBaseDir = baseDirSet.any { it.startsWith("$fullPath/") }
+                containsSyncBaseDir = baseDirSet.any { it.startsWith("$fullPath/") },
+                isInSyncBaseDir = baseDirSet.any { fullPath.startsWith("$it/") }
             )
         }
 
@@ -256,6 +257,10 @@ class BrowserViewModel @Inject constructor(
             }
             if (hasDescendantBase) {
                 _error.value = "文件夹内包含同步基目录，请先删除对应的同步关系"
+                return@launch
+            }
+            if (isFileInBaseDir(path)) {
+                _error.value = "同步目录内的文件夹不能手动删除"
                 return@launch
             }
             if (!dir.exists() || !dir.isDirectory) {
