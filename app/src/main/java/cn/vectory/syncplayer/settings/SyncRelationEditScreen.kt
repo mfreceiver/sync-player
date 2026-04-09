@@ -1,6 +1,7 @@
 package cn.vectory.syncplayer.settings
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -91,12 +92,15 @@ fun SyncRelationEditScreen(
                     onValueChange = {},
                     label = { Text("数据源") },
                     readOnly = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { sourceExpanded = true },
                     trailingIcon = {
                         IconButton(onClick = { sourceExpanded = true }) {
                             Icon(Icons.Filled.ArrowDropDown, contentDescription = "展开")
                         }
-                    }
+                    },
+                    interactionSource = remember { MutableInteractionSource() }
                 )
                 DropdownMenu(expanded = sourceExpanded, onDismissRequest = { sourceExpanded = false }) {
                     sources.forEach { source ->

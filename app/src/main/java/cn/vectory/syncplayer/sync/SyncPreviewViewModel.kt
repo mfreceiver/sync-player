@@ -96,6 +96,10 @@ class SyncPreviewViewModel @Inject constructor(
                     val (downloads, deletes) = syncEngine.dryRun(relationId)
                     _toDownload.value = downloads
                     _toDelete.value = deletes
+                    val phase = syncEngine.progress.value.phase
+                    if (phase == SyncPhase.FAILED) {
+                        _error.value = "连接远程服务器失败，请检查网络连接和服务器配置"
+                    }
                 }
                 _previewLoaded.value = true
             } catch (e: Exception) {
@@ -134,6 +138,10 @@ class SyncPreviewViewModel @Inject constructor(
             if (result.phase == SyncPhase.COMPLETED) {
                 _toDownload.value = emptyList()
                 _toDelete.value = emptyList()
+            } else if (result.phase == SyncPhase.FAILED) {
+                _error.value = "同步失败，请检查网络连接后重试"
+            } else if (result.phase == SyncPhase.CANCELLED) {
+                _error.value = "同步已取消"
             }
         }
     }
@@ -144,6 +152,10 @@ class SyncPreviewViewModel @Inject constructor(
         }
         deleteJob?.cancel()
         deleteJob = null
+    }
+
+    fun clearError() {
+        _error.value = null
     }
 
     fun startDelete() {

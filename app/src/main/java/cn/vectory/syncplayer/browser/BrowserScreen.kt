@@ -5,14 +5,21 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
@@ -25,6 +32,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.VideoFile
+import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,8 +47,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.ui.components.FileStatusIcon
+import cn.vectory.syncplayer.ui.components.FolderGridItem
 import cn.vectory.syncplayer.ui.components.FolderIcon
 import cn.vectory.syncplayer.ui.components.Thumbnail
+import cn.vectory.syncplayer.ui.components.VideoGridItem
+import cn.vectory.syncplayer.ui.components.gridVerticalScrollbar
 import cn.vectory.syncplayer.ui.components.verticalScrollbar
 import cn.vectory.syncplayer.ui.util.buildMetadataLine
 import cn.vectory.syncplayer.ui.util.isVideoFile
@@ -67,6 +79,8 @@ fun BrowserScreen(
     val folder by viewModel.currentFolder.collectAsState()
     val error by viewModel.error.collectAsState()
     val currentRelationId by viewModel.currentRelationId.collectAsState()
+    val viewMode by viewModel.viewMode.collectAsState()
+    val gridColumns by viewModel.gridColumns.collectAsState()
 
     var showContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
     var showSortMenu by remember { mutableStateOf(false) }
@@ -223,7 +237,8 @@ fun BrowserScreen(
                             }
                             DropdownMenu(
                                 expanded = showSortMenu,
-                                onDismissRequest = { showSortMenu = false }
+                                onDismissRequest = { showSortMenu = false },
+                                modifier = Modifier.widthIn(max = 260.dp)
                             ) {
                                 Text(
                                     "排序",
@@ -265,90 +280,221 @@ fun BrowserScreen(
                                 DropdownMenuItem(
                                     text = { Text("全部") },
                                     onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.ALL); debugLogger.log("Click","Filter: ALL"); showSortMenu = false },
+                                    leadingIcon = { Icon(Icons.Default.FilterList, null, modifier = Modifier.size(18.dp)) },
                                     trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.ALL) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("仅视频") },
                                     onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.VIDEO_ONLY); debugLogger.log("Click","Filter: VIDEO_ONLY"); showSortMenu = false },
+                                    leadingIcon = { Icon(Icons.Default.VideoFile, null, modifier = Modifier.size(18.dp)) },
                                     trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.VIDEO_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("仅回收站") },
                                     onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.TRASHED_ONLY); debugLogger.log("Click","Filter: TRASHED_ONLY"); showSortMenu = false },
+                                    leadingIcon = { Icon(Icons.Default.Delete, null, modifier = Modifier.size(18.dp)) },
                                     trailingIcon = { if (filter == BrowserViewModel.BrowseFilter.TRASHED_ONLY) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
                                 )
+                                HorizontalDivider()
+                                Text(
+                                    "视图",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("列表") },
+                                    onClick = { viewModel.setViewMode(BrowserViewModel.ViewMode.LIST); showSortMenu = false },
+                                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.ViewList, null, modifier = Modifier.size(18.dp)) },
+                                    trailingIcon = { if (viewMode == BrowserViewModel.ViewMode.LIST) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("图标") },
+                                    onClick = { viewModel.setViewMode(BrowserViewModel.ViewMode.GRID); showSortMenu = false },
+                                    leadingIcon = { Icon(Icons.Default.Apps, null, modifier = Modifier.size(18.dp)) },
+                                    trailingIcon = { if (viewMode == BrowserViewModel.ViewMode.GRID) Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp)) }
+                                )
+                                if (viewMode == BrowserViewModel.ViewMode.GRID) {
+                                    HorizontalDivider()
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            "栏数",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            listOf(1, 2, 3, 4, 5).forEach { col ->
+                                                FilterChip(
+                                                    selected = gridColumns == col,
+                                                    onClick = { viewModel.setGridColumns(col) },
+                                                    label = { Text("$col") },
+                                                    modifier = Modifier.height(28.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 )
             }
         ) { paddingValues ->
-            val listState = rememberLazyListState()
-            LaunchedEffect(folder) { listState.scrollToItem(0) }
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-                    .verticalScrollbar(listState)
-            ) {
-                items(
-                    items = browseItems,
-                    key = { it.relativePath }
-                ) { item ->
-                    if (item.isDirectory) {
-                        FolderItem(
-                            item = item,
-                            onClick = {
-                                debugLogger.log("Click", "Open folder: ${item.relativePath}")
-                                viewModel.setFolder(item.relativePath)
-                            },
-                            onLongClick = { showFolderContextMenu = item }
-                        )
-                    } else {
-                        FileItem(
-                            item = item,
-                            onClick = {
-                                debugLogger.log("Click", "Open file: ${item.name}")
-                                if (isVideoFile(item.name)) {
-                                    onNavigateToPlayer(item.videoItemId!!, viewModel.getFolderVideoIds())
-                                } else {
-                                    scope.launch { snackbarHostState.showSnackbar("该文件无法播放") }
+            if (viewMode == BrowserViewModel.ViewMode.GRID) {
+                val gridState = rememberLazyGridState()
+                LaunchedEffect(folder) { gridState.scrollToItem(0) }
+                LazyVerticalGrid(
+                    columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(gridColumns),
+                    state = gridState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues)
+                        .gridVerticalScrollbar(gridState),
+                    contentPadding = PaddingValues(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(
+                        items = browseItems,
+                        key = { it.relativePath }
+                    ) { item ->
+                        if (item.isDirectory) {
+                            FolderGridItem(
+                                folderName = item.name,
+                                isSyncBaseDir = item.isSyncBaseDir,
+                                onClick = {
+                                    debugLogger.log("Click", "Open folder: ${item.relativePath}")
+                                    viewModel.setFolder(item.relativePath)
+                                },
+                                onLongClick = { showFolderContextMenu = item }
+                            )
+                        } else {
+                            VideoGridItem(
+                                thumbnailPath = item.thumbnailPath,
+                                fileName = item.name,
+                                duration = item.duration,
+                                width = item.width,
+                                height = item.height,
+                                playbackPosition = item.playbackPosition,
+                                playbackDuration = item.playbackDuration,
+                                isCompleted = item.isCompleted,
+                                isTrashed = item.isTrashed,
+                                isVideo = isVideoFile(item.name),
+                                onClick = {
+                                    debugLogger.log("Click", "Open file: ${item.name}")
+                                    if (isVideoFile(item.name)) {
+                                        onNavigateToPlayer(item.videoItemId!!, viewModel.getFolderVideoIds())
+                                    } else {
+                                        scope.launch { snackbarHostState.showSnackbar("该文件无法播放") }
+                                    }
+                                },
+                                onLongClick = { showContextMenu = item }
+                            )
+                        }
+                    }
+
+                    if (browseItems.isEmpty()) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(200.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.FolderOpen,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                        modifier = Modifier.size(48.dp)
+                                    )
+                                    Text(
+                                        text = "当前目录为空",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
-                            },
-                            onLongClick = { showContextMenu = item }
+                            }
+                        }
+                    }
+                }
+            } else {
+                val listState = rememberLazyListState()
+                LaunchedEffect(folder) { listState.scrollToItem(0) }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues)
+                        .verticalScrollbar(listState)
+                ) {
+                    items(
+                        items = browseItems,
+                        key = { it.relativePath }
+                    ) { item ->
+                        if (item.isDirectory) {
+                            FolderItem(
+                                item = item,
+                                onClick = {
+                                    debugLogger.log("Click", "Open folder: ${item.relativePath}")
+                                    viewModel.setFolder(item.relativePath)
+                                },
+                                onLongClick = { showFolderContextMenu = item }
+                            )
+                        } else {
+                            FileItem(
+                                item = item,
+                                onClick = {
+                                    debugLogger.log("Click", "Open file: ${item.name}")
+                                    if (isVideoFile(item.name)) {
+                                        onNavigateToPlayer(item.videoItemId!!, viewModel.getFolderVideoIds())
+                                    } else {
+                                        scope.launch { snackbarHostState.showSnackbar("该文件无法播放") }
+                                    }
+                                },
+                                onLongClick = { showContextMenu = item }
+                            )
+                        }
+                        HorizontalDivider(
+                            modifier = Modifier.padding(start = 72.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
                         )
                     }
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = 72.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                    )
-                }
 
-                if (browseItems.isEmpty()) {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .fillParentMaxHeight()
-                                .padding(vertical = 64.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    if (browseItems.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .fillParentMaxHeight()
+                                    .padding(vertical = 64.dp),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.FolderOpen,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                    modifier = Modifier.size(48.dp)
-                                )
-                                Text(
-                                    text = "当前目录为空",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.FolderOpen,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                        modifier = Modifier.size(48.dp)
+                                    )
+                                    Text(
+                                        text = "当前目录为空",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
                     }

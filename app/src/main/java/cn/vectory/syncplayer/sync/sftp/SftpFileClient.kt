@@ -7,6 +7,7 @@ import cn.vectory.syncplayer.data.model.RemoteFile
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.sync.RemoteFileClient
 import cn.vectory.syncplayer.sync.mapNetworkErrorMessage
+import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
@@ -15,7 +16,11 @@ import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import net.schmizz.sshj.userauth.UserAuthException
 import java.io.File
 import java.io.FileOutputStream
-class SftpFileClient(private val context: Context) : RemoteFileClient {
+
+class SftpFileClient(
+    private val context: Context,
+    private val userPrefs: UserPreferencesRepository
+) : RemoteFileClient {
     private var sshClient: SSHClient? = null
     private var sftpClient: SFTPClient? = null
     private var remoteBasePath: String = ""
@@ -43,6 +48,9 @@ class SftpFileClient(private val context: Context) : RemoteFileClient {
         try {
             val client = SSHClient()
             client.addHostKeyVerifier(PromiscuousVerifier())
+            val timeoutMs = userPrefs.getConnectionTimeout() * 1000
+            client.setConnectTimeout(timeoutMs)
+            client.setTimeout(timeoutMs)
             client.connect(source.host, source.port)
             client.authPassword(source.username, source.password)
             sshClient = client

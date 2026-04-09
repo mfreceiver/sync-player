@@ -1,6 +1,8 @@
 package cn.vectory.syncplayer.settings
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Schedule
@@ -26,6 +28,9 @@ fun PlaybackSettingsScreen(
     val defaultSortMode by viewModel.defaultSortMode.collectAsStateWithLifecycle()
     val defaultFilter by viewModel.defaultFilter.collectAsStateWithLifecycle()
     val maxConcurrentDownloads by viewModel.maxConcurrentDownloads.collectAsStateWithLifecycle()
+    val connectionTimeout by viewModel.connectionTimeout.collectAsStateWithLifecycle()
+    val viewMode by viewModel.viewMode.collectAsStateWithLifecycle()
+    val gridColumns by viewModel.gridColumns.collectAsStateWithLifecycle()
     var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -52,7 +57,8 @@ fun PlaybackSettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp, vertical = 16.dp),
+                .padding(horizontal = 16.dp, vertical = 16.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -126,12 +132,6 @@ fun PlaybackSettingsScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("并发下载数", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "同时下载的文件数量，增大可提升同步速度",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                     Spacer(Modifier.height(12.dp))
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(1, 2, 3).forEach { count ->
@@ -140,6 +140,52 @@ fun PlaybackSettingsScreen(
                                 onClick = { viewModel.setMaxConcurrentDownloads(count) },
                                 label = { Text("$count 个", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             )
+                        }
+                    }
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("连接超时", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(12.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(3, 5, 10, 15, 30).forEach { seconds ->
+                            FilterChip(
+                                selected = connectionTimeout == seconds,
+                                onClick = { viewModel.setConnectionTimeout(seconds) },
+                                label = { Text("${seconds}s", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("默认视图", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(12.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        BrowserViewModel.ViewMode.entries.forEach { mode ->
+                            FilterChip(
+                                selected = viewMode == mode,
+                                onClick = { viewModel.setViewMode(mode) },
+                                label = { Text(viewModeLabel(mode), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            )
+                        }
+                    }
+                    if (viewMode == BrowserViewModel.ViewMode.GRID) {
+                        Spacer(Modifier.height(12.dp))
+                        Text("网格列数", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(8.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(2, 3, 4, 5).forEach { col ->
+                                FilterChip(
+                                    selected = gridColumns == col,
+                                    onClick = { viewModel.setGridColumns(col) },
+                                    label = { Text("$col 列", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                                )
+                            }
                         }
                     }
                 }
@@ -164,4 +210,9 @@ private fun filterLabel(filter: BrowserViewModel.BrowseFilter): String = when (f
     BrowserViewModel.BrowseFilter.ALL -> "全部"
     BrowserViewModel.BrowseFilter.VIDEO_ONLY -> "仅视频"
     BrowserViewModel.BrowseFilter.TRASHED_ONLY -> "仅回收站"
+}
+
+private fun viewModeLabel(mode: BrowserViewModel.ViewMode): String = when (mode) {
+    BrowserViewModel.ViewMode.LIST -> "列表"
+    BrowserViewModel.ViewMode.GRID -> "网格"
 }

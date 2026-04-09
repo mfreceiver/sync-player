@@ -38,6 +38,7 @@ class BrowserViewModel @Inject constructor(
 
     enum class SortMode { FILENAME_ASC, FILENAME_DESC, DURATION_ASC, DURATION_DESC }
     enum class BrowseFilter { ALL, VIDEO_ONLY, TRASHED_ONLY }
+    enum class ViewMode { LIST, GRID }
 
     private val _currentFolder = MutableStateFlow("")
     val currentFolder: StateFlow<String> = _currentFolder.asStateFlow()
@@ -47,6 +48,12 @@ class BrowserViewModel @Inject constructor(
 
     private val _filter = MutableStateFlow(BrowseFilter.ALL)
     val filter: StateFlow<BrowseFilter> = _filter.asStateFlow()
+
+    private val _viewMode = MutableStateFlow(ViewMode.LIST)
+    val viewMode: StateFlow<ViewMode> = _viewMode.asStateFlow()
+
+    private val _gridColumns = MutableStateFlow(3)
+    val gridColumns: StateFlow<Int> = _gridColumns.asStateFlow()
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
@@ -67,6 +74,12 @@ class BrowserViewModel @Inject constructor(
             } catch (_: Exception) {
                 BrowseFilter.ALL
             }
+            _viewMode.value = try {
+                ViewMode.valueOf(userPrefs.getViewMode())
+            } catch (_: Exception) {
+                ViewMode.LIST
+            }
+            _gridColumns.value = userPrefs.getGridColumns()
         }
     }
 
@@ -194,6 +207,16 @@ class BrowserViewModel @Inject constructor(
 
     fun setFilter(filter: BrowseFilter) {
         _filter.value = filter
+    }
+
+    fun setViewMode(mode: ViewMode) {
+        _viewMode.value = mode
+        viewModelScope.launch { userPrefs.setViewMode(mode.name) }
+    }
+
+    fun setGridColumns(columns: Int) {
+        _gridColumns.value = columns.coerceIn(1, 5)
+        viewModelScope.launch { userPrefs.setGridColumns(columns) }
     }
 
     fun createFolder(parentPath: String, folderName: String) {

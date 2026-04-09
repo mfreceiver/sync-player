@@ -217,6 +217,37 @@ fun SyncPreviewScreen(
                         .fillMaxSize()
                         .padding(paddingValues)
                 ) {
+                    if (error != null && (isSyncing || isDeleting || syncComplete)) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Error,
+                                    contentDescription = "错误",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                                Text(
+                                    text = error!!,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(onClick = { viewModel.clearError() }) {
+                                    Text("关闭")
+                                }
+                            }
+                        }
+                    }
                     if (syncComplete) {
                         Card(
                             modifier = Modifier

@@ -7,6 +7,7 @@ import cn.vectory.syncplayer.data.model.RemoteFile
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.sync.RemoteFileClient
 import cn.vectory.syncplayer.sync.mapNetworkErrorMessage
+import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import jcifs.context.BaseContext
 import jcifs.smb.NtlmPasswordAuthenticator
 import jcifs.smb.SmbAuthException
@@ -18,7 +19,10 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.Properties
 
-class SmbFileClient(private val context: Context) : RemoteFileClient {
+class SmbFileClient(
+    private val context: Context,
+    private val userPrefs: UserPreferencesRepository
+) : RemoteFileClient {
 
     private fun checkNetwork() {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -63,8 +67,9 @@ class SmbFileClient(private val context: Context) : RemoteFileClient {
             val props = Properties()
             props.setProperty("jcifs.smb.client.minVersion", "SMB202")
             props.setProperty("jcifs.smb.client.maxVersion", "SMB311")
-            props.setProperty("jcifs.smb.client.responseTimeout", "30000")
-            props.setProperty("jcifs.smb.client.soTimeout", "30000")
+            val timeoutMs = (userPrefs.getConnectionTimeout() * 1000).toString()
+            props.setProperty("jcifs.smb.client.responseTimeout", timeoutMs)
+            props.setProperty("jcifs.smb.client.soTimeout", timeoutMs)
             val bc = BaseContext(jcifs.config.PropertyConfiguration(props))
             val authenticator = NtlmPasswordAuthenticator(null, source.username, source.password)
             cifsContext = bc.withCredentials(authenticator)

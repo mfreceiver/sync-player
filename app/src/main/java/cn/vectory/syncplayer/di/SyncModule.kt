@@ -1,6 +1,7 @@
 package cn.vectory.syncplayer.di
 
 import android.content.Context
+import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.sync.RemoteFileClient
 import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
@@ -17,13 +18,19 @@ object SyncModule {
 
     @Provides
     @Singleton
-    fun provideSmbClient(@ApplicationContext context: Context): SmbFileClient {
-        return SmbFileClient(context)
+    fun provideSmbClient(
+        @ApplicationContext context: Context,
+        userPrefs: UserPreferencesRepository
+    ): SmbFileClient {
+        return SmbFileClient(context, userPrefs)
     }
 
     @Provides
     @Singleton
-    fun provideSftpClient(@ApplicationContext context: Context): SftpFileClient {
-        return SftpFileClient(context)
+    fun provideSftpClient(
+        @ApplicationContext context: Context,
+        userPrefs: UserPreferencesRepository
+    ): SftpFileClient {
+        return SftpFileClient(context, userPrefs)
     }
 }

@@ -36,6 +36,15 @@ class SettingsViewModel @Inject constructor(
     private val _maxConcurrentDownloads = MutableStateFlow(1)
     val maxConcurrentDownloads: StateFlow<Int> = _maxConcurrentDownloads.asStateFlow()
 
+    private val _connectionTimeout = MutableStateFlow(5)
+    val connectionTimeout: StateFlow<Int> = _connectionTimeout.asStateFlow()
+
+    private val _viewMode = MutableStateFlow(BrowserViewModel.ViewMode.LIST)
+    val viewMode: StateFlow<BrowserViewModel.ViewMode> = _viewMode.asStateFlow()
+
+    private val _gridColumns = MutableStateFlow(3)
+    val gridColumns: StateFlow<Int> = _gridColumns.asStateFlow()
+
     val debugMode: StateFlow<Boolean> = debugLogger.enabled
     private val _previousSessionSummary = MutableStateFlow(debugLogger.getPreviousSessionSummary())
     val previousSessionSummary: StateFlow<String> = _previousSessionSummary.asStateFlow()
@@ -63,6 +72,13 @@ class SettingsViewModel @Inject constructor(
                 BrowserViewModel.BrowseFilter.ALL
             }
             _maxConcurrentDownloads.value = userPrefs.getMaxConcurrentDownloads()
+            _connectionTimeout.value = userPrefs.getConnectionTimeout()
+            _viewMode.value = try {
+                BrowserViewModel.ViewMode.valueOf(userPrefs.getViewMode())
+            } catch (_: Exception) {
+                BrowserViewModel.ViewMode.LIST
+            }
+            _gridColumns.value = userPrefs.getGridColumns()
         }
     }
 
@@ -89,6 +105,21 @@ class SettingsViewModel @Inject constructor(
     fun setMaxConcurrentDownloads(max: Int) {
         _maxConcurrentDownloads.value = max
         viewModelScope.launch { userPrefs.setMaxConcurrentDownloads(max) }
+    }
+
+    fun setConnectionTimeout(timeoutSeconds: Int) {
+        _connectionTimeout.value = timeoutSeconds
+        viewModelScope.launch { userPrefs.setConnectionTimeout(timeoutSeconds) }
+    }
+
+    fun setViewMode(mode: BrowserViewModel.ViewMode) {
+        _viewMode.value = mode
+        viewModelScope.launch { userPrefs.setViewMode(mode.name) }
+    }
+
+    fun setGridColumns(columns: Int) {
+        _gridColumns.value = columns.coerceIn(1, 5)
+        viewModelScope.launch { userPrefs.setGridColumns(columns) }
     }
 
     fun clearLogs() {
