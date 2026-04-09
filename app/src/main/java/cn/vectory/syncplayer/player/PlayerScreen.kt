@@ -8,8 +8,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -484,23 +483,25 @@ private fun ThinProgressSlider(
         modifier = modifier
             .clip(RoundedCornerShape(2.dp))
             .pointerInput(Unit) {
-                detectTapGestures { offset ->
-                    onProgressChange((offset.x / size.width).coerceIn(0f, 1f))
-                    onProgressChangeFinished()
+                awaitPointerEventScope {
+                    while (true) {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val startPos = down.position
+                        onProgressChange((startPos.x / size.width).coerceIn(0f, 1f))
+                        down.consume()
+
+                        var dragSucceeded = false
+                        do {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.first()
+                            change.consume()
+                            onProgressChange((change.position.x / size.width).coerceIn(0f, 1f))
+                            dragSucceeded = true
+                        } while (change.pressed)
+
+                        onProgressChangeFinished()
+                    }
                 }
-            }
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDragStart = { offset ->
-                        onProgressChange((offset.x / size.width).coerceIn(0f, 1f))
-                    },
-                    onDrag = { change, _ ->
-                        change.consume()
-                        onProgressChange((change.position.x / size.width).coerceIn(0f, 1f))
-                    },
-                    onDragEnd = { onProgressChangeFinished() },
-                    onDragCancel = { onProgressChangeFinished() }
-                )
             }
     ) {
         Box(
