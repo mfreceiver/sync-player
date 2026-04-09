@@ -1,14 +1,13 @@
 package cn.vectory.syncplayer.ui.components
 
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
@@ -23,25 +22,28 @@ import kotlinx.coroutines.delay
 fun Modifier.gridVerticalScrollbar(
     state: LazyGridState,
     width: Dp = 4.dp,
-    color: Color = Color.White.copy(alpha = 0.4f)
+    color: Color = Color(0xFFBB86FC)
 ): Modifier {
     val isScrollable by remember {
         derivedStateOf {
             state.layoutInfo.visibleItemsInfo.size < state.layoutInfo.totalItemsCount
         }
     }
+    val isScrolling by remember { derivedStateOf { state.isScrollInProgress } }
 
-    val alpha = remember { Animatable(0f) }
+    var scrollbarAlpha by remember { mutableFloatStateOf(0f) }
 
-    LaunchedEffect(isScrollable) {
-        snapshotFlow { state.isScrollInProgress }.collect { scrolling ->
-            if (scrolling && isScrollable) {
-                alpha.snapTo(1f)
-            } else {
-                delay(800)
-                if (!state.isScrollInProgress) {
-                    alpha.animateTo(0f, animationSpec = tween(300))
+    LaunchedEffect(isScrolling) {
+        if (isScrolling && isScrollable) {
+            scrollbarAlpha = 1f
+        } else {
+            delay(800)
+            if (!state.isScrollInProgress) {
+                repeat(10) { i ->
+                    scrollbarAlpha = 1f - (i + 1) / 10f
+                    delay(30)
                 }
+                scrollbarAlpha = 0f
             }
         }
     }
@@ -68,15 +70,14 @@ fun Modifier.gridVerticalScrollbar(
 
     return this.drawWithContent {
         drawContent()
-        val a = alpha.value
-        if (a > 0.01f && thumbInfo.size > 0f) {
+        if (scrollbarAlpha > 0.01f && thumbInfo.size > 0f) {
             val w = width.toPx()
             drawRoundRect(
                 color = color,
                 topLeft = Offset(this.size.width - w - 2f, thumbInfo.offset),
                 size = Size(w, thumbInfo.size),
                 cornerRadius = CornerRadius(w / 2f),
-                alpha = a * 0.5f
+                alpha = scrollbarAlpha * 0.7f
             )
         }
     }
