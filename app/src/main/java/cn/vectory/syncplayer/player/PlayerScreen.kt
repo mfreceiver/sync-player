@@ -56,6 +56,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
+import kotlin.math.abs
 import kotlin.math.pow
 
 private sealed class PlayerOverlay {
@@ -97,6 +98,7 @@ fun PlayerScreen(
 
     var isGestureSeeking by remember { mutableStateOf(false) }
     var gestureSeekPosition by remember { mutableFloatStateOf(0f) }
+    var seekTarget by remember { mutableLongStateOf(-1L) }
 
     fun showOverlay(overlay: PlayerOverlay) {
         currentOverlay = overlay
@@ -169,10 +171,19 @@ fun PlayerScreen(
     }
     LaunchedEffect(exoPlayer) {
         while (true) {
-            gestureView.videoDuration = exoPlayer.duration.coerceAtLeast(0)
-            gestureView.currentPosition = exoPlayer.currentPosition.coerceAtLeast(0)
-            currentPosition = exoPlayer.currentPosition.coerceAtLeast(0)
-            currentDuration = exoPlayer.duration.coerceAtLeast(0)
+            val playerPos = exoPlayer.currentPosition.coerceAtLeast(0)
+            val playerDur = exoPlayer.duration.coerceAtLeast(0)
+            gestureView.videoDuration = playerDur
+            gestureView.currentPosition = playerPos
+            currentDuration = playerDur
+            if (seekTarget >= 0) {
+                if (abs(playerPos - seekTarget) < 500) {
+                    seekTarget = -1L
+                    currentPosition = playerPos
+                }
+            } else {
+                currentPosition = playerPos
+            }
             delay(200L)
         }
     }
@@ -241,8 +252,10 @@ fun PlayerScreen(
         }
         override fun onSeekTo(offsetMs: Long) {
             val newPos = (exoPlayer.currentPosition + offsetMs).coerceIn(0, exoPlayer.duration.coerceAtLeast(0))
-            exoPlayer.seekTo(newPos)
+            seekTarget = newPos
+            currentPosition = newPos
             isGestureSeeking = false
+            exoPlayer.seekTo(newPos)
         }
         override fun onVolumeGestureStart() {
             val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
@@ -301,7 +314,6 @@ fun PlayerScreen(
         override fun onHideOverlay() {
             overlayHideJob.value?.cancel()
             currentOverlay = null
-            isGestureSeeking = false
         }
     }
 
@@ -333,7 +345,10 @@ fun PlayerScreen(
                 gestureSeekPosition = gestureSeekPosition,
                 onSeekChange = { isUserSeeking = true; userSeekPosition = it },
                 onSeekConfirm = {
-                    exoPlayer.seekTo((it * currentDuration).toLong())
+                    val target = (it * currentDuration).toLong()
+                    seekTarget = target
+                    currentPosition = target
+                    exoPlayer.seekTo(target)
                     isUserSeeking = false
                 },
                 onExit = { doExit() },
