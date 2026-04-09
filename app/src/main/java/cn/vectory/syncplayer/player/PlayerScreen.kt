@@ -151,13 +151,14 @@ fun PlayerScreen(
                 exoPlayer.seekTo(savedPos)
             }
         }
-        val orientation = viewModel.resolveOrientation(item.width, item.height)
-        activity.requestedOrientation = orientation
     }
-    val forcedOrientation by viewModel.forcedOrientation.collectAsStateWithLifecycle()
-    LaunchedEffect(forcedOrientation) {
-        forcedOrientation?.let {
-            activity.requestedOrientation = it
+    val isFullscreen by viewModel.isFullscreen.collectAsStateWithLifecycle()
+    LaunchedEffect(isFullscreen, videoItem) {
+        val item = videoItem
+        activity.requestedOrientation = if (item != null) {
+            viewModel.resolveOrientation(item.width, item.height)
+        } else {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
     LaunchedEffect(currentGainDb) {
@@ -351,6 +352,20 @@ fun PlayerScreen(
                     onPlayPause = {
                         if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                     },
+                    onPrev = {
+                        val prevId = viewModel.getPrevVideoId()
+                        if (prevId != null) {
+                            showOverlay(PlayerOverlay.Previous)
+                            switchToVideo(prevId)
+                        }
+                    },
+                    onNext = {
+                        val nextId = viewModel.getNextVideoId()
+                        if (nextId != null) {
+                            showOverlay(PlayerOverlay.Next)
+                            switchToVideo(nextId)
+                        }
+                    },
                     onRewind = { exoPlayer.seekTo((exoPlayer.currentPosition - 10_000).coerceAtLeast(0)) },
                     onForward = { exoPlayer.seekTo((exoPlayer.currentPosition + 10_000).coerceAtMost(exoPlayer.duration.coerceAtLeast(0))) },
                     onSpeedChange = { speed ->
@@ -358,23 +373,10 @@ fun PlayerScreen(
                         exoPlayer.playbackParameters = PlaybackParameters(speed)
                         showSpeedMenu = false
                     },
-                    isForcedOrientation = forcedOrientation != null,
+                    isFullscreen = isFullscreen,
                     onRotation = {
-                        if (forcedOrientation != null) {
-                            viewModel.resetForcedOrientation()
-                            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                            showOverlay(PlayerOverlay.Orientation("ROTATION"))
-                        } else {
-                            val item = videoItem ?: return@BottomToolbar
-                            val orientation = if ((item.width ?: 0) >= (item.height ?: 0)) {
-                                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                            } else {
-                                ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                            }
-                            viewModel.setForcedOrientation(orientation)
-                            activity.requestedOrientation = orientation
-                            showOverlay(PlayerOverlay.Orientation("FULLSCREEN"))
-                        }
+                        viewModel.toggleFullscreen()
+                        showOverlay(PlayerOverlay.Orientation(if (isFullscreen) "ROTATION" else "FULLSCREEN"))
                     }
                 )
             }
@@ -542,10 +544,12 @@ private fun BottomToolbar(
     showSpeedMenu: Boolean,
     onShowSpeedMenuChange: (Boolean) -> Unit,
     onPlayPause: () -> Unit,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
     onRewind: () -> Unit,
     onForward: () -> Unit,
     onSpeedChange: (Float) -> Unit,
-    isForcedOrientation: Boolean,
+    isFullscreen: Boolean,
     onRotation: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -555,7 +559,7 @@ private fun BottomToolbar(
                 .fillMaxWidth()
                 .background(Color.Black.copy(alpha = 0.5f))
                 .navigationBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = 8.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -590,6 +594,15 @@ private fun BottomToolbar(
                 }
             }
 
+            IconButton(onClick = onPrev) {
+                Icon(
+                    imageVector = Icons.Filled.SkipPrevious,
+                    contentDescription = "Previous",
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+
             IconButton(onClick = onRewind) {
                 Icon(
                     imageVector = Icons.Filled.FastRewind,
@@ -617,10 +630,19 @@ private fun BottomToolbar(
                 )
             }
 
+            IconButton(onClick = onNext) {
+                Icon(
+                    imageVector = Icons.Filled.SkipNext,
+                    contentDescription = "Next",
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+
             IconButton(onClick = onRotation) {
                 Icon(
-                    imageVector = if (isForcedOrientation) Icons.Filled.Fullscreen else Icons.Filled.ScreenRotation,
-                    contentDescription = if (isForcedOrientation) "Fullscreen" else "Rotation",
+                    imageVector = if (isFullscreen) Icons.Filled.Fullscreen else Icons.Filled.ScreenRotation,
+                    contentDescription = if (isFullscreen) "Fullscreen" else "Rotation",
                     tint = Color.White,
                     modifier = Modifier.size(22.dp)
                 )

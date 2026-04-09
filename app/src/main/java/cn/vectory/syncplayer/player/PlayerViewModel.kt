@@ -6,7 +6,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
-import cn.vectory.syncplayer.data.model.OrientationPreference
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
@@ -30,10 +29,8 @@ class PlayerViewModel @Inject constructor(
     val playbackRecord: StateFlow<PlaybackRecordEntity?> = _playbackRecord.asStateFlow()
     private val _speedMultiplier = MutableStateFlow(2.0f)
     val speedMultiplier: StateFlow<Float> = _speedMultiplier.asStateFlow()
-    private val _orientationPreference = MutableStateFlow(OrientationPreference.FOLLOW_VIDEO)
-    val orientationPreference: StateFlow<OrientationPreference> = _orientationPreference.asStateFlow()
-    private val _forcedOrientation = MutableStateFlow<Int?>(null)
-    val forcedOrientation: StateFlow<Int?> = _forcedOrientation.asStateFlow()
+    private val _isFullscreen = MutableStateFlow(false)
+    val isFullscreen: StateFlow<Boolean> = _isFullscreen.asStateFlow()
     private val _allVideoIds = MutableStateFlow<List<Long>>(emptyList())
     val allVideoIds: StateFlow<List<Long>> = _allVideoIds.asStateFlow()
 
@@ -57,12 +54,6 @@ class PlayerViewModel @Inject constructor(
             _speedMultiplier.value = userPrefs.getLongPressSpeed()
             _progressAlwaysVisible.value = userPrefs.getProgressAlwaysVisible()
             _volumeBalance.value = userPrefs.getVolumeBalance()
-            val prefStr = userPrefs.getOrientation()
-            _orientationPreference.value = try {
-                OrientationPreference.valueOf(prefStr ?: OrientationPreference.FOLLOW_VIDEO.name)
-            } catch (_: Exception) {
-                OrientationPreference.FOLLOW_VIDEO
-            }
         }
     }
 
@@ -113,28 +104,17 @@ class PlayerViewModel @Inject constructor(
 
     fun getVideoFilePath(): String? = _videoItem.value?.localAbsolutePath
 
-    fun setForcedOrientation(orientation: Int) {
-        _forcedOrientation.value = orientation
-    }
-
-    fun resetForcedOrientation() {
-        _forcedOrientation.value = null
+    fun toggleFullscreen() {
+        _isFullscreen.value = !_isFullscreen.value
     }
 
     fun resolveOrientation(videoWidth: Int?, videoHeight: Int?): Int {
-        val forced = _forcedOrientation.value
-        if (forced != null) return forced
-        val pref = _orientationPreference.value
-        return if (pref == OrientationPreference.FOLLOW_VIDEO) {
-            if (videoWidth != null && videoHeight != null && videoWidth > 0 && videoHeight > 0) {
-                if (videoWidth >= videoHeight) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                else ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-            } else {
-                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            }
-        } else {
-            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        if (!_isFullscreen.value) return ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        if (videoWidth != null && videoHeight != null && videoWidth > 0 && videoHeight > 0) {
+            return if (videoWidth >= videoHeight) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            else ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
         }
+        return ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
     fun getPrevVideoId(): Long? {
@@ -158,6 +138,6 @@ class PlayerViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         _playbackSpeed.value = 1.0f
-        _forcedOrientation.value = null
+        _isFullscreen.value = false
     }
 }

@@ -3,7 +3,6 @@ package cn.vectory.syncplayer.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.browser.BrowserViewModel
-import cn.vectory.syncplayer.data.model.OrientationPreference
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
@@ -23,9 +22,6 @@ class SettingsViewModel @Inject constructor(
 
     private val _longPressSpeed = MutableStateFlow(2.0f)
     val longPressSpeed: StateFlow<Float> = _longPressSpeed.asStateFlow()
-
-    private val _orientationPreference = MutableStateFlow(OrientationPreference.FOLLOW_VIDEO)
-    val orientationPreference: StateFlow<OrientationPreference> = _orientationPreference.asStateFlow()
 
     private val _defaultSortMode = MutableStateFlow(BrowserViewModel.SortMode.FILENAME_ASC)
     val defaultSortMode: StateFlow<BrowserViewModel.SortMode> = _defaultSortMode.asStateFlow()
@@ -64,12 +60,6 @@ class SettingsViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             _longPressSpeed.value = userPrefs.getLongPressSpeed()
-            val orientStr = userPrefs.getOrientation()
-            _orientationPreference.value = try {
-                OrientationPreference.valueOf(orientStr ?: OrientationPreference.FOLLOW_VIDEO.name)
-            } catch (_: Exception) {
-                OrientationPreference.FOLLOW_VIDEO
-            }
             _defaultSortMode.value = try {
                 BrowserViewModel.SortMode.valueOf(userPrefs.getDefaultSortMode())
             } catch (_: Exception) {
@@ -97,11 +87,6 @@ class SettingsViewModel @Inject constructor(
     fun setLongPressSpeed(speed: Float) {
         _longPressSpeed.value = speed
         viewModelScope.launch { userPrefs.setLongPressSpeed(speed) }
-    }
-
-    fun setOrientationPreference(pref: OrientationPreference) {
-        _orientationPreference.value = pref
-        viewModelScope.launch { userPrefs.setOrientation(pref.name) }
     }
 
     fun setDefaultSortMode(mode: BrowserViewModel.SortMode) {

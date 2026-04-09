@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.browser.BrowserViewModel
-import cn.vectory.syncplayer.data.model.OrientationPreference
+import androidx.hilt.navigation.compose.hiltViewModel
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -25,7 +25,6 @@ fun PlaybackSettingsScreen(
     onNavigateBack: () -> Unit
 ) {
     val longPressSpeed by viewModel.longPressSpeed.collectAsStateWithLifecycle()
-    val orientationPreference by viewModel.orientationPreference.collectAsStateWithLifecycle()
     val defaultSortMode by viewModel.defaultSortMode.collectAsStateWithLifecycle()
     val defaultFilter by viewModel.defaultFilter.collectAsStateWithLifecycle()
     val maxConcurrentDownloads by viewModel.maxConcurrentDownloads.collectAsStateWithLifecycle()
@@ -77,25 +76,6 @@ fun PlaybackSettingsScreen(
                                 label = { Text("${speed}x", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             )
                         }
-                    }
-                }
-            }
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("播放方向", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(12.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = orientationPreference == OrientationPreference.FOLLOW_VIDEO,
-                            onClick = { viewModel.setOrientationPreference(OrientationPreference.FOLLOW_VIDEO) },
-                            label = { Text("按照视频方向", maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                        )
-                        FilterChip(
-                            selected = orientationPreference == OrientationPreference.FOLLOW_SYSTEM,
-                            onClick = { viewModel.setOrientationPreference(OrientationPreference.FOLLOW_SYSTEM) },
-                            label = { Text("按照系统方向", maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                        )
                     }
                 }
             }
