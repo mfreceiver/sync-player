@@ -11,6 +11,7 @@ import kotlin.math.sqrt
 private const val TARGET_RMS_DB = -18f
 private const val MAX_GAIN_DB = 6f
 private const val MIN_GAIN_DB = -6f
+private const val ANALYSIS_DURATION_US = 60_000_000L
 
 data class AudioGainResult(
     val rmsDb: Float,
@@ -90,7 +91,7 @@ class AudioGainAnalyzer @Inject constructor() {
                     if (inputIndex >= 0) {
                         val buf = codec.getInputBuffer(inputIndex) ?: break
                         val size = extractor.readSampleData(buf, 0)
-                        if (size < 0) {
+                        if (size < 0 || extractor.sampleTime >= ANALYSIS_DURATION_US) {
                             codec.queueInputBuffer(inputIndex, 0, 0, 0, android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                             inputDone = true
                         } else {

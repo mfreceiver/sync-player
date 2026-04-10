@@ -125,6 +125,8 @@ class BrowserViewModel @Inject constructor(
     ): List<BrowseItem> = withContext(Dispatchers.IO) {
         val dbFolderNames = videoRepository.getSubFolders(folder).first()
 
+        val recordMap = records.associateBy { it.videoItemId }
+
         val physicalDir = if (folder.isEmpty()) storagePaths.userdataRoot else File(storagePaths.userdataRoot, folder)
         val physicalFolderNames = physicalDir.listFiles()
             ?.filter { it.isDirectory }
@@ -147,9 +149,10 @@ class BrowserViewModel @Inject constructor(
             )
         }
 
-        val videos = videoRepository.getItemsInFolder(folder).first()
+        val videoEntities = videoRepository.getItemsInFolder(folder).first()
+        val videos = videoEntities
             .map { video ->
-                val record = records.find { it.videoItemId == video.id }
+                val record = recordMap[video.id]
                 BrowseItem(
                     videoItemId = video.id,
                     name = video.fileName,
@@ -169,7 +172,7 @@ class BrowserViewModel @Inject constructor(
                 )
             }
 
-        repairMissingThumbnails(videoRepository.getItemsInFolder(folder).first())
+        repairMissingThumbnails(videoEntities)
 
         val filteredVideos = when (filterVal) {
             BrowseFilter.ALL -> videos

@@ -64,6 +64,9 @@ class SyncEngine @Inject constructor(
 
     private val syncMutex = Mutex()
 
+    private val lastProgressUpdateMs = AtomicLong(0L)
+    private val PROGRESS_THROTTLE_MS = 500L
+
     @Volatile
     var pendingTask: PendingSyncTask? = null
         private set
@@ -245,8 +248,8 @@ class SyncEngine @Inject constructor(
                                 }
 
                                 val success = client.downloadFile(action.relativePath, tmpFile) { transferred, total ->
-                                    val snapshot = activeDownloadsMutex.tryLock()
-                                    if (snapshot) {
+                                    val locked = activeDownloadsMutex.tryLock()
+                                    if (locked) {
                                         try {
                                             activeDownloadsMap[action.relativePath] = ActiveDownload(
                                                 fileName = action.relativePath.substringAfterLast("/"),
@@ -254,13 +257,17 @@ class SyncEngine @Inject constructor(
                                                 transferredBytes = transferred,
                                                 totalBytes = action.fileSize
                                             )
-                                            _progress.value = _progress.value.copy(
-                                                activeDownloads = activeDownloadsMap.values.toList(),
-                                                transferredBytes = totalBytesTransferred.get() + activeDownloadsMap.values.sumOf { it.transferredBytes },
-                                                totalBytes = totalDownloadBytes,
-                                                completedFiles = completedCount.get(),
-                                                totalFiles = totalActions
-                                            )
+                                            val now = System.currentTimeMillis()
+                                            if (now - lastProgressUpdateMs.get() >= PROGRESS_THROTTLE_MS) {
+                                                lastProgressUpdateMs.set(now)
+                                                _progress.value = _progress.value.copy(
+                                                    activeDownloads = activeDownloadsMap.values.toList(),
+                                                    transferredBytes = totalBytesTransferred.get() + activeDownloadsMap.values.sumOf { it.transferredBytes },
+                                                    totalBytes = totalDownloadBytes,
+                                                    completedFiles = completedCount.get(),
+                                                    totalFiles = totalActions
+                                                )
+                                            }
                                         } finally {
                                             activeDownloadsMutex.unlock()
                                         }
