@@ -1,11 +1,10 @@
 package cn.vectory.syncplayer.sync.sftp
 
 import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import cn.vectory.syncplayer.data.model.RemoteFile
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.sync.RemoteFileClient
+import cn.vectory.syncplayer.sync.checkNetworkAvailable
 import cn.vectory.syncplayer.sync.mapNetworkErrorMessage
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import kotlinx.coroutines.Dispatchers
@@ -25,14 +24,6 @@ class SftpFileClient(
     private var sftpClient: SFTPClient? = null
     private var remoteBasePath: String = ""
 
-    private fun checkNetwork() {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetwork
-        val caps = cm.getNetworkCapabilities(network)
-        if (network == null || caps == null || !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-            throw Exception("网络不可用，请检查网络连接")
-        }
-    }
     private fun sftpErrorMessage(e: Exception, host: String): String {
         val commonMsg = mapNetworkErrorMessage(e, host)
         if (commonMsg != null) return commonMsg
@@ -44,7 +35,7 @@ class SftpFileClient(
         }
     }
     override suspend fun connect(source: SyncSource, remotePath: String): Unit = withContext(Dispatchers.IO) {
-        checkNetwork()
+        checkNetworkAvailable(context)
         try {
             val client = SSHClient()
             client.addHostKeyVerifier(PromiscuousVerifier())

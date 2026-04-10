@@ -1,11 +1,10 @@
 package cn.vectory.syncplayer.sync.smb
 
 import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import cn.vectory.syncplayer.data.model.RemoteFile
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.sync.RemoteFileClient
+import cn.vectory.syncplayer.sync.checkNetworkAvailable
 import cn.vectory.syncplayer.sync.mapNetworkErrorMessage
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import jcifs.context.BaseContext
@@ -23,15 +22,6 @@ class SmbFileClient(
     private val context: Context,
     private val userPrefs: UserPreferencesRepository
 ) : RemoteFileClient {
-
-    private fun checkNetwork() {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetwork
-        val caps = cm.getNetworkCapabilities(network)
-        if (network == null || caps == null || !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-            throw Exception("网络不可用，请检查网络连接")
-        }
-    }
 
     private var cifsContext: jcifs.CIFSContext? = null
     private var currentHost: String = ""
@@ -62,7 +52,7 @@ class SmbFileClient(
     }
 
     override suspend fun connect(source: SyncSource, remotePath: String): Unit = withContext(Dispatchers.IO) {
-        checkNetwork()
+        checkNetworkAvailable(context)
         try {
             val props = Properties()
             props.setProperty("jcifs.smb.client.minVersion", "SMB202")
