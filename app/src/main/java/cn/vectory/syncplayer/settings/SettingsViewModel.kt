@@ -6,18 +6,15 @@ import cn.vectory.syncplayer.browser.BrowserViewModel
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
-import cn.vectory.syncplayer.debug.DebugLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
-import java.io.File
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val syncLogRepository: SyncLogRepository,
-    private val userPrefs: UserPreferencesRepository,
-    private val debugLogger: DebugLogger
+    private val userPrefs: UserPreferencesRepository
 ) : ViewModel() {
 
     private val _longPressSpeed = MutableStateFlow(2.0f)
@@ -46,10 +43,6 @@ class SettingsViewModel @Inject constructor(
 
     private val _volumeBalance = MutableStateFlow(false)
     val volumeBalance: StateFlow<Boolean> = _volumeBalance.asStateFlow()
-
-    val debugMode: StateFlow<Boolean> = debugLogger.enabled
-    private val _previousSessionSummary = MutableStateFlow(debugLogger.getPreviousSessionSummary())
-    val previousSessionSummary: StateFlow<String> = _previousSessionSummary.asStateFlow()
 
     val syncLogs: StateFlow<List<SyncLogEntity>> = syncLogRepository.getRecentFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -129,24 +122,5 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             syncLogRepository.clearOldLogs()
         }
-    }
-
-    fun enableDebugMode() {
-        debugLogger.enable()
-        _previousSessionSummary.value = debugLogger.getPreviousSessionSummary()
-    }
-
-    fun disableDebugMode() {
-        debugLogger.disable()
-        _previousSessionSummary.value = debugLogger.getPreviousSessionSummary()
-    }
-
-    fun exportPreviousLog(): File? {
-        return debugLogger.exportPreviousLog()
-    }
-
-    fun clearPreviousLog() {
-        debugLogger.clearPreviousLog()
-        _previousSessionSummary.value = debugLogger.getPreviousSessionSummary()
     }
 }

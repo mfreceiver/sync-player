@@ -29,7 +29,6 @@ class UserPreferencesRepository @Inject constructor(
         val ORIENTATION = stringPreferencesKey("orientation")
         val DEFAULT_SORT_MODE = stringPreferencesKey("default_sort_mode")
         val DEFAULT_FILTER = stringPreferencesKey("default_filter")
-        val DEBUG_MODE = booleanPreferencesKey("debug_mode")
         val MAX_CONCURRENT_DOWNLOADS = intPreferencesKey("max_concurrent_downloads")
         val VIEW_MODE = stringPreferencesKey("view_mode")
         val GRID_COLUMNS = intPreferencesKey("grid_columns")
@@ -50,8 +49,6 @@ class UserPreferencesRepository @Inject constructor(
     val defaultFilter: Flow<String> = dataStore.data.map {
         it[Keys.DEFAULT_FILTER] ?: "ALL"
     }
-
-    val debugMode: Flow<Boolean> = dataStore.data.map { it[Keys.DEBUG_MODE] ?: false }
 
     val maxConcurrentDownloads: Flow<Int> = dataStore.data.map {
         (it[Keys.MAX_CONCURRENT_DOWNLOADS] ?: 1).coerceIn(1, 3)
@@ -85,7 +82,6 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun getOrientation(): String? = orientation.first()
     suspend fun getDefaultSortMode(): String = defaultSortMode.first()
     suspend fun getDefaultFilter(): String = defaultFilter.first()
-    suspend fun getDebugMode(): Boolean = debugMode.first()
     suspend fun getMaxConcurrentDownloads(): Int = maxConcurrentDownloads.first()
     suspend fun getViewMode(): String = viewMode.first()
     suspend fun getGridColumns(): Int = gridColumns.first()
@@ -108,10 +104,6 @@ class UserPreferencesRepository @Inject constructor(
 
     suspend fun setDefaultFilter(filter: String) {
         dataStore.edit { it[Keys.DEFAULT_FILTER] = filter }
-    }
-
-    suspend fun setDebugMode(enabled: Boolean) {
-        dataStore.edit { it[Keys.DEBUG_MODE] = enabled }
     }
 
     suspend fun setMaxConcurrentDownloads(max: Int) {

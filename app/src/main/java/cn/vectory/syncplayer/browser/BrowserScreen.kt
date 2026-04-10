@@ -59,7 +59,6 @@ import cn.vectory.syncplayer.ui.components.verticalScrollbar
 import cn.vectory.syncplayer.ui.util.buildMetadataLine
 import cn.vectory.syncplayer.ui.util.isVideoFile
 import kotlinx.coroutines.launch
-import cn.vectory.syncplayer.debug.DebugLogger
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
@@ -73,7 +72,6 @@ fun BrowserScreen(
     onNavigateToPlaybackSettings: () -> Unit,
     onNavigateToAbout: () -> Unit,
     onNavigateToSyncPreview: (relationId: Long) -> Unit,
-    debugLogger: DebugLogger,
 ) {
     val browseItems by viewModel.browseItems.collectAsState()
     val hasConfig by viewModel.hasConfig.collectAsState()
@@ -101,12 +99,7 @@ fun BrowserScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
-        debugLogger.log("Compose", "BrowserScreen composed")
-    }
-
     BackHandler(enabled = folder.isNotEmpty()) {
-        debugLogger.log("Nav", "Navigate up from folder: $folder")
         viewModel.navigateUp()
     }
 
@@ -179,7 +172,6 @@ fun BrowserScreen(
                     TopAppBar(
                         navigationIcon = {
                         IconButton(onClick = {
-                            debugLogger.log("Drawer", "Opening drawer, folder=$folder")
                             scope.launch { drawerState.open() }
                         }) {
                             Icon(
@@ -200,7 +192,6 @@ fun BrowserScreen(
                     },
                     actions = {
                         IconButton(onClick = {
-                            debugLogger.log("Click", "Search button clicked")
                             onNavigateToSearch()
                         }) {
                             Icon(
@@ -210,7 +201,6 @@ fun BrowserScreen(
                         }
                         if (currentRelationId != null) {
                             IconButton(onClick = {
-                                debugLogger.log("Click", "Sync button clicked, relationId=$currentRelationId")
                                 onNavigateToSyncPreview(currentRelationId!!)
                             }) {
                                 Icon(
@@ -221,7 +211,6 @@ fun BrowserScreen(
                         }
                         if (currentRelationId == null) {
                             IconButton(onClick = {
-                                debugLogger.log("Click", "Create folder dialog opened")
                                 showCreateFolderDialog = true
                             }) {
                                 Icon(
@@ -232,7 +221,6 @@ fun BrowserScreen(
                         }
                         Box {
                             IconButton(onClick = {
-                                debugLogger.log("Click", "Sort menu opened")
                                 showSortMenu = true
                             }) {
                                     Icon(
@@ -257,25 +245,25 @@ fun BrowserScreen(
                                 ) {
                                     SortOptionChip(
                                         selected = sortMode == BrowserViewModel.SortMode.FILENAME_ASC,
-                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_ASC); debugLogger.log("Click","Sort: FILENAME_ASC"); showSortMenu = false },
+                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_ASC); showSortMenu = false },
                                         mainIcon = Icons.Default.SortByAlpha,
                                         ascending = true
                                     )
                                     SortOptionChip(
                                         selected = sortMode == BrowserViewModel.SortMode.FILENAME_DESC,
-                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_DESC); debugLogger.log("Click","Sort: FILENAME_DESC"); showSortMenu = false },
+                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_DESC); showSortMenu = false },
                                         mainIcon = Icons.Default.SortByAlpha,
                                         ascending = false
                                     )
                                     SortOptionChip(
                                         selected = sortMode == BrowserViewModel.SortMode.DURATION_ASC,
-                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_ASC); debugLogger.log("Click","Sort: DURATION_ASC"); showSortMenu = false },
+                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_ASC); showSortMenu = false },
                                         mainIcon = Icons.Default.Schedule,
                                         ascending = true
                                     )
                                     SortOptionChip(
                                         selected = sortMode == BrowserViewModel.SortMode.DURATION_DESC,
-                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_DESC); debugLogger.log("Click","Sort: DURATION_DESC"); showSortMenu = false },
+                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_DESC); showSortMenu = false },
                                         mainIcon = Icons.Default.Schedule,
                                         ascending = false
                                     )
@@ -293,15 +281,15 @@ fun BrowserScreen(
                                 ) {
                                     IconOptionChip(
                                         selected = filter == BrowserViewModel.BrowseFilter.ALL,
-                                        onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.ALL); debugLogger.log("Click","Filter: ALL"); showSortMenu = false }
+                                        onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.ALL); showSortMenu = false }
                                     ) { Icon(Icons.Default.FilterList, null, modifier = Modifier.size(20.dp)) }
                                     IconOptionChip(
                                         selected = filter == BrowserViewModel.BrowseFilter.VIDEO_ONLY,
-                                        onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.VIDEO_ONLY); debugLogger.log("Click","Filter: VIDEO_ONLY"); showSortMenu = false }
+                                        onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.VIDEO_ONLY); showSortMenu = false }
                                     ) { Icon(Icons.Default.VideoFile, null, modifier = Modifier.size(20.dp)) }
                                     IconOptionChip(
                                         selected = filter == BrowserViewModel.BrowseFilter.TRASHED_ONLY,
-                                        onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.TRASHED_ONLY); debugLogger.log("Click","Filter: TRASHED_ONLY"); showSortMenu = false }
+                                        onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.TRASHED_ONLY); showSortMenu = false }
                                     ) { Icon(Icons.Default.Delete, null, modifier = Modifier.size(20.dp)) }
                                 }
                                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
@@ -375,7 +363,6 @@ fun BrowserScreen(
                                 folderName = item.name,
                                 isSyncBaseDir = item.isSyncBaseDir,
                                 onClick = {
-                                    debugLogger.log("Click", "Open folder: ${item.relativePath}")
                                     viewModel.setFolder(item.relativePath)
                                 },
                                 onLongClick = {
@@ -397,7 +384,6 @@ fun BrowserScreen(
                                 isTrashed = item.isTrashed,
                                 isVideo = isVideoFile(item.name),
                                 onClick = {
-                                    debugLogger.log("Click", "Open file: ${item.name}")
                                     if (isVideoFile(item.name)) {
                                         viewModel.saveScrollPosition(folder, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
                                         onNavigateToPlayer(item.videoItemId!!, viewModel.getFolderVideoIds())
@@ -461,7 +447,6 @@ fun BrowserScreen(
                             FolderItem(
                                 item = item,
                                 onClick = {
-                                    debugLogger.log("Click", "Open folder: ${item.relativePath}")
                                     viewModel.setFolder(item.relativePath)
                                 },
                                 onLongClick = {
@@ -474,7 +459,6 @@ fun BrowserScreen(
                             FileItem(
                                 item = item,
                                 onClick = {
-                                    debugLogger.log("Click", "Open file: ${item.name}")
                                     if (isVideoFile(item.name)) {
                                         viewModel.saveScrollPosition(folder, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
                                         onNavigateToPlayer(item.videoItemId!!, viewModel.getFolderVideoIds())

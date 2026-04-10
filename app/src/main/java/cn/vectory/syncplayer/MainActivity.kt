@@ -20,15 +20,11 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import cn.vectory.syncplayer.navigation.AppNavHost
 import cn.vectory.syncplayer.navigation.Route
-import cn.vectory.syncplayer.debug.DebugLogger
-import javax.inject.Inject
 import cn.vectory.syncplayer.ui.theme.SyncPlayerTheme
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-    @Inject
-    lateinit var debugLogger: DebugLogger
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,7 +46,7 @@ class MainActivity : ComponentActivity() {
                         handleNotificationNavigation(notificationIntent, navController)
                     }
 
-                    AppNavHost(debugLogger = debugLogger, navController = navController)
+                    AppNavHost(navController = navController)
                 }
             }
         }

@@ -1,8 +1,6 @@
 package cn.vectory.syncplayer.navigation
 
 import androidx.compose.runtime.Composable
-import cn.vectory.syncplayer.debug.DebugLogger
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -32,13 +30,7 @@ import cn.vectory.syncplayer.sync.SyncPreviewViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
 
 @Composable
-fun AppNavHost(debugLogger: DebugLogger, navController: NavHostController = rememberNavController()) {
-
-    LaunchedEffect(Unit) {
-        navController.addOnDestinationChangedListener { _, destination, _ ->
-            debugLogger.log("Nav", "Navigate to: ${destination.route}")
-        }
-    }
+fun AppNavHost(navController: NavHostController = rememberNavController()) {
 
     NavHost(
         navController = navController,
@@ -81,7 +73,6 @@ fun AppNavHost(debugLogger: DebugLogger, navController: NavHostController = reme
                 onNavigateToSyncPreview = { relationId ->
                     navController.navigate(Route.SyncPreview.create(relationId, "delete"))
                 }
-            , debugLogger = debugLogger
             )
         }
 
