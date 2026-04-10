@@ -11,6 +11,9 @@ local.properties
 /app/build
 /app/release.keystore
 
+# Room schemas
+/app/schemas/
+
 # Root junk files
 /20
 /git
