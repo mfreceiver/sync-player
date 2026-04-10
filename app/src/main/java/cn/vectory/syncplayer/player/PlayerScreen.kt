@@ -100,6 +100,8 @@ fun PlayerScreen(
     var gestureSeekPosition by remember { mutableFloatStateOf(0f) }
     var seekTarget by remember { mutableLongStateOf(-1L) }
 
+    var originalBrightness by remember { mutableFloatStateOf(-1f) }
+
     fun showOverlay(overlay: PlayerOverlay) {
         currentOverlay = overlay
         overlayHideJob.value?.cancel()
@@ -111,11 +113,20 @@ fun PlayerScreen(
 
     val window = activity.window
     DisposableEffect(Unit) {
+        val currentBrightness = window.attributes.screenBrightness
+        if (currentBrightness >= 0) {
+            originalBrightness = currentBrightness
+        }
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val insetsController = WindowCompat.getInsetsController(window, window.decorView)
         insetsController.hide(WindowInsetsCompat.Type.systemBars())
         insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         onDispose {
+            if (originalBrightness >= 0) {
+                val attrs = window.attributes
+                attrs.screenBrightness = originalBrightness
+                window.attributes = attrs
+            }
             WindowCompat.setDecorFitsSystemWindows(window, true)
             val restoreController = WindowCompat.getInsetsController(window, window.decorView)
             restoreController.show(WindowInsetsCompat.Type.systemBars())
