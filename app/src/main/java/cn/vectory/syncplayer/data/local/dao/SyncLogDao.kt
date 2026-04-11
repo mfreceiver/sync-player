@@ -18,6 +18,9 @@ interface SyncLogDao {
     @Query("SELECT * FROM sync_log WHERE timestamp > :sinceTimestamp ORDER BY timestamp DESC")
     fun getSince(sinceTimestamp: Long): Flow<List<SyncLogEntity>>
 
+    @Query("SELECT * FROM sync_log ORDER BY timestamp DESC LIMIT :limit")
+    fun getRecentFlow(limit: Int): Flow<List<SyncLogEntity>>
+
     @Query("DELETE FROM sync_log WHERE timestamp < :beforeTimestamp")
     suspend fun deleteOlderThan(beforeTimestamp: Long)
 }

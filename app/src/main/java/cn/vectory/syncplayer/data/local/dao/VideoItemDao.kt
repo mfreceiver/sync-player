@@ -65,6 +65,9 @@ interface VideoItemDao {
     @Query("DELETE FROM video_item WHERE relativePath = :relativePath")
     suspend fun deleteByRelativePath(relativePath: String)
 
+    @Query("DELETE FROM video_item WHERE relativePath = :relativePath AND syncRelationId = :syncRelationId")
+    suspend fun deleteByRelativePathAndRelationId(relativePath: String, syncRelationId: Long)
+
     @Query("DELETE FROM video_item")
     suspend fun deleteAll()
 

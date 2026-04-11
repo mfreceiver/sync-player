@@ -46,8 +46,8 @@ class SyncService : Service() {
 
         syncJob?.cancel()
         syncJob = serviceScope.launch {
-            val task = syncEngine.consumePendingTask()
-            if (task != null && task.relationId == relationId) {
+            val task = syncEngine.consumePendingTask(relationId)
+            if (task != null) {
                 _syncProgress.value = SyncProgress(
                     isRunning = true,
                     phase = SyncPhase.DOWNLOADING,

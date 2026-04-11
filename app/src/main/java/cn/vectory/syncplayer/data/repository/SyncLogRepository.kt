@@ -21,7 +21,7 @@ class SyncLogRepository @Inject constructor(
         ))
     }
 
-    fun getRecentFlow(limit: Int = 200): Flow<List<SyncLogEntity>> = syncLogDao.getSince(0)
+    fun getRecentFlow(limit: Int = 200): Flow<List<SyncLogEntity>> = syncLogDao.getRecentFlow(limit)
 
     suspend fun clearOldLogs() {
         val cutoff = System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000L

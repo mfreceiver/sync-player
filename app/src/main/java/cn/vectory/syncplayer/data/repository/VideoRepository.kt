@@ -37,6 +37,9 @@ class VideoRepository @Inject constructor(
     suspend fun deleteByRelativePath(relativePath: String) =
         videoItemDao.deleteByRelativePath(relativePath)
 
+    suspend fun deleteByRelativePathAndRelationId(relativePath: String, syncRelationId: Long) =
+        videoItemDao.deleteByRelativePathAndRelationId(relativePath, syncRelationId)
+
     suspend fun deleteById(id: Long) = videoItemDao.deleteById(id)
 
     suspend fun deleteAll() = videoItemDao.deleteAll()
