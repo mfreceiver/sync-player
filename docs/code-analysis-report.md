@@ -1,432 +1,626 @@
-# Sync Player 代码分析报告
+# Sync Player 项目综合分析报告
 
-> 分析日期：2026-04-10
-> 分析范围：`app/src/main/java/cn/vectory/syncplayer/` 全部 75 个 Kotlin 源文件
-> 项目版本：v9.1.1 (versionCode 45)
+> 分析日期：2026-04-11  
+> 分析范围：`app/src/main/java/cn/vectory/syncplayer/` 全部源文件  
+> 当前版本：9.4.0 (versionCode 49)
 
 ---
 
 ## 目录
 
-1. [架构设计问题](#1-架构设计问题)
-2. [Android 规范违反](#2-android-规范违反)
-3. [功能缺陷与逻辑错误](#3-功能缺陷与逻辑错误)
-4. [性能瓶颈](#4-性能瓶颈)
-5. [废弃代码与冗余实现](#5-废弃代码与冗余实现)
-6. [资源管理与内存泄漏](#6-资源管理与内存泄漏)
-7. [代码质量与可维护性](#7-代码质量与可维护性)
-8. [改进建议汇总](#8-改进建议汇总)
+1. [数据风险](#1-数据风险)
+2. [性能瓶颈](#2-性能瓶颈)
+3. [安全隐患](#3-安全隐患)
+4. [架构与健壮性](#4-架构与健壮性)
+5. [UI/交互层问题](#5-ui交互层问题)
+6. [汇总与优先级建议](#6-汇总与优先级建议)
 
 ---
 
-## 1. 架构设计问题
+## 1. 数据风险
 
-### 1.1 [严重] SyncEngine @Singleton 持有可变 pendingTask 状态
+### 1.1 [严重] 破坏性数据库迁移 — 数据全量丢失
 
-**文件**: `sync/SyncEngine.kt` L67-79
+**位置**：`di/DatabaseModule.kt:32`
 
-`SyncEngine` 标注 `@Singleton`，通过 `@Volatile var pendingTask` 在组件间传递同步任务。这种用单例的可变属性做进程内 IPC 的方式违背了依赖注入原则，且与 Android Service 的生命周期模型不匹配——如果进程被杀重启，`pendingTask` 丢失。
+```kotlin
+Room.databaseBuilder(...)
+    .fallbackToDestructiveMigration()  // ← 升级时清除全部数据
+    .build()
+```
+
+**问题**：当前 schema 版本为 9（AGENTS.md 记载 v6，已不一致），每次版本升级会**无条件清空全部本地数据库**，包括：
+- 所有视频元数据（`video_item` 表）
+- 所有播放记录和进度（`playback_record` 表）
+- 所有同步日志（`sync_log` 表）
+- 所有同步关系配置（`sync_relation` 表）
+- 所有同步源配置（`sync_source` 表，密码在 EncryptedSharedPreferences 中不受影响）
+
+**影响**：用户每次升级后需要重新配置同步源、重新同步全部文件、丢失全部播放进度。
+
+**建议**：
+- 编写 Room Migration 替代 destructive migration
+- 将 `fallbackToDestructiveMigration()` 改为 `fallbackToDestructiveMigrationFrom(8)` 仅对极老版本回退
+- 导出 schema 文件到 git 以支持自动迁移生成
+
+---
+
+### 1.2 [严重] Room Schema 文件缺失
+
+**位置**：`app/build.gradle.kts:65`
+
+```kotlin
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
+```
+
+配置了 schema 导出路径，但 `app/schemas/` 目录不存在（glob 未找到文件）。schema 文件未纳入版本控制，导致：
+- 无法自动生成 Migration
+- 无法验证迁移正确性
+- 历史版本数据库结构不可追溯
+
+**建议**：执行一次编译以生成 schema 文件，并提交到 git。
+
+---
+
+### 1.3 [高] 同步任务进程死亡丢失
+
+**位置**：`sync/SyncEngine.kt:71-72`
 
 ```kotlin
 @Volatile
 var pendingTask: PendingSyncTask? = null
-    private set
-
-fun setPendingTask(task: PendingSyncTask) { pendingTask = task }
-fun consumePendingTask(): PendingSyncTask? { ... }
 ```
 
-**建议**: 改用 `Intent` extra 直接传递任务参数到 `SyncService`，或使用 Room 数据库持久化任务状态。
+`PendingSyncTask` 仅存储在内存中。如果应用在 `setPendingTask()` 之后、`SyncService.onStartCommand()` 之前被系统杀死（OOM killer、电池优化等），任务数据永久丢失。由于 `SyncService` 使用 `START_NOT_STICKY`，系统不会重新创建服务。
 
-### 1.2 [中等] SyncService 未使用 Hilt 注入的 ServiceScope
+**影响**：用户在预览页确认同步后，如果应用被杀，同步不会执行且无法自动恢复。
 
-**文件**: `sync/SyncService.kt` L20
-
-`SyncService` 手动创建了 `CoroutineScope(Dispatchers.IO + SupervisorJob())`，而没有利用 Hilt 的 `@Inject lateinit var` 模式提供统一的 scope 管理。更重要的是，此 scope 绑定到 Service 生命周期，但 `onDestroy` 中仅调用 `serviceScope.cancel()` 而没有确保 `syncJob` 的 `CancellationException` 被正确处理。
-
-### 1.3 [中等] PlayerScreen 过度膨胀（739 行）
-
-**文件**: `player/PlayerScreen.kt`
-
-单个 `@Composable` 函数 `PlayerScreen` 包含了 ExoPlayer 管理、手势处理、亮度/音量控制、overlay 动画、进度条交互等全部逻辑。违反了 Compose 的关注点分离原则，应拆分为：
-- Player 状态管理（remember/DisposableEffect 部分）
-- Overlay UI 组件
-- 进度条组件
-- 工具栏组件
-
-### 1.4 [中等] ViewModel 暴露 Entity 而非 Domain Model
-
-**文件**: `player/PlayerViewModel.kt` L25-28, `browser/BrowserViewModel.kt`
-
-`PlayerViewModel` 直接暴露 `VideoItemEntity` 和 `PlaybackRecordEntity` 到 UI 层：
-
-```kotlin
-val videoItem: StateFlow<VideoItemEntity?> = _videoItem.asStateFlow()
-val playbackRecord: StateFlow<PlaybackRecordEntity?> = _playbackRecord.asStateFlow()
-```
-
-MVVM 架构要求 ViewModel 向 UI 暴露领域模型或 UI State，而非数据库实体。这导致 UI 层紧耦合于数据库 schema，未来修改数据库结构会波及所有 UI 代码。
-
-### 1.5 [低] Repository 层部分方法仅做透传
-
-`VideoRepository` 的大部分方法仅是 DAO 的一对一代理，没有增加任何业务逻辑价值：
-
-```kotlin
-suspend fun getById(id: Long): VideoItemEntity? = videoItemDao.getById(id)
-suspend fun getAll(): List<VideoItemEntity> = videoItemDao.getAll()
-```
-
-虽然作为架构防腐层有存在价值，但当前实现没有在 Entity/Domain 之间做映射（参见 1.4），使得这层抽象的实际意义有限。
+**建议**：将 `PendingSyncTask` 序列化到 Room 表或 DataStore 中，服务启动时检查并恢复。
 
 ---
 
-## 2. Android 规范违反
+### 1.4 [高] `File.renameTo()` 非原子操作
 
-### 2.1 [严重] Room 使用 fallbackToDestructiveMigration 且 exportSchema=false
-
-**文件**: `di/DatabaseModule.kt` L31-33
+**位置**：`sync/SyncEngine.kt:363`
 
 ```kotlin
-Room.databaseBuilder(...)
-    .fallbackToDestructiveMigration()
-    .build()
+tmpFile.renameTo(finalFile)
 ```
 
-当前 `version = 9` 意味着已经经历了 9 次 schema 变更。每次升级数据库都会**删除全部用户数据**（视频记录、播放进度、同步关系）。对于一个依赖本地数据的应用来说，这是严重的数据安全问题。同时 `exportSchema = false` 使得无法进行 schema 演进追踪。
+`File.renameTo()` 在以下情况可能失败或产生不一致：
+- 源和目标在不同文件系统（Android 内部存储通常不会，但不可假设）
+- 目标文件已存在时行为不确定（代码虽在上一行 delete 了，但有窗口期）
+- 返回 `false` 时不抛异常，代码未检查返回值
 
-**建议**: 实现正式的 Room Migration 策略，至少保留最近几个版本的迁移路径。
+**影响**：下载完成的文件可能停留在 `.sync_tmp` 状态，用户无法播放。
 
-### 2.2 [严重] SyncService 前台服务未正确处理 Android 12+ 限制
-
-**文件**: `sync/SyncService.kt`
-
-- `startForeground()` 在 `onCreate()` 中立即调用，但此时没有有效的同步内容，通知显示的是空进度
-- 未检查 `POST_NOTIFICATIONS` 权限（Android 13+ 要求）
-- 使用 `stopForeground(STOP_FOREGROUND_REMOVE)` 是已弃用的常量
-
-### 2.3 [中等] ExoPlayer 在 Compose 中使用 remember 创建而未绑定 Lifecycle
-
-**文件**: `player/PlayerScreen.kt` L125-129
-
+**建议**：
 ```kotlin
-val exoPlayer = remember {
-    ExoPlayer.Builder(context).build().apply { playWhenReady = true }
+if (!tmpFile.renameTo(finalFile)) {
+    // fallback: copy + delete
+    tmpFile.copyTo(finalFile)
+    tmpFile.delete()
 }
 ```
 
-`remember` 的生命周期与 Composable 的 composition 绑定，而非 Activity/Fragment 生命周期。如果 Activity 在配置变更时重建（虽然当前禁用了），ExoPlayer 会被泄漏或重复创建。应该使用 `rememberRetained` 或绑定到 ViewModel。
+---
 
-### 2.4 [中等] 手动设置亮度未恢复
+### 1.5 [中] deleteByRelativePath 缺少 syncRelationId 限定
 
-**文件**: `player/PlayerScreen.kt` L272-279
-
-亮度修改直接写入 `window.attributes.screenBrightness`，`DisposableEffect.onDispose` 中恢复了系统栏但**未恢复亮度**，退出播放器后屏幕亮度会保持播放时的设定值。
-
-### 2.5 [低] Notification 使用系统默认图标
-
-**文件**: `sync/SyncNotificationHelper.kt` L62
+**位置**：`data/local/dao/VideoItemDao.kt:65-66`
 
 ```kotlin
-.setSmallIcon(android.R.drawable.stat_notify_sync)
+@Query("DELETE FROM video_item WHERE relativePath = :relativePath")
+suspend fun deleteByRelativePath(relativePath: String)
 ```
 
-使用 Android 系统内置图标而非应用自定义图标。不同厂商 ROM 对这些图标的渲染差异很大，且在 Android 12+ 可能被自适应图标遮罩裁切。
+此查询删除所有匹配 `relativePath` 的记录，不限定 `syncRelationId`。虽然 `localBasePath` 的唯一约束（`sync_relation` 表）使得两个不同关联不太可能产生相同 `relativePath`，但 `syncRelationId = 0`（手动放入的文件）可能与同步文件路径冲突。
+
+**建议**：添加带 `syncRelationId` 参数的重载方法，并在 `SyncEngine.executeDelete()` 和 `SyncEngine.executeSync()` 删除阶段使用。
 
 ---
 
-## 3. 功能缺陷与逻辑错误
+### 1.6 [中] 同步日志无上限增长
 
-### 3.1 [严重] DebugLogger.init() 逻辑完全失效
-
-**文件**: `debug/DebugLogger.kt` L50-63
+**位置**：`data/repository/SyncLogRepository.kt:24`
 
 ```kotlin
-fun init() {
-    val wasEnabled = run {
-        var result = false
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        scope.launch {
-            result = userPrefs.getDebugMode()  // 异步赋值
+fun getRecentFlow(limit: Int = 200): Flow<List<SyncLogEntity>> = syncLogDao.getSince(0)
+```
+
+两个问题：
+1. `limit` 参数被忽略，`getSince(0)` 返回全部日志
+2. `clearOldLogs()` 方法存在但**从未在代码中调用**
+
+每次同步会为每个文件插入一条日志（DOWNLOAD/DELETE/SKIP），对于数千个文件的同步关系，日志表会持续增长。
+
+**建议**：
+- 修复 `getRecentFlow` 使其正确使用 `LIMIT`
+- 在 `SyncEngine.executeSync()` 完成后自动调用 `clearOldLogs()`
+
+---
+
+### 1.7 [中] 部分下载失败时同步标记为"成功"
+
+**位置**：`sync/SyncEngine.kt:386-396` + `:448`
+
+当并发下载中某个文件失败时：
+1. 失败被记录到 sync_log（status = "FAILED"）
+2. 但 `executeSync()` 最终仍然返回 `true`
+3. `syncRelationRepository.updateLastSync()` 写入"成功：下载 X 个..."
+
+用户看到的同步结果是"成功"，但实际可能有文件未下载。失败信息只在日志中，对用户不可见。
+
+**建议**：统计实际失败数，在结果中体现，如"成功：下载 X 个，失败 Y 个"。如有失败，考虑返回 `false` 或增加部分成功的状态。
+
+---
+
+## 2. 性能瓶颈
+
+### 2.1 [高] 远程文件全量递归扫描
+
+**位置**：`sync/smb/SmbFileClient.kt:202-233`、`sync/sftp/SftpFileClient.kt:106-138`
+
+```kotlin
+private fun listFilesRecursive(..., result: MutableList<RemoteFile>) {
+    // 递归遍历全部子目录，一次性加载到内存
+    for (child in children) {
+        if (child.isDirectory) listFilesRecursive(...)
+        else result.add(...)
+    }
+}
+```
+
+对于包含数千个文件、深层嵌套的远程目录：
+- **内存压力**：所有 `RemoteFile` 对象同时驻留内存
+- **网络耗时**：SMB/SFTP 每次列举目录是一次网络往返，大量小目录会产生大量 RTT
+- **无分页**：无法中断或分批处理
+- **无缓存**：每次 dryRun 都完整扫描
+
+**建议**：
+- 对于 SMB，考虑使用 `SmbFile.listFiles()` 的过滤能力
+- 增量同步：记录上次扫描时间戳，仅检查变更部分
+- 分批处理：对大型目录分页获取
+
+---
+
+### 2.2 [高] 浏览时自动修复缩略图
+
+**位置**：`browser/BrowserViewModel.kt:324-335`
+
+```kotlin
+private fun repairMissingThumbnails(videos: List<VideoItemEntity>) {
+    val needsRepair = videos.filter { ... }
+    viewModelScope.launch(Dispatchers.IO) {
+        needsRepair.forEach { video ->
+            videoMetadataExtractor.repairThumbnailIfNeeded(video)
         }
-        false  // ← 总是返回 false！
-    }
-    if (wasEnabled) { ... }  // ← 永远不会执行
-    _enabled.value = false  // ← 总是禁用
-}
-```
-
-`init()` 使用 `run {}` 块启动协程后立即返回 `false`，`wasEnabled` 永远为 `false`。这意味着应用重启后即使之前开启了 debug 模式，也不会恢复之前的日志文件引用。此外 `scope` 创建后没有被 cancel，存在泄漏。
-
-### 3.2 [严重] SyncEngine 并发下载中 Mutex.tryLock() 丢失进度更新
-
-**文件**: `sync/SyncEngine.kt` L248-267
-
-```kotlin
-val snapshot = activeDownloadsMutex.tryLock()
-if (snapshot) {
-    try {
-        // 更新进度...
-    } finally {
-        activeDownloadsMutex.unlock()
     }
 }
-// tryLock 失败时静默丢弃进度更新
 ```
 
-并发下载时，如果某个下载线程的回调恰好在另一个线程持有锁时触发，该次进度更新会被**静默丢弃**。在高并发场景下，UI 进度条会出现跳跃或不更新。
+每次打开文件夹都会：
+1. 检查所有视频的缩略图是否存在
+2. 对缺失的全部触发 `MediaMetadataExtractor` 提取
 
-**建议**: 使用 `Channel` 或 `MutableSharedFlow` 替代互斥锁来传递进度更新。
+如果一个文件夹有 100 个视频且全部缺少缩略图，会在后台启动 100 次元数据提取。这会：
+- 占用大量 CPU 和 I/O
+- 导致明显的 UI 卡顿（即使 IO 调度器上运行，`stateIn` 的合并仍触发 Compose 重组）
+- 每次浏览重复检查（无修复状态标记）
 
-### 3.3 [中等] BrowserViewModel.repairMissingThumbnails 每次列表刷新都触发
+**建议**：
+- 将修复操作限制为每文件夹最多 N 个
+- 添加去重/防重入逻辑
+- 将已检查过且无需修复的记录缓存
 
-**文件**: `browser/BrowserViewModel.kt` L172, L296-307
+---
 
-```kotlin
-val videos = videoRepository.getItemsInFolder(folder).first()
-    .map { ... }
+### 2.3 [中] ExoPlayer 播放位置轮询
 
-repairMissingThumbnails(videoRepository.getItemsInFolder(folder).first())  // ← 第二次查询！
-```
-
-每次文件夹列表刷新时都会：
-1. 执行了两次完全相同的 `getItemsInFolder` 数据库查询（L150 和 L172）
-2. 对所有缺少缩略图的视频启动协程重新生成，没有防抖/节流机制
-
-这导致每次切换文件夹、切换排序/筛选时都可能触发大量 IO 操作。
-
-### 3.4 [中等] PlayerScreen 轮询 ExoPlayer 位置使用 while(true) + delay
-
-**文件**: `player/PlayerScreen.kt` L172-189
+**位置**：`player/PlayerScreen.kt:186-203`
 
 ```kotlin
 LaunchedEffect(exoPlayer) {
     while (true) {
         val playerPos = exoPlayer.currentPosition.coerceAtLeast(0)
-        ...
+        // ... 更新 UI 状态
         delay(200L)
     }
 }
 ```
 
-使用 `while(true)` 轮询播放器位置是一种反模式。ExoPlayer 提供了 `Player.Listener.onPositionDiscontinuity` 和 `onPlaybackStateChanged` 回调来获取位置变化。200ms 的轮询在视频暂停时也在持续消耗 CPU 资源。
+使用 `while(true) + delay(200)` 主动轮询播放进度。每 200ms 触发一次状态更新和 Compose 重组。
 
-### 3.5 [中等] SmbFileClient.listFiles() 返回所有文件，不区分视频类型
-
-**文件**: `sync/SyncEngine.kt` L108-147
-
-`dryRun()` 调用 `client.listFiles()` 返回远程目录下的**所有文件**，包括 `.nfo`、`.srt`、`.jpg` 等非视频文件。这些文件也会被当作同步目标下载到本地，但在 `BrowserScreen` 中通过 `isVideoFile()` 过滤后无法显示，变成了"幽灵文件"占用存储空间。
-
-### 3.6 [低] GesturePlayerView.formatTimeMs() 未被使用
-
-**文件**: `player/GesturePlayerView.kt` L177-187
-
-`formatTimeMs()` 方法在类中定义但从未被调用（格式化逻辑已在 `FormatUtils.kt` 中实现）。
-
-### 3.7 [低] PlaybackSpeed 在 ViewModel.onCleared() 中重置但未持久化
-
-**文件**: `player/PlayerViewModel.kt` L138-142
-
-```kotlin
-override fun onCleared() {
-    super.onCleared()
-    _playbackSpeed.value = 1.0f
-    _isFullscreen.value = false
-}
-```
-
-按 AGENTS.md 描述"播放速度跨视频保持，退出重置"，当前实现在 `onCleared` 中重置。但这是 ViewModel 销毁时机，而非用户"退出"的精确时机。如果在导航返回过程中 ViewModel 因配置原因被提前清理，状态会不一致。
+**建议**：使用 ExoPlayer 的 `Player.Listener.onPositionDiscontinuity()` + `onPlaybackStateChanged()` 回调驱动更新，或使用 `ExoPlayer.createMessage()` 的定时回调。
 
 ---
 
-## 4. 性能瓶颈
+### 2.4 [中] SMB/SFTP 客户端单例单连接
 
-### 4.1 [严重] BrowserViewModel.buildBrowseItems 中 O(n) records.find()
-
-**文件**: `browser/BrowserViewModel.kt` L150-152
+**位置**：`di/SyncModule.kt:19-35`
 
 ```kotlin
-val videos = videoRepository.getItemsInFolder(folder).first()
-    .map { video ->
-        val record = records.find { it.videoItemId == video.id }  // O(n) 线性查找
-        ...
+@Provides @Singleton
+fun provideSmbClient(...): SmbFileClient { ... }
+
+@Provides @Singleton
+fun provideSftpClient(...): SftpFileClient { ... }
+```
+
+两个客户端都是 `@Singleton`，内部维护单个连接状态。`SyncEngine` 使用 `syncMutex` 确保同时只有一个同步操作，意味着：
+- 多个同步关系必须串行执行
+- 浏览远程目录（设置页测试连接）和同步不能并行
+- 连接断开后无法自动重连
+
+**建议**：
+- 将客户端改为 `@ActivityRetainedScoped` 或使用工厂模式
+- 在 `SyncEngine` 内部管理连接池
+- 添加连接健康检查和自动重连逻辑
+
+---
+
+### 2.5 [中] 同步时逐文件提取元数据
+
+**位置**：`sync/SyncEngine.kt:377-378`
+
+```kotlin
+val savedEntity = videoRepository.getByRelativePath(localRelPath)
+if (savedEntity != null) {
+    videoMetadataExtractor.extractAndSave(savedEntity)
+}
+```
+
+每个文件下载完成后立即调用 `VideoMetadataExtractor`，涉及：
+- `MediaMetadataRetriever` 创建和释放
+- 缩略图 Bitmap 压缩写入磁盘
+- 数据库 upsert
+
+当并发下载数个文件时，元数据提取可能成为瓶颈。
+
+**建议**：将元数据提取移到同步完成后的批处理阶段，或使用专用的工作队列。
+
+---
+
+### 2.6 [低] `combine` 重组触发频繁
+
+**位置**：`browser/BrowserViewModel.kt:108-117`
+
+```kotlin
+val browseItems: StateFlow<List<BrowseItem>> = combine(
+    effectiveFolder, _sortMode, _filter, playbackRecords, basePaths
+) { ... }
+```
+
+每次 `playbackRecords` 或 `basePaths` 变化（由 Room Flow 驱动），都会触发完整的 `buildBrowseItems()` 计算，包括磁盘扫描和文件列表构建。
+
+**建议**：对 `buildBrowseItems` 添加 debounce 或 diff 策略。
+
+---
+
+## 3. 安全隐患
+
+### 3.1 [严重] SSH 主机密钥验证完全禁用
+
+**位置**：`sync/sftp/SftpFileClient.kt:41`
+
+```kotlin
+client.addHostKeyVerifier(PromiscuousVerifier())
+```
+
+`PromiscuousVerifier` 接受任何主机密钥，包括自签名和伪造密钥。这使得 SFTP 连接完全暴露在中间人攻击（MITM）之下。攻击者可以：
+- 拦截 SFTP 凭据（用户名/密码）
+- 篡改传输中的文件
+- 注入恶意文件
+
+**建议**：
+- 首次连接时保存主机密钥指纹到本地
+- 后续连接验证密钥一致性
+- 提供用户界面展示和确认指纹
+
+---
+
+### 3.2 [高] `android:allowBackup="true"` 泄露凭据
+
+**位置**：`AndroidManifest.xml:13`
+
+```xml
+android:allowBackup="true"
+```
+
+启用备份后，通过 `adb backup` 可以提取：
+- Room 数据库（包含同步源用户名、主机地址、端口）
+- EncryptedSharedPreferences（虽然加密，但 master key 也在设备上）
+- 应用全部内部文件
+
+对于存储 SMB/SFTP 凭据的应用，这是不可接受的风险。
+
+**建议**：改为 `android:allowBackup="false"`，或使用 `android:fullBackupContent` 排除敏感文件。
+
+---
+
+### 3.3 [中] 密码在内存中持久驻留
+
+**位置**：`data/repository/SyncSourceRepository.kt:55-64`
+
+```kotlin
+private fun SyncSourceEntity.toDomain() = SyncSource(
+    ...
+    password = encryptedPrefs.getString("pw_$id", null) ?: "",
+    ...
+)
+```
+
+每次 `toDomain()` 调用都将密码加载到 `SyncSource` 数据对象中。由于 `SyncSourceRepository` 是 `@Singleton`，且 `getAllFlow()` 和 `getById()` 返回包含密码的对象，密码会长期驻留在：
+- Flow 的 emission 对象中
+- ViewModel 中缓存的列表中
+- Compose 的状态中
+
+**建议**：分离 `SyncSource` 的显示模型和凭据模型，仅在建立连接时加载密码。
+
+---
+
+### 3.4 [中] SMB 无传输加密保障
+
+**位置**：`sync/smb/SmbFileClient.kt:57-58`
+
+```kotlin
+props.setProperty("jcifs.smb.client.minVersion", "SMB202")
+props.setProperty("jcifs.smb.client.maxVersion", "SMB311")
+```
+
+虽然支持 SMB 3.x（SMB3 支持端到端加密），但 jcifs-ng 客户端**未强制要求加密**。如果服务端不支持加密或降级到 SMB 2.x，凭据和数据以明文传输。
+
+**建议**：添加 `jcifs.smb.client.encryptionRequired=true` 配置项，或至少在 UI 中提示用户网络环境的安全性。
+
+---
+
+### 3.5 [低] FileProvider 暴露 userdata 目录
+
+**位置**：`app/src/main/res/xml/filepaths.xml:3`
+
+```xml
+<files-path name="userdata" path="userdata/" />
+```
+
+`userdata/` 目录通过 FileProvider 暴露。结合 `BrowserViewModel.buildShareIntent()` 的分享功能，任何在该目录下的文件都可以通过 URI 分享给其他应用。
+
+**影响**：这是设计意图（分享视频文件），但如果 userdata 目录下意外存放了敏感文件，也会被暴露。
+
+**建议**：当前可接受，但建议在分享逻辑中增加文件类型白名单校验。
+
+---
+
+## 4. 架构与健壮性
+
+### 4.1 [高] PlayerScreen 中未管理的 CoroutineScope 泄漏
+
+**位置**：`player/PlayerScreen.kt:111`
+
+```kotlin
+overlayHideJob.value = CoroutineScope(Dispatchers.Main).launch {
+    delay(750L)
+    currentOverlay = null
+}
+```
+
+每次 `showOverlay()` 调用都创建一个新的 `CoroutineScope`，这个 scope：
+- 不与 Composable 生命周期绑定
+- 不会在 Composable 离开组合时自动取消
+- `overlayHideJob` 中记录的 job 取消了旧 scope 的任务，但旧 scope 本身不会被回收（直到 GC）
+
+**建议**：使用 `rememberCoroutineScope()` 替代手动创建 scope。
+
+---
+
+### 4.2 [高] 网络连接断开无重连机制
+
+**位置**：`sync/SyncEngine.kt` 全文
+
+整个 `SyncEngine` 没有连接健康检查或重连逻辑。在长时间同步大量文件时：
+- SMB/SFTP 连接可能因超时、网络切换、服务器重启而断开
+- 断开后整个同步失败，无法从中断点恢复
+- 必须从头重新 dryRun + executeSync
+
+**建议**：
+- 在下载循环中添加连接活性检查
+- 实现断点续传（记录已完成文件列表，重启时跳过）
+- 对单个文件下载失败增加自动重试（2-3 次）
+
+---
+
+### 4.3 [中] 空异常捕获块过多
+
+**位置**：全项目多处
+
+```kotlin
+// SmbFileClient.kt:152, 198, 231
+catch (_: Exception) { }
+
+// SftpFileClient.kt:60
+catch (_: Exception) { }
+
+// VideoMetadataExtractor.kt:65
+catch (_: Exception) { }
+
+// AudioGainAnalyzer.kt:52, 130
+catch (_: Exception) { }
+```
+
+多处完全忽略异常，可能隐藏严重的运行时问题（文件系统损坏、编解码器错误、网络异常等）。
+
+**建议**：至少记录 `Log.w(TAG, "...", e)` 以便调试时排查。对于关键操作（如元数据提取），应区分可恢复和不可恢复异常。
+
+---
+
+### 4.4 [中] GesturePlayerView 持有 Activity Context
+
+**位置**：`player/GesturePlayerView.kt:13-16`
+
+```kotlin
+class GesturePlayerView @JvmOverloads constructor(
+    context: Context,
+    ...
+) : FrameLayout(context, attrs) {
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+```
+
+`GesturePlayerView` 通过构造函数直接持有 Activity Context（非 Application Context），且在 `PlayerScreen.kt:144` 中通过 `remember { GesturePlayerView(context) }` 创建。
+
+虽然 `remember` 在 Composable 离开组合时会释放引用，但如果自定义 View 内部注册了任何系统回调（如 `AudioManager.OnAudioFocusChangeListener`），可能导致 Activity 泄漏。
+
+**建议**：在 `GesturePlayerView` 中避免缓存 `audioManager`，改为每次使用时获取；或在 `onDetachedFromWindow()` 中清理引用。
+
+---
+
+### 4.5 [中] 同步引擎全局互斥锁限制扩展性
+
+**位置**：`sync/SyncEngine.kt:65`
+
+```kotlin
+private val syncMutex = Mutex()
+```
+
+`dryRun()`、`executeSync()`、`dryRunDelete()`、`executeDelete()` 全部使用同一个 `syncMutex`。这意味着：
+- 无法同时预览两个不同的同步关系
+- 无法在同步进行中浏览远程文件
+- 所有同步操作必须完全串行
+
+**建议**：使用 per-relation 的锁（如 `MutableMap<Long, Mutex>`），允许不同关联并行操作。
+
+---
+
+### 4.6 [低] speedMultiplier 快照捕获问题
+
+**位置**：`player/PlayerScreen.kt:144-149`
+
+```kotlin
+val gestureView = remember {
+    GesturePlayerView(context).apply {
+        this.speedMultiplier = speedMultiplier  // ← 仅初始化时设置一次
+        getPlayerView().player = exoPlayer
     }
-```
-
-对每个视频执行 `List.find()` 线性搜索播放记录，总复杂度 O(videos × records)。当视频数量达到数百时，这个操作在每次列表刷新时（包括排序/筛选切换）都会变得明显。
-
-**建议**: 预先构建 `Map<Long, PlaybackRecordEntity>`。
-
-### 4.2 [中等] SyncEngine.executeSync 中高频率更新 StateFlow
-
-**文件**: `sync/SyncEngine.kt` L247-268
-
-下载进度回调中每次读取字节都调用 `_progress.value = ...`，通过 `MutableStateFlow` 发射更新。在高并发下载场景中，每秒可能产生数百次 StateFlow 更新，导致：
-- 下游 Collector（UI、Notification）被过度唤醒
-- 通知栏频繁更新（系统对通知更新有节流，但仍有开销）
-
-**建议**: 增加节流（如每 500ms 最多更新一次 UI 状态）。
-
-### 4.3 [中等] VideoMetadataExtractor 全量解码分析音频
-
-**文件**: `audio/AudioGainAnalyzer.kt`
-
-`analyze()` 方法解码整个音频轨道来计算 RMS/峰值。对于一个 2 小时的 1080p 视频，音频 PCM 数据可能有数百 MB。没有采样策略，全量解码在某些设备上会导致：
-- 内存压力
-- 处理时间过长
-- `MediaCodec` 超时
-
-**建议**: 采样前 N 秒或间隔采样。
-
-### 4.4 [低] SyncProgress 是 data class，每次更新创建新对象
-
-**文件**: `data/model/SyncProgress.kt`
-
-`SyncProgress` 包含 `List<ActiveDownload>` 和 `Set<String>` 等集合类型字段，每次调用 `.copy()` 都会复制这些集合。在下载进度高频更新场景下产生大量短命对象，增加 GC 压力。
-
----
-
-## 5. 废弃代码与冗余实现
-
-### 5.1 [严重] GridVerticalScrollbar 与 VerticalScrollbar 几乎完全重复
-
-**文件**: `ui/components/GridVerticalScrollbar.kt` vs `ui/components/VerticalScrollbar.kt`
-
-两个文件共 172 行代码，逻辑结构完全相同，仅有的差异是：
-- 输入参数类型：`LazyGridState` vs `LazyListState`
-- `first.offset` 类型：`Int` vs `Offset`（Grid 用 `.y`）
-- 内部数据类名：`GridThumbInfo` vs `ThumbInfo`
-
-应该提取泛型接口或使用共同抽象。
-
-### 5.2 [中等] checkNetwork() 在 SmbFileClient 和 SftpFileClient 中完全重复
-
-**文件**: `sync/smb/SmbFileClient.kt` L28-34, `sync/sftp/SftpFileClient.kt` L28-35
-
-完全相同的网络检查逻辑在两个客户端中各写了一遍。应提取到 `RemoteFileClient` 接口的抽象基类或扩展函数中。
-
-### 5.3 [中等] formatTimeMs() 重复实现
-
-**文件**: `player/GesturePlayerView.kt` L177-187, `ui/util/FormatUtils.kt` L3-16
-
-`GesturePlayerView.formatTimeMs()` 和 `FormatUtils.formatDuration()` 功能完全相同，且前者从未被调用。
-
-### 5.4 [中等] formatFileSize() 重复实现
-
-**文件**: `sync/SyncNotificationHelper.kt` L134-141
-
-`SyncNotificationHelper` 中有独立的 `formatFileSize()` 方法，而 `FormatUtils.kt` 中没有类似功能但应该统一。
-
-### 5.5 [低] RemoteFileClient 接口未被 DI 直接使用
-
-**文件**: `di/SyncModule.kt`
-
-`SyncModule` 分别提供了 `SmbFileClient` 和 `SftpFileClient` 的具体类型，但 `SyncEngine` 通过 `getClient(protocol)` 手动选择客户端。`RemoteFileClient` 接口没有通过 Hilt 的限定符机制来区分不同的实现。
-
----
-
-## 6. 资源管理与内存泄漏
-
-### 6.1 [严重] DebugLogger 中未取消的 CoroutineScope
-
-**文件**: `debug/DebugLogger.kt` L53, L76, L88
-
-多处创建 `CoroutineScope(Dispatchers.IO)` 后未取消：
-- `init()` L53: `val scope = CoroutineScope(...)` — 永远不会被 cancel
-- `enable()` L76: `CoroutineScope(Dispatchers.IO).launch` — 独立 scope
-- `disable()` L88: 同上
-
-### 6.2 [中等] ExoPlayer release 与 Compose 生命周期不同步
-
-**文件**: `player/PlayerScreen.kt` L196-201
-
-ExoPlayer 在 `DisposableEffect.onDispose` 中释放，但 Composition 可能在 Activity `onStop` 之后仍存在短暂时间。ExoPlayer 持有 Surface 和硬件解码器资源，延迟释放可能导致问题。
-
-### 6.3 [中等] GesturePlayerView 持有 Activity Context
-
-**文件**: `player/GesturePlayerView.kt` L13-16
-
-`GesturePlayerView` 直接持有 `Context`（即 Activity），并通过 `context as? Activity` 进行类型转换。作为 `FrameLayout` 子类，它使用 Activity Context 而非 Application Context，这在 View 被长时间持有时有泄漏风险。
-
-### 6.4 [低] SMB/SFTP 连接在异常时可能未完全关闭
-
-**文件**: `sync/smb/SmbFileClient.kt` L101-103
-
-`disconnect()` 仅将 `cifsContext` 设为 null，但 jcifs-ng 的 `SmbFile` 对象可能持有打开的文件句柄。在并发下载过程中如果发生异常，部分 `SmbFile.getInputStream()` 打开的流可能未被关闭。
-
----
-
-## 7. 代码质量与可维护性
-
-### 7.1 [中等] 硬编码中英文字符串混用
-
-整个项目 UI 字符串大部分是硬编码中文字符串（如 "同步基目录内无法手动创建文件夹"、"当前目录为空"），但部分是英文（如 PlayerOverlay 的 "PREVIOUS"、"NEXT"、"IN"、"OUT"）。没有使用 Android 标准的 `strings.xml` 资源文件。
-
-### 7.2 [中等] PlayerScreen 中的嵌套函数捕获外部状态
-
-**文件**: `player/PlayerScreen.kt` L103-110, L206-211, L213-218
-
-`showOverlay()`、`doExit()`、`switchToVideo()` 都是 Composable 函数内部的普通函数，它们捕获并修改大量外部 `remember` 状态变量。这种模式使得状态变更难以追踪和调试。
-
-### 7.3 [低] 大量 `catch (_: Exception) {}` 吞异常
-
-项目中有超过 15 处 `catch (_: Exception) {}` 模式，例如：
-- `AudioGainAnalyzer.kt` L51, L129
-- `VideoMetadataExtractor.kt` L65
-- `SftpFileClient.kt` L69, L145
-
-虽然个人项目可以简化错误处理，但完全吞掉异常使得调试变得极其困难。至少应记录到 `DebugLogger`。
-
-### 7.4 [低] EncryptedSharedPreferences 类型强转
-
-**文件**: `di/DatabaseModule.kt` L64-72
-
-```kotlin
-fun provideEncryptedSharedPreferences(...): EncryptedSharedPreferences {
-    return EncryptedSharedPreferences.create(...) as EncryptedSharedPreferences
 }
 ```
 
-`EncryptedSharedPreferences.create()` 返回 `SharedPreferences`，强转为 `EncryptedSharedPreferences` 虽然运行时正确但是不安全的类型使用，应该使用 `SharedPreferences` 作为返回类型。
+`speedMultiplier` 在 `remember` 块中仅设置一次。如果用户在播放器内修改长按加速倍速（通过设置页），此值不会更新。虽然当前场景中设置页不在播放器内，但这是一个潜在的状态同步问题。
+
+**建议**：使用 `LaunchedEffect(speedMultiplier)` 或 `SideEffect` 更新 `gestureView.speedMultiplier`。
 
 ---
 
-## 8. 改进建议汇总
+## 5. UI/交互层问题
 
-按优先级排列：
+### 5.1 [中] 视频ID列表通过URL传递
 
-| 优先级 | 问题编号 | 建议 | 预估工作量 |
-|--------|---------|------|-----------|
-| P0 | 3.1 | 修复 `DebugLogger.init()` 的协程逻辑 | 0.5h |
-| P0 | 2.1 | 实现 Room Migration 替代 destructive migration | 2h |
-| P1 | 1.1 | 用 Intent extra 替代 SyncEngine.pendingTask | 2h |
-| P1 | 6.1 | 修复 DebugLogger 中所有未取消的 CoroutineScope | 1h |
-| P1 | 3.2 | 用 Channel/Flow 替代 Mutex.tryLock 做进度更新 | 2h |
-| P1 | 4.1 | 用 Map 替代 List.find 做记录查找 | 0.5h |
-| P1 | 2.4 | 退出播放器时恢复屏幕亮度 | 0.5h |
-| P2 | 5.1 | 合并 GridVerticalScrollbar 和 VerticalScrollbar | 1h |
-| P2 | 5.2 | 提取公共 checkNetwork() 到基类 | 0.5h |
-| P2 | 5.3 | 删除 GesturePlayerView.formatTimeMs() | 5min |
-| P2 | 1.3 | 拆分 PlayerScreen 为多个 Composable | 4h |
-| P2 | 1.4 | ViewModel 暴露 UI State 而非 Entity | 4h |
-| P2 | 2.3 | 将 ExoPlayer 生命周期绑定到 ViewModel | 2h |
-| P2 | 3.4 | 用 ExoPlayer Listener 替代 while(true) 轮询 | 1h |
-| P2 | 4.2 | 下载进度更新增加节流 | 1h |
-| P3 | 3.3 | 缩略图修复去重 + 防抖 | 1h |
-| P3 | 3.5 | dryRun 过滤非视频文件或标记不同步 | 1h |
-| P3 | 4.3 | AudioGainAnalyzer 增加采样策略 | 1h |
-| P3 | 7.1 | UI 字符串统一到 strings.xml | 3h |
-| P3 | 7.3 | 异常至少记录到 DebugLogger | 1h |
+**位置**：`navigation/Route.kt:11-15`
+
+```kotlin
+fun create(videoItemId: Long, ..., videoIds: List<Long> = emptyList()): String {
+    val idsParam = if (videoIds.isEmpty()) "" else videoIds.joinToString(",")
+    return "player/$videoItemId?...&videoIds=$idsParam"
+}
+```
+
+视频 ID 列表以逗号分隔字符串嵌入 URL。对于大型文件夹（数千个视频），URL 可能超过 NavHost 的内部限制（通常 Bundle 的 key-value 限制约 1MB，但 URL 长度建议不超过 2048 字符）。
+
+**建议**：将 ID 列表存储在 ViewModel 或临时存储中，通过引用传递。
 
 ---
 
-## 总结
+### 5.2 [中] 无磁盘空间预检查
 
-项目整体架构（MVVM + Repository + Hilt DI + Room + Compose）选择合理，模块划分清晰。主要问题集中在：
+**位置**：`sync/SyncEngine.kt:227-481`
 
-1. **数据安全**: `fallbackToDestructiveMigration` 在数据库升级时会导致数据丢失
-2. **状态管理**: `SyncEngine.pendingTask` 的单例可变状态和 `DebugLogger.init()` 的逻辑错误
-3. **性能**: `List.find()` 线性查找、高频 StateFlow 更新、全量音频解码
-4. **代码重复**: 滚动条、网络检查、时间格式化等存在重复实现
-5. **Android 规范**: 前台服务、通知权限、生命周期管理存在不足
+`executeSync()` 在下载前不检查本地磁盘剩余空间。如果待下载文件总量超过可用空间：
+- 下载过程中会因磁盘满而失败
+- 已下载的 `.sync_tmp` 文件可能残留
+- 部分文件已完成，部分失败，状态不一致
 
-建议优先处理 P0 和 P1 级别的问题，这些直接影响数据安全和功能正确性。
+**建议**：在 `executeSync()` 开始前检查 `totalDownloadBytes` 与 `userdataRoot.usableSpace`，不足时提前警告用户。
+
+---
+
+### 5.3 [低] PlayerScreen 状态变量过多
+
+**位置**：`player/PlayerScreen.kt:89-106`
+
+```kotlin
+var showControls by remember { mutableStateOf(true) }
+var currentVideoId by remember { mutableStateOf(...) }
+var isPlaying by remember { mutableStateOf(true) }
+var isLongPressing by remember { mutableStateOf(false) }
+var currentPosition by remember { mutableLongStateOf(0L) }
+var currentDuration by remember { mutableLongStateOf(0L) }
+var currentOverlay by remember { mutableStateOf<PlayerOverlay?>(null) }
+// ... 共 13+ 个 remember 状态
+```
+
+`PlayerScreen` composable 内有 13+ 个独立 `remember` 状态。任何一个状态变化都可能导致不必要的重组。虽然部分使用了 `mutableLongStateOf` 等原生类型优化，但整体复杂度高。
+
+**建议**：将播放器 UI 状态整合到一个 `data class` + `MutableStateFlow` 中，减少独立状态变量数量。
+
+---
+
+## 6. 汇总与优先级建议
+
+### 🔴 紧急修复（数据安全/丢失风险）
+
+| # | 问题 | 位置 | 影响 |
+|---|------|------|------|
+| 1.1 | 破坏性数据库迁移 | `DatabaseModule.kt:32` | 升级后全量数据丢失 |
+| 3.1 | SSH 主机密钥验证禁用 | `SftpFileClient.kt:41` | MITM 攻击风险 |
+| 3.2 | allowBackup 泄露凭据 | `AndroidManifest.xml:13` | ADB 可提取敏感数据 |
+
+### 🟠 高优先级（数据一致性/性能）
+
+| # | 问题 | 位置 | 影响 |
+|---|------|------|------|
+| 1.3 | 同步任务进程死亡丢失 | `SyncEngine.kt:71` | 同步可能静默失败 |
+| 1.4 | File.renameTo 非原子 | `SyncEngine.kt:363` | 文件可能停留在临时状态 |
+| 1.7 | 部分失败标记为成功 | `SyncEngine.kt:448` | 用户误认为同步完成 |
+| 2.1 | 远程文件全量递归扫描 | `SmbFileClient`/`SftpFileClient` | OOM / 超长等待 |
+| 2.2 | 浏览时批量修复缩略图 | `BrowserViewModel.kt:324` | CPU/IO 风暴 |
+| 4.1 | CoroutineScope 泄漏 | `PlayerScreen.kt:111` | 内存泄漏 |
+| 4.2 | 无网络重连机制 | `SyncEngine.kt` | 长同步易中断 |
+
+### 🟡 中优先级（安全加固/优化）
+
+| # | 问题 | 位置 | 影响 |
+|---|------|------|------|
+| 1.2 | Room Schema 文件缺失 | `build.gradle.kts:65` | 无法生成迁移 |
+| 1.5 | deleteByRelativePath 无关联限定 | `VideoItemDao.kt:65` | 可能误删 |
+| 1.6 | 同步日志无上限 | `SyncLogRepository.kt:24` | 数据库膨胀 |
+| 2.3 | ExoPlayer 轮询更新 | `PlayerScreen.kt:187` | 不必要重组 |
+| 2.4 | SMB/SFTP 单例单连接 | `SyncModule.kt` | 串行瓶颈 |
+| 3.3 | 密码内存驻留 | `SyncSourceRepository.kt:55` | 内存中可读密码 |
+| 3.4 | SMB 无加密强制 | `SmbFileClient.kt:57` | 明文传输风险 |
+| 4.3 | 空异常捕获 | 多处 | 隐藏运行时错误 |
+| 4.5 | 全局同步互斥锁 | `SyncEngine.kt:65` | 无法并行操作 |
+| 5.1 | URL 传递视频 ID 列表 | `Route.kt:11` | 大列表可能截断 |
+| 5.2 | 无磁盘空间预检查 | `SyncEngine.kt` | 磁盘满后部分失败 |
+
+### 🟢 低优先级（代码质量/优化）
+
+| # | 问题 | 位置 | 影响 |
+|---|------|------|------|
+| 2.5 | 逐文件元数据提取 | `SyncEngine.kt:377` | 同步速度 |
+| 2.6 | combine 重组频繁 | `BrowserViewModel.kt:108` | 列表性能 |
+| 4.4 | Activity Context 泄漏风险 | `GesturePlayerView.kt:34` | 潜在泄漏 |
+| 4.6 | speedMultiplier 快照 | `PlayerScreen.kt:147` | 状态不同步 |
+| 5.3 | PlayerScreen 状态过多 | `PlayerScreen.kt:89` | 可维护性 |
+
+---
+
+## 附录：代码统计
+
+| 模块 | 文件数 | 核心关注点 |
+|------|--------|-----------|
+| `data/` | 16 | Room DB、DAO、Repository、Entity、Model |
+| `sync/` | 11 | 同步引擎、SMB/SFTP 客户端、服务 |
+| `player/` | 3 | ExoPlayer、手势控制、播放器 UI |
+| `browser/` | 4 | 文件浏览、搜索 |
+| `settings/` | 13 | 设置页面（同步源/关联/播放/增益） |
+| `navigation/` | 2 | 路由、NavHost |
+| `di/` | 2 | Hilt 模块 |
+| `audio/` | 1 | 音频增益分析 |
+| `storage/` | 1 | 存储路径管理 |
