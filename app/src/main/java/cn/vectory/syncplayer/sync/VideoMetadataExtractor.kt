@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.sync
 import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
+import android.util.Log
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.StoragePaths
@@ -18,6 +19,8 @@ class VideoMetadataExtractor @Inject constructor(
     private val storagePaths: StoragePaths,
     @ApplicationContext private val context: Context
 ) {
+    private companion object { const val TAG = "VideoMetadataExtractor" }
+
     private val thumbnailDir: File
         get() = storagePaths.thumbnailsDir
 
@@ -62,10 +65,11 @@ class VideoMetadataExtractor @Inject constructor(
             )
             videoRepository.upsert(updated)
             return updated
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to extract metadata for ${videoItem.fileName}", e)
             return videoItem
         } finally {
-            try { retriever.release() } catch (_: Exception) {}
+            try { retriever.release() } catch (e: Exception) { Log.w(TAG, "Failed to release retriever", e) }
         }
     }
 

@@ -2,6 +2,7 @@ package cn.vectory.syncplayer.audio
 
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.util.Log
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -21,6 +22,8 @@ data class AudioGainResult(
 
 @Singleton
 class AudioGainAnalyzer @Inject constructor() {
+
+    private companion object { const val TAG = "AudioGainAnalyzer" }
 
     fun analyze(filePath: String): AudioGainResult? {
         val file = File(filePath)
@@ -49,10 +52,11 @@ class AudioGainAnalyzer @Inject constructor() {
             } else {
                 AudioGainResult(rmsDb, peakDb, gainDb)
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(TAG, "Audio gain analysis failed for $filePath", e)
             null
         } finally {
-            try { extractor.release() } catch (_: Exception) {}
+            try { extractor.release() } catch (e: Exception) { Log.w(TAG, "Failed to release extractor", e) }
         }
     }
 
@@ -127,11 +131,12 @@ class AudioGainAnalyzer @Inject constructor() {
 
             if (totalSamples == 0L) return null
             PcmStats(sqrt(sumSquared / totalSamples).toFloat(), peakSample.toFloat())
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(TAG, "PCM decode and measure failed", e)
             null
         } finally {
-            try { codec.stop() } catch (_: Exception) {}
-            try { codec.release() } catch (_: Exception) {}
+            try { codec.stop() } catch (e: Exception) { Log.w(TAG, "Failed to stop codec", e) }
+            try { codec.release() } catch (e: Exception) { Log.w(TAG, "Failed to release codec", e) }
         }
     }
 }

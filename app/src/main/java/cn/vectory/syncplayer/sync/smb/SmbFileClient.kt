@@ -1,6 +1,7 @@
 package cn.vectory.syncplayer.sync.smb
 
 import android.content.Context
+import android.util.Log
 import cn.vectory.syncplayer.data.model.RemoteFile
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.sync.RemoteFileClient
@@ -22,6 +23,8 @@ class SmbFileClient(
     private val context: Context,
     private val userPrefs: UserPreferencesRepository
 ) : RemoteFileClient {
+
+    private companion object { const val TAG = "SmbFileClient" }
 
     private var cifsContext: jcifs.CIFSContext? = null
     private var currentHost: String = ""
@@ -122,10 +125,6 @@ class SmbFileClient(
         result
     }
 
-    /**
-     * List SMB shares available on the host.
-     * Uses `smb://host/` URL which returns share entries via IPC$ enumeration.
-     */
     suspend fun listShares(): List<RemoteFile> = withContext(Dispatchers.IO) {
         val ctx = cifsContext ?: throw Exception("SMB未连接，请先执行connect()")
         val result = mutableListOf<RemoteFile>()
@@ -133,6 +132,7 @@ class SmbFileClient(
         val shares = try {
             smbFile.listFiles() ?: return@withContext result
         } catch (e: Exception) {
+            Log.w(TAG, "Failed to list SMB shares", e)
             return@withContext result
         }
         for (share in shares) {
@@ -149,7 +149,7 @@ class SmbFileClient(
                         )
                     )
                 }
-            } catch (_: Exception) { }
+            } catch (e: Exception) { Log.w(TAG, "Failed to process SMB share entry", e) }
         }
         result
     }
@@ -157,7 +157,6 @@ class SmbFileClient(
     override suspend fun listDirectories(path: String): List<RemoteFile> = withContext(Dispatchers.IO) {
         val ctx = cifsContext ?: throw Exception("SMB未连接，请先执行connect()")
 
-        // Root path "/" means we should list SMB shares, not file-system directories
         val trimmedPath = path.trim('/')
         if (trimmedPath.isEmpty()) {
             return@withContext listShares()
@@ -179,6 +178,7 @@ class SmbFileClient(
         val children = try {
             dir.listFiles() ?: return@withContext result
         } catch (e: Exception) {
+            Log.w(TAG, "Failed to list SMB directory: $path", e)
             return@withContext result
         }
         for (child in children) {
@@ -195,17 +195,20 @@ class SmbFileClient(
                         )
                     )
                 }
-            } catch (_: Exception) { }
+            } catch (e: Exception) { Log.w(TAG, "Failed to process SMB directory entry", e) }
         }
         result
     }
+
     private fun listFilesRecursive(
         ctx: jcifs.CIFSContext,
         dir: SmbFile,
         share: String,
         remoteBasePath: String,
-        result: MutableList<RemoteFile>
+        result: MutableList<RemoteFile>,
+        maxFiles: Int = 10000
     ) {
+        if (result.size >= maxFiles) return
         val children = try {
             dir.listFiles() ?: return
         } catch (e: Exception) {
@@ -213,9 +216,10 @@ class SmbFileClient(
         }
 
         for (child in children) {
+            if (result.size >= maxFiles) return
             try {
                 if (child.isDirectory) {
-                    listFilesRecursive(ctx, child, share, remoteBasePath, result)
+                    listFilesRecursive(ctx, child, share, remoteBasePath, result, maxFiles)
                 } else {
                     val relPath = extractRelativePath(child.url.toString(), share, remoteBasePath)
                     result.add(
@@ -228,7 +232,7 @@ class SmbFileClient(
                         )
                     )
                 }
-            } catch (_: Exception) { }
+            } catch (e: Exception) { Log.w(TAG, "Failed to process SMB file entry", e) }
         }
     }
 
@@ -280,6 +284,7 @@ class SmbFileClient(
             throw Exception("下载失败 $remotePath: ${e.message}", e)
         }
     }
+
     override suspend fun deleteFile(remotePath: String): Boolean = withContext(Dispatchers.IO) {
         val ctx = cifsContext ?: throw Exception("SMB未连接，请先执行connect()")
         try {
