@@ -40,7 +40,7 @@ class BrowserViewModel @Inject constructor(
 ) : ViewModel() {
 
     enum class SortMode { FILENAME_ASC, FILENAME_DESC, DURATION_ASC, DURATION_DESC }
-    enum class BrowseFilter { ALL, VIDEO_ONLY, TRASHED_ONLY }
+    enum class BrowseFilter { ALL, VIDEO_ONLY, UNWATCHED }
     enum class ViewMode { LIST, GRID }
 
     private val _currentFolder = MutableStateFlow("")
@@ -208,7 +208,9 @@ class BrowserViewModel @Inject constructor(
         val filteredVideos = when (filterVal) {
             BrowseFilter.ALL -> allVideos
             BrowseFilter.VIDEO_ONLY -> allVideos.filter { isVideoFile(it.name) }
-            BrowseFilter.TRASHED_ONLY -> allVideos.filter { it.isTrashed }
+            BrowseFilter.UNWATCHED -> allVideos.filter {
+                isVideoFile(it.name) && it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
+            }
         }
         val sortedFolders = folders.sortedBy { it.name.lowercase() }
         val sortedVideos = when (mode) {

@@ -30,8 +30,8 @@ android {
         applicationId = "cn.vectory.syncplayer"
         minSdk = 34
         targetSdk = 35
-        versionCode = 50
-        versionName = "9.5.0"
+        versionCode = 51
+        versionName = "9.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -92,6 +92,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons)
+    implementation(libs.compose.foundation)
     debugImplementation(libs.compose.ui.tooling)
 
     // Navigation

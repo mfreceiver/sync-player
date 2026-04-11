@@ -7,6 +7,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
@@ -32,11 +38,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -103,6 +114,9 @@ fun PlayerScreen(
     var seekTarget by remember { mutableLongStateOf(-1L) }
     var isUserSeeking by remember { mutableStateOf(false) }
     var userSeekPosition by remember { mutableFloatStateOf(0f) }
+
+    var isHighSpeedSeeking by remember { mutableStateOf(false) }
+    var highSpeedSeekPosition by remember { mutableLongStateOf(0L) }
 
     var originalBrightness by remember { mutableFloatStateOf(-1f) }
 
@@ -402,41 +416,85 @@ fun PlayerScreen(
                 enter = fadeIn(),
                 exit = fadeOut()
             ) {
-                BottomToolbar(
-                    isPlaying = isPlaying,
-                    playbackSpeed = playbackSpeed,
-                    showSpeedMenu = showSpeedMenu,
-                    onShowSpeedMenuChange = { showSpeedMenu = it },
-                    onPlayPause = {
-                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                    },
-                    onPrev = {
-                        val prevId = viewModel.getPrevVideoId()
-                        if (prevId != null) {
-                            showOverlay(PlayerOverlay.Previous)
-                            switchToVideo(prevId)
+                Box {
+                    BottomToolbar(
+                        isPlaying = isPlaying,
+                        playbackSpeed = playbackSpeed,
+                        showSpeedMenu = showSpeedMenu,
+                        onShowSpeedMenuChange = { showSpeedMenu = it },
+                        onPlayPause = {
+                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                        },
+                        onPrev = {
+                            val prevId = viewModel.getPrevVideoId()
+                            if (prevId != null) {
+                                showOverlay(PlayerOverlay.Previous)
+                                switchToVideo(prevId)
+                            }
+                        },
+                        onNext = {
+                            val nextId = viewModel.getNextVideoId()
+                            if (nextId != null) {
+                                showOverlay(PlayerOverlay.Next)
+                                switchToVideo(nextId)
+                            }
+                        },
+                        onRewind = { exoPlayer.seekTo((exoPlayer.currentPosition - 10_000).coerceAtLeast(0)) },
+                        onForward = { exoPlayer.seekTo((exoPlayer.currentPosition + 10_000).coerceAtMost(exoPlayer.duration.coerceAtLeast(0))) },
+                        onSpeedChange = { speed ->
+                            viewModel.setPlaybackSpeed(speed)
+                            exoPlayer.playbackParameters = PlaybackParameters(speed)
+                            showSpeedMenu = false
+                        },
+                        isFullscreen = isFullscreen,
+                        onRotation = {
+                            viewModel.toggleFullscreen()
+                            showOverlay(PlayerOverlay.Orientation(if (isFullscreen) "ROTATION" else "FULLSCREEN"))
                         }
-                    },
-                    onNext = {
-                        val nextId = viewModel.getNextVideoId()
-                        if (nextId != null) {
-                            showOverlay(PlayerOverlay.Next)
-                            switchToVideo(nextId)
-                        }
-                    },
-                    onRewind = { exoPlayer.seekTo((exoPlayer.currentPosition - 10_000).coerceAtLeast(0)) },
-                    onForward = { exoPlayer.seekTo((exoPlayer.currentPosition + 10_000).coerceAtMost(exoPlayer.duration.coerceAtLeast(0))) },
-                    onSpeedChange = { speed ->
-                        viewModel.setPlaybackSpeed(speed)
-                        exoPlayer.playbackParameters = PlaybackParameters(speed)
-                        showSpeedMenu = false
-                    },
-                    isFullscreen = isFullscreen,
-                    onRotation = {
-                        viewModel.toggleFullscreen()
-                        showOverlay(PlayerOverlay.Orientation(if (isFullscreen) "ROTATION" else "FULLSCREEN"))
-                    }
-                )
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .align(Alignment.TopCenter)
+                            .pointerInput(currentDuration) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val down = awaitFirstDown(requireUnconsumed = false)
+                                        val startX = down.position.x
+                                        val basePosition = exoPlayer.currentPosition
+                                        val dur = currentDuration
+                                        if (dur <= 0) continue
+                                        down.consume()
+                                        isHighSpeedSeeking = true
+
+                                        do {
+                                            val event = awaitPointerEvent()
+                                            val change = event.changes.first()
+                                            change.consume()
+                                            val dx = change.position.x - startX
+                                            val ratio = dx / size.width
+                                            val targetMs = (basePosition + ratio * dur).toLong()
+                                                .coerceIn(0, dur)
+                                            highSpeedSeekPosition = targetMs
+                                            showOverlay(PlayerOverlay.Seek(targetMs, dur))
+                                        } while (change.pressed)
+
+                                        val finalTarget = highSpeedSeekPosition
+                                        seekTarget = finalTarget
+                                        currentPosition = finalTarget
+                                        exoPlayer.seekTo(finalTarget)
+                                        isHighSpeedSeeking = false
+                                        overlayHideJob.value?.cancel()
+                                        overlayHideJob.value = coroutineScope.launch {
+                                            delay(750L)
+                                            currentOverlay = null
+                                        }
+                                    }
+                                }
+                            }
+                    )
+                }
             }
         }
 
@@ -467,18 +525,81 @@ private fun TopProgressBar(
         else -> 0f
     }
 
+    val isSeeking = isUserSeeking || isGestureSeeking
+    val displayElapsed = when {
+        isUserSeeking -> (userSeekPosition * currentDuration).toLong()
+        isGestureSeeking -> (gestureSeekPosition * currentDuration).toLong()
+        else -> currentPosition
+    }
+    val totalDurationText = formatDuration(currentDuration)
+    val elapsedText = formatDuration(displayElapsed)
+
+    val shouldMarquee = remember(fileName) {
+        fileName.length > 30
+    }
+    val textMeasurer = rememberTextMeasurer()
+
     Column(
         modifier = modifier
-            .background(Color.Black.copy(alpha = 0.5f))
-            .padding(horizontal = 12.dp)
-            .padding(top = 8.dp, bottom = 8.dp)
+            .background(Color(0xFF1565C0).copy(alpha = 0.85f))
+            .padding(horizontal = 8.dp)
+            .padding(top = 4.dp, bottom = 4.dp)
     ) {
         Box(
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(32.dp),
+            contentAlignment = Alignment.Center
         ) {
+            if (shouldMarquee) {
+                val infiniteTransition = rememberInfiniteTransition(label = "marquee")
+                val scrollOffset by infiniteTransition.animateFloat(
+                    initialValue = 0f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(durationMillis = 8000, easing = LinearEasing),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "marqueeOffset"
+                )
+                val textStyle = MaterialTheme.typography.labelMedium
+                val textLayoutResult = remember(fileName) {
+                    textMeasurer.measure(fileName, textStyle)
+                }
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 44.dp)
+                        .height(32.dp)
+                ) {
+                    val availableWidth = size.width
+                    val maxOffset = (textLayoutResult.size.width.toFloat() - availableWidth).coerceAtLeast(0f)
+                    val offsetX = -scrollOffset * maxOffset
+                    drawText(
+                        textLayoutResult = textLayoutResult,
+                        color = Color.White,
+                        topLeft = Offset(offsetX, (size.height - textLayoutResult.size.height) / 2f)
+                    )
+                }
+            } else {
+                Text(
+                    text = fileName,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 44.dp),
+                    textAlign = TextAlign.Center
+                )
+            }
+
             IconButton(
                 onClick = onExit,
-                modifier = Modifier.size(36.dp).align(Alignment.CenterStart)
+                modifier = Modifier
+                    .size(36.dp)
+                    .align(Alignment.CenterStart)
             ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
@@ -488,20 +609,11 @@ private fun TopProgressBar(
                 )
             }
 
-            Text(
-                text = fileName,
-                color = Color.White.copy(alpha = 0.8f),
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(horizontal = 48.dp)
-            )
-
             IconButton(
                 onClick = onToggleTrash,
-                modifier = Modifier.size(36.dp).align(Alignment.CenterEnd)
+                modifier = Modifier
+                    .size(36.dp)
+                    .align(Alignment.CenterEnd)
             ) {
                 Icon(
                     imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
@@ -514,15 +626,9 @@ private fun TopProgressBar(
 
         ThinProgressSlider(
             progress = sliderValue,
-            elapsed = formatDuration(
-                when {
-                    isUserSeeking -> (userSeekPosition * currentDuration).toLong()
-                    isGestureSeeking -> (gestureSeekPosition * currentDuration).toLong()
-                    else -> currentPosition
-                }
-            ),
-            totalDuration = formatDuration(currentDuration),
-            isUserSeeking = isUserSeeking || isGestureSeeking,
+            elapsed = elapsedText,
+            totalDuration = totalDurationText,
+            isUserSeeking = isSeeking,
             onProgressChange = onSeekChange,
             onProgressChangeFinished = { onSeekConfirm(userSeekPosition) },
             modifier = Modifier

@@ -30,8 +30,6 @@ fun PlaybackSettingsScreen(
     val longPressSpeed by viewModel.longPressSpeed.collectAsStateWithLifecycle()
     val defaultSortMode by viewModel.defaultSortMode.collectAsStateWithLifecycle()
     val defaultFilter by viewModel.defaultFilter.collectAsStateWithLifecycle()
-    val maxConcurrentDownloads by viewModel.maxConcurrentDownloads.collectAsStateWithLifecycle()
-    val connectionTimeout by viewModel.connectionTimeout.collectAsStateWithLifecycle()
     val viewMode by viewModel.viewMode.collectAsStateWithLifecycle()
     val gridColumns by viewModel.gridColumns.collectAsStateWithLifecycle()
     val progressAlwaysVisible by viewModel.progressAlwaysVisible.collectAsStateWithLifecycle()
@@ -110,38 +108,6 @@ fun PlaybackSettingsScreen(
                                 selected = defaultFilter == filter,
                                 onClick = { viewModel.setDefaultFilter(filter) },
                                 label = { Text(filterLabel(filter), maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                            )
-                        }
-                    }
-                }
-            }
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("并发下载数", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(12.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(1, 2, 3).forEach { count ->
-                            FilterChip(
-                                selected = maxConcurrentDownloads == count,
-                                onClick = { viewModel.setMaxConcurrentDownloads(count) },
-                                label = { Text("$count 个", maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                            )
-                        }
-                    }
-                }
-            }
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("连接超时", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(12.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(3, 5, 10, 15, 30).forEach { seconds ->
-                            FilterChip(
-                                selected = connectionTimeout == seconds,
-                                onClick = { viewModel.setConnectionTimeout(seconds) },
-                                label = { Text("${seconds}s", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             )
                         }
                     }
@@ -274,7 +240,7 @@ private fun sortModeIcon(mode: BrowserViewModel.SortMode) = when (mode) {
 private fun filterLabel(filter: BrowserViewModel.BrowseFilter): String = when (filter) {
     BrowserViewModel.BrowseFilter.ALL -> "全部"
     BrowserViewModel.BrowseFilter.VIDEO_ONLY -> "仅视频"
-    BrowserViewModel.BrowseFilter.TRASHED_ONLY -> "仅回收站"
+    BrowserViewModel.BrowseFilter.UNWATCHED -> "没看过"
 }
 
 private fun viewModeLabel(mode: BrowserViewModel.ViewMode): String = when (mode) {

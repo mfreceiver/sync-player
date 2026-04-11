@@ -31,7 +31,7 @@ fun SyncPlayerTheme(
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = when {
+    val baseScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context)
@@ -40,6 +40,22 @@ fun SyncPlayerTheme(
         darkTheme -> darkColorScheme()
         else -> lightColorScheme()
     }
+
+    val bluePrimary = Color(0xFF1565C0)
+    val blueOnPrimary = Color.White
+    val bluePrimaryContainer = Color(0xFF90CAF9)
+    val blueOnPrimaryContainer = Color(0xFF001D36)
+    val blueSecondaryContainer = Color(0xFFD4E4FF)
+    val blueOnSecondaryContainer = Color(0xFF001C3A)
+
+    val colorScheme = baseScheme.copy(
+        primary = bluePrimary,
+        onPrimary = blueOnPrimary,
+        primaryContainer = bluePrimaryContainer,
+        onPrimaryContainer = blueOnPrimaryContainer,
+        secondaryContainer = blueSecondaryContainer,
+        onSecondaryContainer = blueOnSecondaryContainer,
+    )
 
     val typography = Typography()
 

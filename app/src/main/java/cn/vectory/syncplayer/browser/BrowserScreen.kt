@@ -288,9 +288,9 @@ fun BrowserScreen(
                                         onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.VIDEO_ONLY); showSortMenu = false }
                                     ) { Icon(Icons.Default.VideoFile, null, modifier = Modifier.size(20.dp)) }
                                     IconOptionChip(
-                                        selected = filter == BrowserViewModel.BrowseFilter.TRASHED_ONLY,
-                                        onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.TRASHED_ONLY); showSortMenu = false }
-                                    ) { Icon(Icons.Default.Delete, null, modifier = Modifier.size(20.dp)) }
+                                        selected = filter == BrowserViewModel.BrowseFilter.UNWATCHED,
+                                        onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.UNWATCHED); showSortMenu = false }
+                                    ) { Icon(Icons.Default.PlayCircleOutline, null, modifier = Modifier.size(20.dp)) }
                                 }
                                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                                 Text(

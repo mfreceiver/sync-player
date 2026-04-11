@@ -7,7 +7,6 @@ import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.sync.RemoteFileClient
 import cn.vectory.syncplayer.sync.checkNetworkAvailable
 import cn.vectory.syncplayer.sync.mapNetworkErrorMessage
-import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
@@ -18,8 +17,7 @@ import java.io.File
 import java.io.FileOutputStream
 
 class SftpFileClient(
-    private val context: Context,
-    private val userPrefs: UserPreferencesRepository
+    private val context: Context
 ) : RemoteFileClient {
 
     private companion object { const val TAG = "SftpFileClient" }
@@ -44,7 +42,7 @@ class SftpFileClient(
         try {
             val client = SSHClient()
             client.addHostKeyVerifier(PromiscuousVerifier())
-            val timeoutMs = userPrefs.getConnectionTimeout() * 1000
+            val timeoutMs = 5000
             client.setConnectTimeout(timeoutMs)
             client.setTimeout(timeoutMs)
             client.connect(source.host, source.port)

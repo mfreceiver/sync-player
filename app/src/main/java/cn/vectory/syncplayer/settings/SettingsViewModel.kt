@@ -26,12 +26,6 @@ class SettingsViewModel @Inject constructor(
     private val _defaultFilter = MutableStateFlow(BrowserViewModel.BrowseFilter.ALL)
     val defaultFilter: StateFlow<BrowserViewModel.BrowseFilter> = _defaultFilter.asStateFlow()
 
-    private val _maxConcurrentDownloads = MutableStateFlow(1)
-    val maxConcurrentDownloads: StateFlow<Int> = _maxConcurrentDownloads.asStateFlow()
-
-    private val _connectionTimeout = MutableStateFlow(5)
-    val connectionTimeout: StateFlow<Int> = _connectionTimeout.asStateFlow()
-
     private val _viewMode = MutableStateFlow(BrowserViewModel.ViewMode.LIST)
     val viewMode: StateFlow<BrowserViewModel.ViewMode> = _viewMode.asStateFlow()
 
@@ -65,8 +59,6 @@ class SettingsViewModel @Inject constructor(
             } catch (_: Exception) {
                 BrowserViewModel.BrowseFilter.ALL
             }
-            _maxConcurrentDownloads.value = userPrefs.getMaxConcurrentDownloads()
-            _connectionTimeout.value = userPrefs.getConnectionTimeout()
             _viewMode.value = try {
                 BrowserViewModel.ViewMode.valueOf(userPrefs.getViewMode())
             } catch (_: Exception) {
@@ -96,16 +88,6 @@ class SettingsViewModel @Inject constructor(
     fun setDefaultFilter(filter: BrowserViewModel.BrowseFilter) {
         _defaultFilter.value = filter
         viewModelScope.launch { userPrefs.setDefaultFilter(filter.name) }
-    }
-
-    fun setMaxConcurrentDownloads(max: Int) {
-        _maxConcurrentDownloads.value = max
-        viewModelScope.launch { userPrefs.setMaxConcurrentDownloads(max) }
-    }
-
-    fun setConnectionTimeout(timeoutSeconds: Int) {
-        _connectionTimeout.value = timeoutSeconds
-        viewModelScope.launch { userPrefs.setConnectionTimeout(timeoutSeconds) }
     }
 
     fun setViewMode(mode: BrowserViewModel.ViewMode) {

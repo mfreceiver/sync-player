@@ -16,7 +16,6 @@ import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
-import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
@@ -59,7 +58,6 @@ class SyncEngine @Inject constructor(
     private val smbFileClient: SmbFileClient,
     private val sftpFileClient: SftpFileClient,
     private val storagePaths: StoragePaths,
-    private val userPrefs: UserPreferencesRepository,
     @ApplicationContext private val context: Context
 ) {
 
@@ -148,6 +146,12 @@ class SyncEngine @Inject constructor(
         root.walkTopDown().filter { it.name.endsWith(".sync_tmp") }.forEach {
             it.delete()
         }
+    }
+
+    private fun cleanupEmptyDirectories(root: File) {
+        root.walkBottomUp()
+            .filter { it.isDirectory && it != root && it.listFiles()?.isEmpty() == true }
+            .forEach { it.delete() }
     }
 
     private fun formatSize(bytes: Long): String = when {
@@ -296,7 +300,7 @@ class SyncEngine @Inject constructor(
         val relation = syncRelationRepository.getById(relationId) ?: return false
         val source = syncSourceRepository.getById(relation.syncSourceId) ?: return false
         val client = getClient(source.protocol)
-        val maxConcurrency = userPrefs.getMaxConcurrentDownloads()
+        val maxConcurrency = 3
         val name = relationName.ifEmpty { relation.name }
         val basePath = localBasePath.ifEmpty { relation.localBasePath }
 
@@ -522,6 +526,8 @@ class SyncEngine @Inject constructor(
                 _progress.value = _progress.value.copy(completedPaths = completedPathsSet.toSet())
             }
 
+            cleanupEmptyDirectories(localRoot)
+
             _progress.value = SyncProgress(
                 isRunning = false,
                 phase = SyncPhase.COMPLETED,
@@ -703,6 +709,9 @@ class SyncEngine @Inject constructor(
                 )
                 completedActions++
             }
+
+            val localRoot = getLocalSyncRoot(relation)
+            cleanupEmptyDirectories(localRoot)
 
             _progress.value = SyncProgress(
                 isRunning = false,
