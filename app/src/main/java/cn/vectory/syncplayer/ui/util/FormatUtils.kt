@@ -1,7 +1,8 @@
 package cn.vectory.syncplayer.ui.util
 
 internal fun formatDuration(ms: Long?): String {
-    if (ms == null || ms <= 0) return ""
+    if (ms == null) return ""
+    if (ms <= 0) return "0:00"
 
     val totalSeconds = ms / 1000
     val hours = totalSeconds / 3600

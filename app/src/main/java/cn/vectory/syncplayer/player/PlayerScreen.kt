@@ -923,7 +923,7 @@ private fun PlayerOverlayView(overlay: PlayerOverlay?) {
                 )
 
                 val text: String = when (overlay) {
-                    is PlayerOverlay.Seek -> "${formatDuration(overlay.positionMs)} X ${formatDuration(overlay.durationMs)}"
+                    is PlayerOverlay.Seek -> "${formatDuration(overlay.positionMs)} / ${formatDuration(overlay.durationMs)}"
                     is PlayerOverlay.Volume -> "${overlay.percent}%"
                     is PlayerOverlay.Brightness -> "${overlay.percent}%"
                     is PlayerOverlay.SpeedUp -> "${overlay.multiplier}X"
