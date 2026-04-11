@@ -16,7 +16,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -435,6 +434,7 @@ fun PlayerScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
+                    .statusBarsPadding()
             )
         }
 
@@ -448,7 +448,49 @@ fun PlayerScreen(
                 enter = fadeIn(),
                 exit = fadeOut()
             ) {
-                Box {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .background(Color.Transparent)
+                            .pointerInput(currentDuration) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val down = awaitFirstDown(requireUnconsumed = false)
+                                        val startX = down.position.x
+                                        val basePosition = exoPlayer.currentPosition
+                                        val dur = currentDuration
+                                        if (dur <= 0) continue
+                                        down.consume()
+                                        isHighSpeedSeeking = true
+
+                                        do {
+                                            val event = awaitPointerEvent()
+                                            val change = event.changes.first()
+                                            change.consume()
+                                            val dx = change.position.x - startX
+                                            val ratio = dx / size.width
+                                            val targetMs = (basePosition + ratio * dur).toLong()
+                                                .coerceIn(0, dur)
+                                            highSpeedSeekPosition = targetMs
+                                            showOverlay(PlayerOverlay.Seek(targetMs, dur))
+                                        } while (change.pressed)
+
+                                        val finalTarget = highSpeedSeekPosition
+                                        seekTarget = finalTarget
+                                        currentPosition = finalTarget
+                                        exoPlayer.seekTo(finalTarget)
+                                        isHighSpeedSeeking = false
+                                        overlayHideJob.value?.cancel()
+                                        overlayHideJob.value = coroutineScope.launch {
+                                            delay(750L)
+                                            currentOverlay = null
+                                        }
+                                    }
+                                }
+                            }
+                    )
                     BottomToolbar(
                         isPlaying = isPlaying,
                         playbackSpeed = playbackSpeed,
@@ -483,50 +525,6 @@ fun PlayerScreen(
                             viewModel.toggleFullscreen()
                             showOverlay(PlayerOverlay.Orientation(if (isFullscreen) "ROTATION" else "FULLSCREEN"))
                         }
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .align(Alignment.TopCenter)
-                            .pointerInput(currentDuration) {
-                                awaitPointerEventScope {
-                                    while (true) {
-                                        val down = awaitFirstDown(requireUnconsumed = false)
-                                        val longPress = awaitLongPressOrCancellation(down.id)
-                                            ?: continue
-                                        val startX = longPress.position.x
-                                        val basePosition = exoPlayer.currentPosition
-                                        val dur = currentDuration
-                                        if (dur <= 0) continue
-                                        longPress.consume()
-                                        isHighSpeedSeeking = true
-
-                                        do {
-                                            val event = awaitPointerEvent()
-                                            val change = event.changes.first()
-                                            change.consume()
-                                            val dx = change.position.x - startX
-                                            val ratio = dx / size.width
-                                            val targetMs = (basePosition + ratio * dur).toLong()
-                                                .coerceIn(0, dur)
-                                            highSpeedSeekPosition = targetMs
-                                            showOverlay(PlayerOverlay.Seek(targetMs, dur))
-                                        } while (change.pressed)
-
-                                        val finalTarget = highSpeedSeekPosition
-                                        seekTarget = finalTarget
-                                        currentPosition = finalTarget
-                                        exoPlayer.seekTo(finalTarget)
-                                        isHighSpeedSeeking = false
-                                        overlayHideJob.value?.cancel()
-                                        overlayHideJob.value = coroutineScope.launch {
-                                            delay(750L)
-                                            currentOverlay = null
-                                        }
-                                    }
-                                }
-                            }
                     )
                 }
             }
@@ -575,125 +573,133 @@ private fun TopProgressBar(
     var dragProgress by remember { mutableFloatStateOf(0f) }
     val currentOnFinished by rememberUpdatedState({ onSeekConfirm(dragProgress) })
 
-    Box(
+    Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(56.dp)
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        val p = (down.position.x / size.width).coerceIn(0f, 1f)
-                        dragProgress = p
-                        currentOnChange(p)
-                        down.consume()
+            .height(48.dp)
+            .background(Color(0xFF90CAF9)),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(
+            onClick = onExit,
+            modifier = Modifier.size(40.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Close,
+                contentDescription = "Exit",
+                tint = Color.White,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val p = (down.position.x / size.width).coerceIn(0f, 1f)
+                            dragProgress = p
+                            currentOnChange(p)
+                            down.consume()
 
-                        do {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.first()
-                            change.consume()
-                            val cp = (change.position.x / size.width).coerceIn(0f, 1f)
-                            dragProgress = cp
-                            currentOnChange(cp)
-                        } while (change.pressed)
+                            do {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.first()
+                                change.consume()
+                                val cp = (change.position.x / size.width).coerceIn(0f, 1f)
+                                dragProgress = cp
+                                currentOnChange(cp)
+                            } while (change.pressed)
 
-                        currentOnFinished()
+                            currentOnFinished()
+                        }
                     }
                 }
-            }
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFF90CAF9))
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(sliderValue)
-                .background(Color(0xFF1565C0))
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(
-                onClick = onExit,
-                modifier = Modifier.size(36.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Close,
-                    contentDescription = "Exit",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            Text(
-                text = if (isSeeking) "$elapsedText / $totalDurationText" else elapsedText,
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.widthIn(min = 40.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF90CAF9))
             )
             Box(
                 modifier = Modifier
-                    .weight(1f)
+                    .fillMaxHeight()
+                    .fillMaxWidth(sliderValue)
+                    .background(Color(0xFF1565C0))
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
                     .padding(horizontal = 8.dp),
-                contentAlignment = Alignment.Center
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                if (shouldMarquee) {
-                    val infiniteTransition = rememberInfiniteTransition(label = "marquee")
-                    val scrollOffset by infiniteTransition.animateFloat(
-                        initialValue = 0f,
-                        targetValue = 1f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(durationMillis = 8000, easing = LinearEasing),
-                            repeatMode = RepeatMode.Reverse
-                        ),
-                        label = "marqueeOffset"
-                    )
-                    val textStyle = MaterialTheme.typography.labelMedium
-                    val textLayoutResult = remember(fileName) {
-                        textMeasurer.measure(fileName, textStyle)
-                    }
-                    Canvas(modifier = Modifier.fillMaxWidth().height(20.dp)) {
-                        val availableWidth = size.width
-                        val maxOffset = (textLayoutResult.size.width.toFloat() - availableWidth).coerceAtLeast(0f)
-                        val offsetX = -scrollOffset * maxOffset
-                        drawText(
-                            textLayoutResult = textLayoutResult,
+                Text(
+                    text = if (isSeeking) "$elapsedText / $totalDurationText" else elapsedText,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.widthIn(min = 40.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (shouldMarquee) {
+                        val infiniteTransition = rememberInfiniteTransition(label = "marquee")
+                        val scrollOffset by infiniteTransition.animateFloat(
+                            initialValue = 0f,
+                            targetValue = 1f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(durationMillis = 8000, easing = LinearEasing),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "marqueeOffset"
+                        )
+                        val textStyle = MaterialTheme.typography.labelMedium
+                        val textLayoutResult = remember(fileName) {
+                            textMeasurer.measure(fileName, textStyle)
+                        }
+                        Canvas(modifier = Modifier.fillMaxWidth().height(20.dp)) {
+                            val availableWidth = size.width
+                            val maxOffset = (textLayoutResult.size.width.toFloat() - availableWidth).coerceAtLeast(0f)
+                            val offsetX = -scrollOffset * maxOffset
+                            drawText(
+                                textLayoutResult = textLayoutResult,
+                                color = Color.White,
+                                topLeft = Offset(offsetX, (size.height - textLayoutResult.size.height) / 2f)
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = fileName,
                             color = Color.White,
-                            topLeft = Offset(offsetX, (size.height - textLayoutResult.size.height) / 2f)
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center
                         )
                     }
-                } else {
-                    Text(
-                        text = fileName,
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center
-                    )
                 }
-            }
-            Text(
-                text = totalDurationText,
-                color = Color.White.copy(alpha = 0.8f),
-                style = MaterialTheme.typography.labelSmall
-            )
-            IconButton(
-                onClick = onToggleTrash,
-                modifier = Modifier.size(36.dp)
-            ) {
-                Icon(
-                    imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
-                    contentDescription = if (isTrashed) "Restore" else "Trash",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
+                Text(
+                    text = totalDurationText,
+                    color = Color.White.copy(alpha = 0.8f),
+                    style = MaterialTheme.typography.labelSmall
                 )
             }
+        }
+        IconButton(
+            onClick = onToggleTrash,
+            modifier = Modifier.size(40.dp)
+        ) {
+            Icon(
+                imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
+                contentDescription = if (isTrashed) "Restore" else "Trash",
+                tint = Color.White,
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }
