@@ -14,5 +14,6 @@ enum class SyncActionType {
     DOWNLOAD,       // Remote has, local missing or different
     DELETE_LOCAL,   // Local has, remote missing
     DELETE_BOTH,    // Delete from both local and remote
-    SKIP            // Both identical, no action needed
+    SKIP,           // Both identical, no action needed
+    RECONCILE       // File exists on disk, only need DB record (no download)
 }

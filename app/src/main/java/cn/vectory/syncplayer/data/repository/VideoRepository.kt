@@ -22,6 +22,9 @@ class VideoRepository @Inject constructor(
     suspend fun getByRelativePath(relativePath: String): VideoItemEntity? =
         videoItemDao.getByRelativePath(relativePath)
 
+    suspend fun getByRelativePathAndRelationId(relativePath: String, syncRelationId: Long): VideoItemEntity? =
+        videoItemDao.getByRelativePathAndRelationId(relativePath, syncRelationId)
+
     suspend fun getAll(): List<VideoItemEntity> = videoItemDao.getAll()
 
     suspend fun getBySyncRelationId(relationId: Long): List<VideoItemEntity> =

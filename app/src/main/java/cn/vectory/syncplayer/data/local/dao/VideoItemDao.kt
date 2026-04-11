@@ -50,6 +50,9 @@ interface VideoItemDao {
     @Query("SELECT * FROM video_item WHERE syncRelationId = :relationId")
     suspend fun getBySyncRelationId(relationId: Long): List<VideoItemEntity>
 
+    @Query("SELECT * FROM video_item WHERE relativePath = :relativePath AND syncRelationId = :syncRelationId")
+    suspend fun getByRelativePathAndRelationId(relativePath: String, syncRelationId: Long): VideoItemEntity?
+
     @Upsert
     suspend fun upsert(item: VideoItemEntity): Long
 
