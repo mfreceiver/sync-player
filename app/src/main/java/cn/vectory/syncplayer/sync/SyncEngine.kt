@@ -1,5 +1,5 @@
 package cn.vectory.syncplayer.sync
-
+    
 import android.content.Context
 import cn.vectory.syncplayer.data.model.ActiveDownload
 import cn.vectory.syncplayer.data.model.SyncAction
@@ -119,33 +119,68 @@ class SyncEngine @Inject constructor(
                 val remoteRelPath = remoteFile.path
                 val localRelPath = storagePaths.toLocalRelativePath(relation.localBasePath, remoteRelPath)
                 val local = localMap[localRelPath]
-                val needsDownload = local == null ||
-                    remoteFile.size != local.fileSize ||
-                    remoteFile.lastModified != (local.remoteModifiedTime ?: 0)
 
-                if (needsDownload) {
-                    val action = SyncAction(
-                        type = SyncActionType.DOWNLOAD,
-                        relativePath = remoteRelPath,
-                        fileSize = remoteFile.size,
-                        remoteModifiedTime = remoteFile.lastModified
-                    )
-                    toDownload.add(action)
-                    syncLogRepository.log(
-                        action = "DOWNLOAD",
-                        relativePath = localRelPath,
-                        status = "PENDING",
-                        dryRun = true,
-                        fileSize = remoteFile.size
-                    )
-                } else {
-                    syncLogRepository.log(
-                        action = "SKIP",
-                        relativePath = localRelPath,
-                        status = "SKIPPED",
-                        dryRun = true,
-                        fileSize = remoteFile.size
-                    )
+                val actionType: SyncActionType? = when {
+                    local != null -> {
+                        if (remoteFile.size != local.fileSize || remoteFile.lastModified != (local.remoteModifiedTime ?: 0)) {
+                            SyncActionType.DOWNLOAD
+                        } else {
+                            null
+                        }
+                    }
+                    else -> {
+                        val physicalFile = File(getLocalSyncRoot(relation), remoteRelPath)
+                        if (physicalFile.exists() && physicalFile.length() == remoteFile.size) {
+                            SyncActionType.RECONCILE
+                        } else {
+                            SyncActionType.DOWNLOAD
+                        }
+                    }
+                }
+
+                when (actionType) {
+                    SyncActionType.DOWNLOAD -> {
+                        val action = SyncAction(
+                            type = SyncActionType.DOWNLOAD,
+                            relativePath = remoteRelPath,
+                            fileSize = remoteFile.size,
+                            remoteModifiedTime = remoteFile.lastModified
+                        )
+                        toDownload.add(action)
+                        syncLogRepository.log(
+                            action = "DOWNLOAD",
+                            relativePath = localRelPath,
+                            status = "PENDING",
+                            dryRun = true,
+                            fileSize = remoteFile.size
+                        )
+                    }
+                    SyncActionType.RECONCILE -> {
+                        val action = SyncAction(
+                            type = SyncActionType.RECONCILE,
+                            relativePath = remoteRelPath,
+                            fileSize = remoteFile.size,
+                            remoteModifiedTime = remoteFile.lastModified
+                        )
+                        toDownload.add(action)
+                        syncLogRepository.log(
+                            action = "RECONCILE",
+                            relativePath = localRelPath,
+                            status = "PENDING",
+                            dryRun = true,
+                            fileSize = remoteFile.size
+                        )
+                    }
+                    null -> {
+                        syncLogRepository.log(
+                            action = "SKIP",
+                            relativePath = localRelPath,
+                            status = "SKIPPED",
+                            dryRun = true,
+                            fileSize = remoteFile.size
+                        )
+                    }
+                    else -> {}
                 }
             }
 
@@ -228,99 +263,145 @@ class SyncEngine @Inject constructor(
         try {
             client.connect(source, relation.remotePath)
 
+            val toReconcile = toDownload.filter { it.type == SyncActionType.RECONCILE }
+            val toActuallyDownload = toDownload.filter { it.type == SyncActionType.DOWNLOAD }
+
             if (toDownload.isNotEmpty()) {
-                val semaphore = Semaphore(maxConcurrency)
-                coroutineScope {
-                    for (action in toDownload) {
-                        semaphore.acquire()
-                        launch(Dispatchers.IO) {
-                            try {
-                                val tmpFile = File(localRoot, "${action.relativePath}.sync_tmp")
-                                val finalFile = File(localRoot, action.relativePath)
-                                val localRelPath = storagePaths.toLocalRelativePath(relation.localBasePath, action.relativePath)
 
-                                activeDownloadsMutex.withLock {
-                                    activeDownloadsMap[action.relativePath] = ActiveDownload(
-                                        fileName = action.relativePath.substringAfterLast("/"),
-                                        totalBytes = action.fileSize
-                                    )
-                                    updateActiveDownloadsState(activeDownloadsMap, totalBytesTransferred.get(), totalDownloadBytes, completedCount.get(), totalActions)
-                                }
+                for (action in toReconcile) {
+                    val localRelPath = storagePaths.toLocalRelativePath(relation.localBasePath, action.relativePath)
+                    val finalFile = File(localRoot, action.relativePath)
 
-                                val success = client.downloadFile(action.relativePath, tmpFile) { transferred, total ->
-                                    val locked = activeDownloadsMutex.tryLock()
-                                    if (locked) {
-                                        try {
-                                            activeDownloadsMap[action.relativePath] = ActiveDownload(
-                                                fileName = action.relativePath.substringAfterLast("/"),
-                                                progress = if (total > 0) transferred.toFloat() / total else 0f,
-                                                transferredBytes = transferred,
-                                                totalBytes = action.fileSize
-                                            )
-                                            val now = System.currentTimeMillis()
-                                            if (now - lastProgressUpdateMs.get() >= PROGRESS_THROTTLE_MS) {
-                                                lastProgressUpdateMs.set(now)
-                                                _progress.value = _progress.value.copy(
-                                                    activeDownloads = activeDownloadsMap.values.toList(),
-                                                    transferredBytes = totalBytesTransferred.get() + activeDownloadsMap.values.sumOf { it.transferredBytes },
-                                                    totalBytes = totalDownloadBytes,
-                                                    completedFiles = completedCount.get(),
-                                                    totalFiles = totalActions
+                    val rebuilt = videoRepository.getByRelativePathAndRelationId(localRelPath, 0)
+                    if (rebuilt != null) {
+                        videoRepository.upsert(rebuilt.copy(
+                            syncRelationId = relationId,
+                            remoteModifiedTime = action.remoteModifiedTime,
+                            dateSynced = System.currentTimeMillis()
+                        ))
+                    } else {
+                        val entity = VideoItemEntity(
+                            relativePath = localRelPath,
+                            fileName = action.relativePath.substringAfterLast("/"),
+                            localAbsolutePath = finalFile.absolutePath,
+                            fileSize = action.fileSize,
+                            remoteModifiedTime = action.remoteModifiedTime,
+                            dateSynced = System.currentTimeMillis(),
+                            syncRelationId = relationId
+                        )
+                        videoRepository.upsert(entity)
+                    }
+
+                    val saved = videoRepository.getByRelativePathAndRelationId(localRelPath, relationId)
+                    if (saved != null && (saved.duration == null || saved.thumbnailPath == null)) {
+                        videoMetadataExtractor.extractAndSave(saved)
+                    }
+
+                    syncLogRepository.log(
+                        action = "RECONCILE",
+                        relativePath = localRelPath,
+                        status = "SUCCESS",
+                        dryRun = false,
+                        fileSize = action.fileSize
+                    )
+                    completedCount.incrementAndGet()
+                    completedPathsSet.add(action.relativePath)
+                }
+
+                if (toActuallyDownload.isNotEmpty()) {
+                    val semaphore = Semaphore(maxConcurrency)
+                    coroutineScope {
+                        for (action in toActuallyDownload) {
+                            semaphore.acquire()
+                            launch(Dispatchers.IO) {
+                                try {
+                                    val tmpFile = File(localRoot, "${action.relativePath}.sync_tmp")
+                                    val finalFile = File(localRoot, action.relativePath)
+                                    val localRelPath = storagePaths.toLocalRelativePath(relation.localBasePath, action.relativePath)
+
+                                    activeDownloadsMutex.withLock {
+                                        activeDownloadsMap[action.relativePath] = ActiveDownload(
+                                            fileName = action.relativePath.substringAfterLast("/"),
+                                            totalBytes = action.fileSize
+                                        )
+                                        updateActiveDownloadsState(activeDownloadsMap, totalBytesTransferred.get(), totalDownloadBytes, completedCount.get(), totalActions)
+                                    }
+
+                                    val success = client.downloadFile(action.relativePath, tmpFile) { transferred, total ->
+                                        val locked = activeDownloadsMutex.tryLock()
+                                        if (locked) {
+                                            try {
+                                                activeDownloadsMap[action.relativePath] = ActiveDownload(
+                                                    fileName = action.relativePath.substringAfterLast("/"),
+                                                    progress = if (total > 0) transferred.toFloat() / total else 0f,
+                                                    transferredBytes = transferred,
+                                                    totalBytes = action.fileSize
                                                 )
+                                                val now = System.currentTimeMillis()
+                                                if (now - lastProgressUpdateMs.get() >= PROGRESS_THROTTLE_MS) {
+                                                    lastProgressUpdateMs.set(now)
+                                                    _progress.value = _progress.value.copy(
+                                                        activeDownloads = activeDownloadsMap.values.toList(),
+                                                        transferredBytes = totalBytesTransferred.get() + activeDownloadsMap.values.sumOf { it.transferredBytes },
+                                                        totalBytes = totalDownloadBytes,
+                                                        completedFiles = completedCount.get(),
+                                                        totalFiles = totalActions
+                                                    )
+                                                }
+                                            } finally {
+                                                activeDownloadsMutex.unlock()
                                             }
-                                        } finally {
-                                            activeDownloadsMutex.unlock()
                                         }
                                     }
-                                }
 
-                                activeDownloadsMutex.withLock {
-                                    activeDownloadsMap.remove(action.relativePath)
-                                }
-
-                                if (success && tmpFile.exists()) {
-                                    if (finalFile.exists()) finalFile.delete()
-                                    tmpFile.renameTo(finalFile)
-                                    totalBytesTransferred.addAndGet(action.fileSize)
-                                    val entity = VideoItemEntity(
-                                        relativePath = localRelPath,
-                                        fileName = action.relativePath.substringAfterLast("/"),
-                                        localAbsolutePath = finalFile.absolutePath,
-                                        fileSize = action.fileSize,
-                                        remoteModifiedTime = action.remoteModifiedTime,
-                                        dateSynced = System.currentTimeMillis(),
-                                        syncRelationId = relationId
-                                    )
-                                    videoRepository.upsert(entity)
-                                    val savedEntity = videoRepository.getByRelativePath(localRelPath)
-                                    if (savedEntity != null) {
-                                        videoMetadataExtractor.extractAndSave(savedEntity)
+                                    activeDownloadsMutex.withLock {
+                                        activeDownloadsMap.remove(action.relativePath)
                                     }
-                                    syncLogRepository.log(
-                                        action = "DOWNLOAD",
-                                        relativePath = localRelPath,
-                                        status = "SUCCESS",
-                                        dryRun = false,
-                                        fileSize = action.fileSize
-                                    )
-                                } else {
-                                    if (tmpFile.exists()) tmpFile.delete()
-                                    syncLogRepository.log(
-                                        action = "DOWNLOAD",
-                                        relativePath = localRelPath,
-                                        status = "FAILED",
-                                        dryRun = false,
-                                        fileSize = action.fileSize,
-                                        errorMessage = "Download failed"
-                                    )
+
+                                    if (success && tmpFile.exists()) {
+                                        if (finalFile.exists()) finalFile.delete()
+                                        tmpFile.renameTo(finalFile)
+                                        totalBytesTransferred.addAndGet(action.fileSize)
+                                        val entity = VideoItemEntity(
+                                            relativePath = localRelPath,
+                                            fileName = action.relativePath.substringAfterLast("/"),
+                                            localAbsolutePath = finalFile.absolutePath,
+                                            fileSize = action.fileSize,
+                                            remoteModifiedTime = action.remoteModifiedTime,
+                                            dateSynced = System.currentTimeMillis(),
+                                            syncRelationId = relationId
+                                        )
+                                        videoRepository.upsert(entity)
+                                        val savedEntity = videoRepository.getByRelativePath(localRelPath)
+                                        if (savedEntity != null) {
+                                            videoMetadataExtractor.extractAndSave(savedEntity)
+                                        }
+                                        syncLogRepository.log(
+                                            action = "DOWNLOAD",
+                                            relativePath = localRelPath,
+                                            status = "SUCCESS",
+                                            dryRun = false,
+                                            fileSize = action.fileSize
+                                        )
+                                    } else {
+                                        if (tmpFile.exists()) tmpFile.delete()
+                                        syncLogRepository.log(
+                                            action = "DOWNLOAD",
+                                            relativePath = localRelPath,
+                                            status = "FAILED",
+                                            dryRun = false,
+                                            fileSize = action.fileSize,
+                                            errorMessage = "Download failed"
+                                        )
+                                    }
+                                    completedCount.incrementAndGet()
+                                    activeDownloadsMutex.withLock {
+                                        completedPathsSet.add(action.relativePath)
+                                        updateActiveDownloadsState(activeDownloadsMap, totalBytesTransferred.get(), totalDownloadBytes, completedCount.get(), totalActions)
+                                    }
+                                } finally {
+                                    semaphore.release()
                                 }
-                                completedCount.incrementAndGet()
-                                activeDownloadsMutex.withLock {
-                                    completedPathsSet.add(action.relativePath)
-                                    updateActiveDownloadsState(activeDownloadsMap, totalBytesTransferred.get(), totalDownloadBytes, completedCount.get(), totalActions)
-                                }
-                            } finally {
-                                semaphore.release()
                             }
                         }
                     }
@@ -364,7 +445,7 @@ class SyncEngine @Inject constructor(
                 startTimeMs = _progress.value.startTimeMs
             )
 
-            syncRelationRepository.updateLastSync(relationId, "成功：下载 ${toDownload.size} 个，删除 ${toDelete.size} 个")
+            syncRelationRepository.updateLastSync(relationId, "成功：下载 ${toActuallyDownload.size} 个，匹配 ${toReconcile.size} 个，删除 ${toDelete.size} 个")
             return true
         } catch (e: CancellationException) {
             cleanupTempFiles(localRoot)
