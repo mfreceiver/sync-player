@@ -1,10 +1,12 @@
 package cn.vectory.syncplayer.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material3.*
@@ -22,7 +24,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 @Composable
 fun PlaybackSettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onNavigateToMetadataRebuild: () -> Unit = {}
 ) {
     val longPressSpeed by viewModel.longPressSpeed.collectAsStateWithLifecycle()
     val defaultSortMode by viewModel.defaultSortMode.collectAsStateWithLifecycle()
@@ -242,6 +245,15 @@ fun PlaybackSettingsScreen(
                         }
                     }
                 }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                ListItem(
+                    headlineContent = { Text("重建元数据") },
+                    supportingContent = { Text("扫描本地文件并重建数据库记录") },
+                    leadingContent = { Icon(Icons.Default.Build, contentDescription = null) },
+                    modifier = Modifier.clickable { onNavigateToMetadataRebuild() }
+                )
             }
         }
     }

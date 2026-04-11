@@ -33,5 +33,6 @@ sealed class Route(val route: String) {
     data object GainAnalysis : Route("gain_analysis/{relationId}") {
         fun create(relationId: Long): String = "gain_analysis/$relationId"
     }
+    data object MetadataRebuild : Route("metadata_rebuild")
     data object About : Route("about")
 }

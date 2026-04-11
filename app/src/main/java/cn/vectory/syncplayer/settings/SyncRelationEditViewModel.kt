@@ -240,6 +240,7 @@ class SyncRelationEditViewModel @Inject constructor(
         viewModelScope.launch {
             if (relationId <= 0) return@launch
             syncRelationRepository.delete(relationId)
+            _saveResult.value = "删除成功"
         }
     }
 }

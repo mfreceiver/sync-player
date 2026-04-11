@@ -24,6 +24,7 @@ import cn.vectory.syncplayer.settings.PlaybackSettingsScreen
 import cn.vectory.syncplayer.settings.AboutScreen
 import cn.vectory.syncplayer.settings.SettingsViewModel
 import cn.vectory.syncplayer.settings.GainAnalysisScreen
+import cn.vectory.syncplayer.settings.MetadataRebuildScreen
 import cn.vectory.syncplayer.sync.SyncPreviewScreen
 import cn.vectory.syncplayer.sync.SyncPreviewViewModel
 
@@ -191,7 +192,8 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             val viewModel: SettingsViewModel = hiltViewModel()
             PlaybackSettingsScreen(
                 viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToMetadataRebuild = { navController.navigate(Route.MetadataRebuild.route) }
             )
         }
 
@@ -204,6 +206,10 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             GainAnalysisScreen(
                 onBack = { navController.popBackStack() }
             )
+        }
+
+        composable(Route.MetadataRebuild.route) {
+            MetadataRebuildScreen(onBack = { navController.popBackStack() })
         }
 
         composable(Route.About.route) {
