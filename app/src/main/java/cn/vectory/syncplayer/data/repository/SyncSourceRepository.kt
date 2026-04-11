@@ -18,13 +18,13 @@ class SyncSourceRepository @Inject constructor(
     private val encryptedPrefs: EncryptedSharedPreferences
 ) {
     fun getAllFlow(): Flow<List<SyncSource>> =
-        syncSourceDao.getAllFlow().map { list -> list.map { it.toDomain() } }
+        syncSourceDao.getAllFlow().map { list -> list.map { it.toInfo() } }
 
     suspend fun getAll(): List<SyncSource> =
-        syncSourceDao.getAll().map { it.toDomain() }
+        syncSourceDao.getAll().map { it.toInfo() }
 
     suspend fun getById(id: Long): SyncSource? =
-        syncSourceDao.getById(id)?.toDomain()
+        syncSourceDao.getById(id)?.toDomainWithCredentials()
 
     suspend fun getRelationCount(sourceId: Long): Int =
         syncSourceDao.getRelationCount(sourceId)
@@ -52,7 +52,18 @@ class SyncSourceRepository @Inject constructor(
         encryptedPrefs.edit().remove("pw_$id").apply()
     }
 
-    private fun SyncSourceEntity.toDomain() = SyncSource(
+    private fun SyncSourceEntity.toInfo() = SyncSource(
+        id = id,
+        name = name,
+        protocol = SyncProtocol.valueOf(protocol),
+        host = host,
+        port = port,
+        username = username,
+        password = "",
+        createdAt = createdAt
+    )
+
+    private fun SyncSourceEntity.toDomainWithCredentials() = SyncSource(
         id = id,
         name = name,
         protocol = SyncProtocol.valueOf(protocol),
