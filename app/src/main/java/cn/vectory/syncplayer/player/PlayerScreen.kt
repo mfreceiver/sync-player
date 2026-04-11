@@ -84,6 +84,7 @@ fun PlayerScreen(
     val allVideoIds by viewModel.allVideoIds.collectAsStateWithLifecycle()
     val currentGainDb by viewModel.currentGainDb.collectAsStateWithLifecycle()
     val playbackSpeed by viewModel.playbackSpeed.collectAsStateWithLifecycle()
+    val doubleTapAction by viewModel.doubleTapAction.collectAsStateWithLifecycle()
 
     var showControls by remember { mutableStateOf(true) }
     var currentVideoId by remember { mutableStateOf(videoItemId) }
@@ -316,9 +317,16 @@ fun PlayerScreen(
                     }
                 }
                 DoubleTapZone.CENTER -> {
-                    val wasTrashed = playbackRecord?.isTrashed ?: false
-                    showOverlay(PlayerOverlay.TrashAction(!wasTrashed))
-                    viewModel.toggleTrashed()
+                    when (doubleTapAction) {
+                        PlayerViewModel.DoubleTapAction.TRASH -> {
+                            val wasTrashed = playbackRecord?.isTrashed ?: false
+                            showOverlay(PlayerOverlay.TrashAction(!wasTrashed))
+                            viewModel.toggleTrashed()
+                        }
+                        PlayerViewModel.DoubleTapAction.PLAY_PAUSE -> {
+                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                        }
+                    }
                 }
             }
         }

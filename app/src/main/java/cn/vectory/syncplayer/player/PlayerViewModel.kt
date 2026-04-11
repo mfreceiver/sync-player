@@ -46,6 +46,10 @@ class PlayerViewModel @Inject constructor(
     private val _playbackSpeed = MutableStateFlow(1.0f)
     val playbackSpeed: StateFlow<Float> = _playbackSpeed.asStateFlow()
 
+    enum class DoubleTapAction { TRASH, PLAY_PAUSE }
+    private val _doubleTapAction = MutableStateFlow(DoubleTapAction.TRASH)
+    val doubleTapAction: StateFlow<DoubleTapAction> = _doubleTapAction.asStateFlow()
+
     private val savedVideoIds: String? = savedStateHandle.get<String>("videoIds")
 
     init {
@@ -54,6 +58,11 @@ class PlayerViewModel @Inject constructor(
             _speedMultiplier.value = userPrefs.getLongPressSpeed()
             _progressAlwaysVisible.value = userPrefs.getProgressAlwaysVisible()
             _volumeBalance.value = userPrefs.getVolumeBalance()
+            _doubleTapAction.value = try {
+                DoubleTapAction.valueOf(userPrefs.getDoubleTapAction())
+            } catch (_: Exception) {
+                DoubleTapAction.TRASH
+            }
         }
     }
 

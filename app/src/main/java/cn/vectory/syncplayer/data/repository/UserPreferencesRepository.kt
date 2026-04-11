@@ -36,6 +36,7 @@ class UserPreferencesRepository @Inject constructor(
         val PROGRESS_ALWAYS_VISIBLE = booleanPreferencesKey("progress_always_visible")
         val VOLUME_BALANCE = booleanPreferencesKey("volume_balance")
         val ANALYZE_ON_DOWNLOAD = booleanPreferencesKey("analyze_on_download")
+        val DOUBLE_TAP_ACTION = stringPreferencesKey("double_tap_action")
     }
 
     val longPressSpeed: Flow<Float> = dataStore.data.map { it[Keys.LONG_PRESS_SPEED] ?: 2.0f }
@@ -78,6 +79,10 @@ class UserPreferencesRepository @Inject constructor(
         it[Keys.ANALYZE_ON_DOWNLOAD] ?: false
     }
 
+    val doubleTapAction: Flow<String> = dataStore.data.map {
+        it[Keys.DOUBLE_TAP_ACTION] ?: "TRASH"
+    }
+
     suspend fun getLongPressSpeed(): Float = longPressSpeed.first()
     suspend fun getOrientation(): String? = orientation.first()
     suspend fun getDefaultSortMode(): String = defaultSortMode.first()
@@ -89,6 +94,7 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun getProgressAlwaysVisible(): Boolean = progressAlwaysVisible.first()
     suspend fun getVolumeBalance(): Boolean = volumeBalance.first()
     suspend fun getAnalyzeOnDownload(): Boolean = analyzeOnDownload.first()
+    suspend fun getDoubleTapAction(): String = doubleTapAction.first()
 
     suspend fun setLongPressSpeed(speed: Float) {
         dataStore.edit { it[Keys.LONG_PRESS_SPEED] = speed }
@@ -132,5 +138,9 @@ class UserPreferencesRepository @Inject constructor(
 
     suspend fun setAnalyzeOnDownload(enabled: Boolean) {
         dataStore.edit { it[Keys.ANALYZE_ON_DOWNLOAD] = enabled }
+    }
+
+    suspend fun setDoubleTapAction(action: String) {
+        dataStore.edit { it[Keys.DOUBLE_TAP_ACTION] = action }
     }
 }

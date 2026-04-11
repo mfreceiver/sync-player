@@ -44,6 +44,11 @@ class SettingsViewModel @Inject constructor(
     private val _volumeBalance = MutableStateFlow(false)
     val volumeBalance: StateFlow<Boolean> = _volumeBalance.asStateFlow()
 
+    enum class DoubleTapAction { TRASH, PLAY_PAUSE }
+
+    private val _doubleTapAction = MutableStateFlow(DoubleTapAction.TRASH)
+    val doubleTapAction: StateFlow<DoubleTapAction> = _doubleTapAction.asStateFlow()
+
     val syncLogs: StateFlow<List<SyncLogEntity>> = syncLogRepository.getRecentFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -70,6 +75,11 @@ class SettingsViewModel @Inject constructor(
             _gridColumns.value = userPrefs.getGridColumns()
             _progressAlwaysVisible.value = userPrefs.getProgressAlwaysVisible()
             _volumeBalance.value = userPrefs.getVolumeBalance()
+            _doubleTapAction.value = try {
+                DoubleTapAction.valueOf(userPrefs.getDoubleTapAction())
+            } catch (_: Exception) {
+                DoubleTapAction.TRASH
+            }
         }
     }
 
@@ -116,6 +126,11 @@ class SettingsViewModel @Inject constructor(
     fun setVolumeBalance(enabled: Boolean) {
         _volumeBalance.value = enabled
         viewModelScope.launch { userPrefs.setVolumeBalance(enabled) }
+    }
+
+    fun setDoubleTapAction(action: DoubleTapAction) {
+        _doubleTapAction.value = action
+        viewModelScope.launch { userPrefs.setDoubleTapAction(action.name) }
     }
 
     fun clearLogs() {
