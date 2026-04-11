@@ -99,6 +99,8 @@ fun PlayerScreen(
     var isGestureSeeking by remember { mutableStateOf(false) }
     var gestureSeekPosition by remember { mutableFloatStateOf(0f) }
     var seekTarget by remember { mutableLongStateOf(-1L) }
+    var isUserSeeking by remember { mutableStateOf(false) }
+    var userSeekPosition by remember { mutableFloatStateOf(0f) }
 
     var originalBrightness by remember { mutableFloatStateOf(-1f) }
 
@@ -223,6 +225,13 @@ fun PlayerScreen(
 
     fun switchToVideo(newId: Long) {
         viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
+        seekTarget = -1L
+        isUserSeeking = false
+        isGestureSeeking = false
+        gestureSeekPosition = 0f
+        userSeekPosition = 0f
+        currentPosition = 0L
+        currentDuration = 0L
         currentVideoId = newId
         viewModel.loadVideo(newId)
         showControls = true
@@ -235,6 +244,7 @@ fun PlayerScreen(
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) {
+                    seekTarget = -1L
                     val nextId = viewModel.getNextVideoId()
                     if (nextId != null) {
                         lastAutoSwitchTime = System.currentTimeMillis()
@@ -329,8 +339,6 @@ fun PlayerScreen(
     }
 
     val progressAlwaysVisible by viewModel.progressAlwaysVisible.collectAsStateWithLifecycle()
-    var isUserSeeking by remember { mutableStateOf(false) }
-    var userSeekPosition by remember { mutableFloatStateOf(0f) }
     var showSpeedMenu by remember { mutableStateOf(false) }
 
     BackHandler { doExit() }
@@ -441,7 +449,7 @@ private fun TopProgressBar(
     val sliderValue = when {
         isUserSeeking -> userSeekPosition
         isGestureSeeking -> gestureSeekPosition
-        currentDuration > 0 -> currentPosition.toFloat() / currentDuration.toFloat()
+        currentDuration > 0 -> (currentPosition.toFloat() / currentDuration.toFloat()).coerceIn(0f, 1f)
         else -> 0f
     }
 
