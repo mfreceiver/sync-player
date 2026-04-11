@@ -33,6 +33,7 @@ fun PlaybackSettingsScreen(
     val gridColumns by viewModel.gridColumns.collectAsStateWithLifecycle()
     val progressAlwaysVisible by viewModel.progressAlwaysVisible.collectAsStateWithLifecycle()
     val volumeBalance by viewModel.volumeBalance.collectAsStateWithLifecycle()
+    val doubleTapAction by viewModel.doubleTapAction.collectAsStateWithLifecycle()
     var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -146,6 +147,22 @@ fun PlaybackSettingsScreen(
 
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    Text("双击功能", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(12.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SettingsViewModel.DoubleTapAction.entries.forEach { action ->
+                            FilterChip(
+                                selected = doubleTapAction == action,
+                                onClick = { viewModel.setDoubleTapAction(action) },
+                                label = { Text(doubleTapActionLabel(action), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text("音量均衡", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -209,14 +226,19 @@ fun PlaybackSettingsScreen(
                         Spacer(Modifier.height(12.dp))
                         Text("网格列数", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(8.dp))
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(1, 2, 3, 4, 5).forEach { col ->
-                                FilterChip(
-                                    selected = gridColumns == col,
-                                    onClick = { viewModel.setGridColumns(col) },
-                                    label = { Text("$col", maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                                )
-                            }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text("$gridColumns", style = MaterialTheme.typography.titleMedium)
+                            Slider(
+                                value = gridColumns.toFloat(),
+                                onValueChange = { viewModel.setGridColumns(it.toInt()) },
+                                valueRange = 1f..5f,
+                                steps = 3,
+                                modifier = Modifier.weight(1f)
+                            )
                         }
                     }
                 }
@@ -246,4 +268,9 @@ private fun filterLabel(filter: BrowserViewModel.BrowseFilter): String = when (f
 private fun viewModeLabel(mode: BrowserViewModel.ViewMode): String = when (mode) {
     BrowserViewModel.ViewMode.LIST -> "列表"
     BrowserViewModel.ViewMode.GRID -> "网格"
+}
+
+private fun doubleTapActionLabel(action: SettingsViewModel.DoubleTapAction): String = when (action) {
+    SettingsViewModel.DoubleTapAction.TRASH -> "回收"
+    SettingsViewModel.DoubleTapAction.PLAY_PAUSE -> "播放"
 }
