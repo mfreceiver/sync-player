@@ -31,7 +31,6 @@ class GesturePlayerView @JvmOverloads constructor(
     private var touchStartY = 0f
     private var isInLeftHalf = false
     private var initialBrightness = 0f
-    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private var singleTapCallback: (() -> Unit)? = null
 

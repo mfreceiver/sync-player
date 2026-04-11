@@ -19,7 +19,10 @@ import cn.vectory.syncplayer.ui.util.isVideoFile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -105,6 +108,7 @@ class BrowserViewModel @Inject constructor(
         }?.value
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    @OptIn(FlowPreview::class)
     val browseItems: StateFlow<List<BrowseItem>> = combine(
         effectiveFolder,
         _sortMode,
@@ -114,7 +118,9 @@ class BrowserViewModel @Inject constructor(
     ) { folder, mode, filterVal, records, relations ->
         val baseDirSet = relations.map { it.relation.localBasePath }.toSet()
         buildBrowseItems(folder, mode, filterVal, records, baseDirSet)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }
+    .debounce(300)
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private suspend fun buildBrowseItems(
         folder: String,
@@ -325,7 +331,7 @@ class BrowserViewModel @Inject constructor(
         val needsRepair = videos.filter { video ->
             val thumbMissing = video.thumbnailPath == null || !File(video.thumbnailPath).exists()
             thumbMissing && File(video.localAbsolutePath).exists()
-        }
+        }.take(5)
         if (needsRepair.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
             needsRepair.forEach { video ->

@@ -7,11 +7,10 @@ sealed class Route(val route: String) {
         fun create(folder: String = ""): String =
             if (folder.isEmpty()) "browser?folder=" else "browser?folder=${Uri.encode(folder)}"
     }
-    data object Player : Route("player/{videoItemId}?returnFolder={returnFolder}&fromRoute={fromRoute}&videoIds={videoIds}") {
-        fun create(videoItemId: Long, returnFolder: String = "", fromRoute: String = "browser", videoIds: List<Long> = emptyList()): String {
+    data object Player : Route("player/{videoItemId}?returnFolder={returnFolder}&fromRoute={fromRoute}") {
+        fun create(videoItemId: Long, returnFolder: String = "", fromRoute: String = "browser"): String {
             val encodedFolder = if (returnFolder.isEmpty()) "" else Uri.encode(returnFolder)
-            val idsParam = if (videoIds.isEmpty()) "" else videoIds.joinToString(",")
-            return "player/$videoItemId?returnFolder=$encodedFolder&fromRoute=$fromRoute&videoIds=$idsParam"
+            return "player/$videoItemId?returnFolder=$encodedFolder&fromRoute=$fromRoute"
         }
     }
     data object SyncSourceList : Route("sync_source_list")

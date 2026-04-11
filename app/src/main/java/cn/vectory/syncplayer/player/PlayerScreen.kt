@@ -78,6 +78,7 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? android.app.Activity ?: return
+    val coroutineScope = rememberCoroutineScope()
     val videoItem by viewModel.videoItem.collectAsStateWithLifecycle()
     val playbackRecord by viewModel.playbackRecord.collectAsStateWithLifecycle()
     val speedMultiplier by viewModel.speedMultiplier.collectAsStateWithLifecycle()
@@ -108,7 +109,7 @@ fun PlayerScreen(
     fun showOverlay(overlay: PlayerOverlay) {
         currentOverlay = overlay
         overlayHideJob.value?.cancel()
-        overlayHideJob.value = CoroutineScope(Dispatchers.Main).launch {
+        overlayHideJob.value = coroutineScope.launch {
             delay(750L)
             currentOverlay = null
         }
@@ -143,9 +144,12 @@ fun PlayerScreen(
     }
     val gestureView = remember {
         GesturePlayerView(context).apply {
-            this.speedMultiplier = speedMultiplier
             getPlayerView().player = exoPlayer
         }
+    }
+
+    LaunchedEffect(speedMultiplier) {
+        gestureView.speedMultiplier = speedMultiplier
     }
 
     LaunchedEffect(Unit) {
@@ -189,13 +193,15 @@ fun PlayerScreen(
             val playerDur = exoPlayer.duration.coerceAtLeast(0)
             gestureView.videoDuration = playerDur
             gestureView.currentPosition = playerPos
-            currentDuration = playerDur
+            if (currentDuration != playerDur) {
+                currentDuration = playerDur
+            }
             if (seekTarget >= 0) {
                 if (abs(playerPos - seekTarget) < 500) {
                     seekTarget = -1L
                     currentPosition = playerPos
                 }
-            } else {
+            } else if (currentPosition != playerPos) {
                 currentPosition = playerPos
             }
             delay(200L)

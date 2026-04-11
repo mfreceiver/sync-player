@@ -27,11 +27,13 @@ import cn.vectory.syncplayer.settings.GainAnalysisScreen
 import cn.vectory.syncplayer.settings.MetadataRebuildScreen
 import cn.vectory.syncplayer.sync.SyncPreviewScreen
 import cn.vectory.syncplayer.sync.SyncPreviewViewModel
+import cn.vectory.syncplayer.sync.SyncPreviewScreen
 
 import androidx.hilt.navigation.compose.hiltViewModel
 
 @Composable
 fun AppNavHost(navController: NavHostController = rememberNavController()) {
+    val navHelper: NavigationHelper = hiltViewModel()
 
     NavHost(
         navController = navController,
@@ -54,7 +56,8 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                 currentFolder = folder,
                 onNavigateToPlayer = { videoItemId, videoIds ->
                     val currentFolder = viewModel.currentFolder.value
-                    navController.navigate(Route.Player.create(videoItemId, currentFolder, "browser", videoIds))
+                    navHelper.videoQueue.setIds(videoIds)
+                    navController.navigate(Route.Player.create(videoItemId, currentFolder, "browser"))
                 },
                 onNavigateToSearch = {
                     navController.navigate(Route.Search.route)
@@ -82,8 +85,7 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             arguments = listOf(
                 navArgument("videoItemId") { type = NavType.LongType },
                 navArgument("returnFolder") { type = NavType.StringType; defaultValue = "" },
-                navArgument("fromRoute") { type = NavType.StringType; defaultValue = "browser" },
-                navArgument("videoIds") { type = NavType.StringType; defaultValue = "" }
+                navArgument("fromRoute") { type = NavType.StringType; defaultValue = "browser" }
             ),
             enterTransition = { fadeIn(tween(0)) },
             exitTransition = { fadeOut(tween(0)) },
@@ -182,7 +184,8 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                     navController.navigate(Route.Browser.create(folderPath))
                 },
                 onNavigateToPlayer = { videoItemId, videoIds ->
-                    navController.navigate(Route.Player.create(videoItemId, "", "search", videoIds))
+                    navHelper.videoQueue.setIds(videoIds)
+                    navController.navigate(Route.Player.create(videoItemId, "", "search"))
                 },
                 onBack = { navController.popBackStack() }
             )

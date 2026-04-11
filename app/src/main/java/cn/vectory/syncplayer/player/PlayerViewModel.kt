@@ -9,6 +9,7 @@ import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.navigation.VideoQueue
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -19,7 +20,8 @@ class PlayerViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val videoRepository: VideoRepository,
     private val playbackRepository: PlaybackRepository,
-    private val userPrefs: UserPreferencesRepository
+    private val userPrefs: UserPreferencesRepository,
+    private val videoQueue: VideoQueue
 ) : ViewModel() {
 
     private val _videoItem = MutableStateFlow<VideoItemEntity?>(null)
@@ -67,6 +69,11 @@ class PlayerViewModel @Inject constructor(
     }
 
     private fun loadFolderVideoIds() {
+        val queueIds = videoQueue.consumeIds()
+        if (queueIds.isNotEmpty()) {
+            _allVideoIds.value = queueIds
+            return
+        }
         val idsStr = savedVideoIds ?: ""
         val ids = if (idsStr.isNotBlank()) {
             idsStr.split(",").mapNotNull { it.trim().toLongOrNull() }
