@@ -35,6 +35,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -531,24 +532,83 @@ private fun TopProgressBar(
         isGestureSeeking -> (gestureSeekPosition * currentDuration).toLong()
         else -> currentPosition
     }
-    val totalDurationText = formatDuration(currentDuration)
     val elapsedText = formatDuration(displayElapsed)
+    val totalDurationText = formatDuration(currentDuration)
 
-    val shouldMarquee = remember(fileName) {
-        fileName.length > 30
-    }
+    val shouldMarquee = remember(fileName) { fileName.length > 30 }
     val textMeasurer = rememberTextMeasurer()
 
-    Column(
+    val currentOnChange by rememberUpdatedState(onSeekChange)
+    var dragProgress by remember { mutableFloatStateOf(0f) }
+    val currentOnFinished by rememberUpdatedState({ onSeekConfirm(dragProgress) })
+
+    Box(
         modifier = modifier
-            .background(Color(0xFF1565C0).copy(alpha = 0.85f))
-            .padding(horizontal = 8.dp)
-            .padding(top = 4.dp, bottom = 4.dp)
+            .fillMaxWidth()
+            .height(56.dp)
+            .clip(RoundedCornerShape(0.dp))
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val p = (down.position.x / size.width).coerceIn(0f, 1f)
+                        dragProgress = p
+                        currentOnChange(p)
+                        down.consume()
+
+                        do {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.first()
+                            change.consume()
+                            val cp = (change.position.x / size.width).coerceIn(0f, 1f)
+                            dragProgress = cp
+                            currentOnChange(cp)
+                        } while (change.pressed)
+
+                        currentOnFinished()
+                    }
+                }
+            }
     ) {
         Box(
             modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xFF90CAF9))
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(sliderValue)
+                .background(Color(0xFF1565C0))
+        )
+        Row(
+            modifier = Modifier
                 .fillMaxWidth()
-                .height(32.dp),
+                .align(Alignment.BottomEnd)
+                .padding(horizontal = 8.dp)
+                .padding(bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = if (isSeeking) "$elapsedText / $totalDurationText" else elapsedText,
+                color = Color.White.copy(alpha = 0.8f),
+                style = MaterialTheme.typography.labelSmall
+            )
+            if (!isSeeking) {
+                Text(
+                    text = totalDurationText,
+                    color = Color.White.copy(alpha = 0.6f),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.Center)
+                .padding(horizontal = 44.dp)
+                .padding(bottom = 8.dp),
             contentAlignment = Alignment.Center
         ) {
             if (shouldMarquee) {
@@ -566,12 +626,7 @@ private fun TopProgressBar(
                 val textLayoutResult = remember(fileName) {
                     textMeasurer.measure(fileName, textStyle)
                 }
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 44.dp)
-                        .height(32.dp)
-                ) {
+                Canvas(modifier = Modifier.fillMaxWidth().height(20.dp)) {
                     val availableWidth = size.width
                     val maxOffset = (textLayoutResult.size.width.toFloat() - availableWidth).coerceAtLeast(0f)
                     val offsetX = -scrollOffset * maxOffset
@@ -588,54 +643,36 @@ private fun TopProgressBar(
                     style = MaterialTheme.typography.labelMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 44.dp),
                     textAlign = TextAlign.Center
                 )
             }
-
-            IconButton(
-                onClick = onExit,
-                modifier = Modifier
-                    .size(36.dp)
-                    .align(Alignment.CenterStart)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Close,
-                    contentDescription = "Exit",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            IconButton(
-                onClick = onToggleTrash,
-                modifier = Modifier
-                    .size(36.dp)
-                    .align(Alignment.CenterEnd)
-            ) {
-                Icon(
-                    imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
-                    contentDescription = if (isTrashed) "Restore" else "Trash",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
         }
-
-        ThinProgressSlider(
-            progress = sliderValue,
-            elapsed = elapsedText,
-            totalDuration = totalDurationText,
-            isUserSeeking = isSeeking,
-            onProgressChange = onSeekChange,
-            onProgressChangeFinished = { onSeekConfirm(userSeekPosition) },
+        IconButton(
+            onClick = onExit,
             modifier = Modifier
-                .fillMaxWidth()
-                .height(24.dp)
-                .padding(horizontal = 4.dp)
-        )
+                .size(36.dp)
+                .align(Alignment.CenterStart)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Close,
+                contentDescription = "Exit",
+                tint = Color.White,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        IconButton(
+            onClick = onToggleTrash,
+            modifier = Modifier
+                .size(36.dp)
+                .align(Alignment.CenterEnd)
+        ) {
+            Icon(
+                imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
+                contentDescription = if (isTrashed) "Restore" else "Trash",
+                tint = Color.White,
+                modifier = Modifier.size(18.dp)
+            )
+        }
     }
 }
 
