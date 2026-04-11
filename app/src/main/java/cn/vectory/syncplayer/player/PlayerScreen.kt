@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.player
 import android.content.pm.ActivityInfo
 import android.media.AudioManager
 import android.net.Uri
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -15,6 +16,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -55,6 +57,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
@@ -137,9 +141,6 @@ fun PlayerScreen(
             originalBrightness = currentBrightness
         }
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-        insetsController.hide(WindowInsetsCompat.Type.systemBars())
-        insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         onDispose {
             if (originalBrightness >= 0) {
                 val attrs = window.attributes
@@ -149,6 +150,18 @@ fun PlayerScreen(
             WindowCompat.setDecorFitsSystemWindows(window, true)
             val restoreController = WindowCompat.getInsetsController(window, window.decorView)
             restoreController.show(WindowInsetsCompat.Type.systemBars())
+            restoreController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+        }
+    }
+
+    LaunchedEffect(showControls) {
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        if (showControls) {
+            insetsController.show(WindowInsetsCompat.Type.statusBars())
+            insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+        } else {
+            insetsController.hide(WindowInsetsCompat.Type.systemBars())
+            insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
     }
 
@@ -232,6 +245,24 @@ fun PlayerScreen(
             viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
             exoPlayer.release()
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
+    val lifecycleOwner = activity as? ComponentActivity
+    if (lifecycleOwner != null) {
+        DisposableEffect(lifecycleOwner.lifecycle) {
+            val observer = LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_STOP -> {
+                        if (exoPlayer.isPlaying) {
+                            exoPlayer.pause()
+                        }
+                    }
+                    else -> {}
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
     }
 
@@ -462,11 +493,13 @@ fun PlayerScreen(
                                 awaitPointerEventScope {
                                     while (true) {
                                         val down = awaitFirstDown(requireUnconsumed = false)
-                                        val startX = down.position.x
+                                        val longPress = awaitLongPressOrCancellation(down.id)
+                                            ?: continue
+                                        val startX = longPress.position.x
                                         val basePosition = exoPlayer.currentPosition
                                         val dur = currentDuration
                                         if (dur <= 0) continue
-                                        down.consume()
+                                        longPress.consume()
                                         isHighSpeedSeeking = true
 
                                         do {
@@ -546,7 +579,6 @@ private fun TopProgressBar(
         modifier = modifier
             .fillMaxWidth()
             .height(56.dp)
-            .clip(RoundedCornerShape(0.dp))
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
@@ -583,95 +615,85 @@ private fun TopProgressBar(
         )
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomEnd)
-                .padding(horizontal = 8.dp)
-                .padding(bottom = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .fillMaxSize()
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            IconButton(
+                onClick = onExit,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Exit",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
             Text(
                 text = if (isSeeking) "$elapsedText / $totalDurationText" else elapsedText,
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.widthIn(min = 40.dp)
+            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (shouldMarquee) {
+                    val infiniteTransition = rememberInfiniteTransition(label = "marquee")
+                    val scrollOffset by infiniteTransition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 1f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(durationMillis = 8000, easing = LinearEasing),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "marqueeOffset"
+                    )
+                    val textStyle = MaterialTheme.typography.labelMedium
+                    val textLayoutResult = remember(fileName) {
+                        textMeasurer.measure(fileName, textStyle)
+                    }
+                    Canvas(modifier = Modifier.fillMaxWidth().height(20.dp)) {
+                        val availableWidth = size.width
+                        val maxOffset = (textLayoutResult.size.width.toFloat() - availableWidth).coerceAtLeast(0f)
+                        val offsetX = -scrollOffset * maxOffset
+                        drawText(
+                            textLayoutResult = textLayoutResult,
+                            color = Color.White,
+                            topLeft = Offset(offsetX, (size.height - textLayoutResult.size.height) / 2f)
+                        )
+                    }
+                } else {
+                    Text(
+                        text = fileName,
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+            Text(
+                text = totalDurationText,
                 color = Color.White.copy(alpha = 0.8f),
                 style = MaterialTheme.typography.labelSmall
             )
-            if (!isSeeking) {
-                Text(
-                    text = totalDurationText,
-                    color = Color.White.copy(alpha = 0.6f),
-                    style = MaterialTheme.typography.labelSmall
+            IconButton(
+                onClick = onToggleTrash,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
+                    contentDescription = if (isTrashed) "Restore" else "Trash",
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp)
                 )
             }
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.Center)
-                .padding(horizontal = 44.dp)
-                .padding(bottom = 8.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            if (shouldMarquee) {
-                val infiniteTransition = rememberInfiniteTransition(label = "marquee")
-                val scrollOffset by infiniteTransition.animateFloat(
-                    initialValue = 0f,
-                    targetValue = 1f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(durationMillis = 8000, easing = LinearEasing),
-                        repeatMode = RepeatMode.Reverse
-                    ),
-                    label = "marqueeOffset"
-                )
-                val textStyle = MaterialTheme.typography.labelMedium
-                val textLayoutResult = remember(fileName) {
-                    textMeasurer.measure(fileName, textStyle)
-                }
-                Canvas(modifier = Modifier.fillMaxWidth().height(20.dp)) {
-                    val availableWidth = size.width
-                    val maxOffset = (textLayoutResult.size.width.toFloat() - availableWidth).coerceAtLeast(0f)
-                    val offsetX = -scrollOffset * maxOffset
-                    drawText(
-                        textLayoutResult = textLayoutResult,
-                        color = Color.White,
-                        topLeft = Offset(offsetX, (size.height - textLayoutResult.size.height) / 2f)
-                    )
-                }
-            } else {
-                Text(
-                    text = fileName,
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-        IconButton(
-            onClick = onExit,
-            modifier = Modifier
-                .size(36.dp)
-                .align(Alignment.CenterStart)
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Close,
-                contentDescription = "Exit",
-                tint = Color.White,
-                modifier = Modifier.size(20.dp)
-            )
-        }
-        IconButton(
-            onClick = onToggleTrash,
-            modifier = Modifier
-                .size(36.dp)
-                .align(Alignment.CenterEnd)
-        ) {
-            Icon(
-                imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
-                contentDescription = if (isTrashed) "Restore" else "Trash",
-                tint = Color.White,
-                modifier = Modifier.size(18.dp)
-            )
         }
     }
 }
