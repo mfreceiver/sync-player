@@ -158,6 +158,7 @@ fun PlayerScreen(
         if (showControls) {
             insetsController.show(WindowInsetsCompat.Type.statusBars())
             insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+            window.statusBarColor = android.graphics.Color.argb(0.75f, 0.050980392f, 0.27843137f, 0.6313725f)
         } else {
             insetsController.hide(WindowInsetsCompat.Type.systemBars())
             insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -449,48 +450,6 @@ fun PlayerScreen(
                 exit = fadeOut()
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .background(Color.Transparent)
-                            .pointerInput(currentDuration) {
-                                awaitPointerEventScope {
-                                    while (true) {
-                                        val down = awaitFirstDown(requireUnconsumed = false)
-                                        val startX = down.position.x
-                                        val basePosition = exoPlayer.currentPosition
-                                        val dur = currentDuration
-                                        if (dur <= 0) continue
-                                        down.consume()
-                                        isHighSpeedSeeking = true
-
-                                        do {
-                                            val event = awaitPointerEvent()
-                                            val change = event.changes.first()
-                                            change.consume()
-                                            val dx = change.position.x - startX
-                                            val ratio = dx / size.width
-                                            val targetMs = (basePosition + ratio * dur).toLong()
-                                                .coerceIn(0, dur)
-                                            highSpeedSeekPosition = targetMs
-                                            showOverlay(PlayerOverlay.Seek(targetMs, dur))
-                                        } while (change.pressed)
-
-                                        val finalTarget = highSpeedSeekPosition
-                                        seekTarget = finalTarget
-                                        currentPosition = finalTarget
-                                        exoPlayer.seekTo(finalTarget)
-                                        isHighSpeedSeeking = false
-                                        overlayHideJob.value?.cancel()
-                                        overlayHideJob.value = coroutineScope.launch {
-                                            delay(750L)
-                                            currentOverlay = null
-                                        }
-                                    }
-                                }
-                            }
-                    )
                     BottomToolbar(
                         isPlaying = isPlaying,
                         playbackSpeed = playbackSpeed,
@@ -528,6 +487,47 @@ fun PlayerScreen(
                     )
                 }
             }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (showControls) Modifier.height(48.dp) else Modifier.fillMaxHeight(0.25f))
+                    .pointerInput(currentDuration, showControls) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val startX = down.position.x
+                                val basePosition = exoPlayer.currentPosition
+                                val dur = currentDuration
+                                if (dur <= 0) continue
+                                down.consume()
+                                isHighSpeedSeeking = true
+
+                                do {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.first()
+                                    change.consume()
+                                    val dx = change.position.x - startX
+                                    val ratio = dx / size.width
+                                    val targetMs = (basePosition + ratio * dur).toLong()
+                                        .coerceIn(0, dur)
+                                    highSpeedSeekPosition = targetMs
+                                    showOverlay(PlayerOverlay.Seek(targetMs, dur))
+                                } while (change.pressed)
+
+                                val finalTarget = highSpeedSeekPosition
+                                seekTarget = finalTarget
+                                currentPosition = finalTarget
+                                exoPlayer.seekTo(finalTarget)
+                                isHighSpeedSeeking = false
+                                overlayHideJob.value?.cancel()
+                                overlayHideJob.value = coroutineScope.launch {
+                                    delay(750L)
+                                    currentOverlay = null
+                                }
+                            }
+                        }
+                    }
+            )
         }
 
         PlayerOverlayView(currentOverlay)
@@ -576,19 +576,19 @@ private fun TopProgressBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(48.dp)
-            .background(Color(0xFF90CAF9)),
+            .height(32.dp)
+            .background(Color(0xFF0D47A1)),
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(
             onClick = onExit,
-            modifier = Modifier.size(40.dp)
+            modifier = Modifier.size(32.dp)
         ) {
             Icon(
                 imageVector = Icons.Filled.Close,
                 contentDescription = "Exit",
                 tint = Color.White,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(16.dp)
             )
         }
         Box(
@@ -621,13 +621,13 @@ private fun TopProgressBar(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF90CAF9))
+                    .background(Color(0xFF263238).copy(alpha = 0.75f))
             )
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
                     .fillMaxWidth(sliderValue)
-                    .background(Color(0xFF1565C0))
+                    .background(Color(0xFF0D47A1).copy(alpha = 0.75f))
             )
             Row(
                 modifier = Modifier
@@ -692,13 +692,13 @@ private fun TopProgressBar(
         }
         IconButton(
             onClick = onToggleTrash,
-            modifier = Modifier.size(40.dp)
+            modifier = Modifier.size(32.dp)
         ) {
             Icon(
                 imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
                 contentDescription = if (isTrashed) "Restore" else "Trash",
                 tint = Color.White,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(14.dp)
             )
         }
     }
@@ -795,7 +795,7 @@ private fun BottomToolbar(
                 .fillMaxWidth()
                 .background(Color.Black.copy(alpha = 0.5f))
                 .navigationBarsPadding()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
+                .padding(horizontal = 8.dp, vertical = 2.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -923,10 +923,10 @@ private fun PlayerOverlayView(overlay: PlayerOverlay?) {
                 )
 
                 val text: String = when (overlay) {
-                    is PlayerOverlay.Seek -> "${formatDuration(overlay.positionMs)} / ${formatDuration(overlay.durationMs)}"
+                    is PlayerOverlay.Seek -> "${formatDuration(overlay.positionMs)} X ${formatDuration(overlay.durationMs)}"
                     is PlayerOverlay.Volume -> "${overlay.percent}%"
                     is PlayerOverlay.Brightness -> "${overlay.percent}%"
-                    is PlayerOverlay.SpeedUp -> "${overlay.multiplier}x"
+                    is PlayerOverlay.SpeedUp -> "${overlay.multiplier}X"
                     is PlayerOverlay.Previous -> "PREVIOUS"
                     is PlayerOverlay.Next -> "NEXT"
                     is PlayerOverlay.TrashAction -> if (overlay.isIn) "IN" else "OUT"
