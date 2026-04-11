@@ -386,7 +386,15 @@ fun BrowserScreen(
                                 onClick = {
                                     if (isVideoFile(item.name)) {
                                         viewModel.saveScrollPosition(folder, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
-                                        onNavigateToPlayer(item.videoItemId!!, viewModel.getFolderVideoIds())
+                                        val id = item.videoItemId
+                                        if (id != null) {
+                                            onNavigateToPlayer(id, viewModel.getFolderVideoIds())
+                                        } else {
+                                            scope.launch {
+                                                val newId = viewModel.ensureVideoRecord(item)
+                                                if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds())
+                                            }
+                                        }
                                     } else {
                                         scope.launch { snackbarHostState.showSnackbar("该文件无法播放") }
                                     }
@@ -461,7 +469,15 @@ fun BrowserScreen(
                                 onClick = {
                                     if (isVideoFile(item.name)) {
                                         viewModel.saveScrollPosition(folder, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
-                                        onNavigateToPlayer(item.videoItemId!!, viewModel.getFolderVideoIds())
+                                        val id = item.videoItemId
+                                        if (id != null) {
+                                            onNavigateToPlayer(id, viewModel.getFolderVideoIds())
+                                        } else {
+                                            scope.launch {
+                                                val newId = viewModel.ensureVideoRecord(item)
+                                                if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds())
+                                            }
+                                        }
                                     } else {
                                         scope.launch { snackbarHostState.showSnackbar("该文件无法播放") }
                                     }
@@ -541,7 +557,12 @@ fun BrowserScreen(
                         horizontalArrangement = Arrangement.End
                     ) {
                         TextButton(onClick = {
-                            val itemId = item.videoItemId!!
+                            val itemId = item.videoItemId
+                            if (itemId == null) {
+                                showContextMenu = null
+                                scope.launch { snackbarHostState.showSnackbar("该文件缺少数据库记录，请先重建元数据") }
+                                return@TextButton
+                            }
                             showContextMenu = null
                             scope.launch {
                                 val intent = viewModel.buildShareIntent(itemId)
@@ -556,7 +577,10 @@ fun BrowserScreen(
                         }
                         if (viewModel.isFileInBaseDir(item.relativePath)) {
                             TextButton(onClick = {
-                                viewModel.toggleTrashed(item.videoItemId!!)
+                                val vidId = item.videoItemId
+                                if (vidId != null) {
+                                    viewModel.toggleTrashed(vidId)
+                                }
                                 showContextMenu = null
                             }) {
                                 Text(if (item.isTrashed) "从回收站恢复" else "放入回收站")

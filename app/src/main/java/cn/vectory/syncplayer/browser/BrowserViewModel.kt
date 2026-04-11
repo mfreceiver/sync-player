@@ -150,6 +150,28 @@ class BrowserViewModel @Inject constructor(
         }
 
         val videoEntities = videoRepository.getItemsInFolder(folder).first()
+        // Disk-only scanning: include files present on disk that do not have DB records
+        // Build a set of relative paths already covered by DB so we don't duplicate entries
+        val dbVideoPaths = videoEntities.map { it.relativePath }.toSet()
+
+        val diskOnlyItems = run {
+            val physicalDir = if (folder.isEmpty()) storagePaths.userdataRoot else File(storagePaths.userdataRoot, folder)
+            val filesOnDisk = physicalDir.listFiles()?.filter { it.isFile } ?: emptyList()
+            filesOnDisk.filter { file ->
+                val relPath = if (folder.isEmpty()) file.name else "$folder/${file.name}"
+                relPath !in dbVideoPaths && !file.name.startsWith(".") && !file.name.endsWith(".sync_tmp")
+            }.map { file ->
+                val relPath = if (folder.isEmpty()) file.name else "$folder/${file.name}"
+                BrowseItem(
+                    videoItemId = null,
+                    name = file.name,
+                    relativePath = relPath,
+                    isDirectory = false,
+                    fileSize = file.length()
+                )
+            }
+        }
+
         val videos = videoEntities
             .map { video ->
                 val record = recordMap[video.id]
@@ -172,12 +194,15 @@ class BrowserViewModel @Inject constructor(
                 )
             }
 
+        // Merge DB videos with disk-only items (disk items have null videoItemId)
+        val allVideos = videos + diskOnlyItems
+
         repairMissingThumbnails(videoEntities)
 
         val filteredVideos = when (filterVal) {
-            BrowseFilter.ALL -> videos
-            BrowseFilter.VIDEO_ONLY -> videos.filter { isVideoFile(it.name) }
-            BrowseFilter.TRASHED_ONLY -> videos.filter { it.isTrashed }
+            BrowseFilter.ALL -> allVideos
+            BrowseFilter.VIDEO_ONLY -> allVideos.filter { isVideoFile(it.name) }
+            BrowseFilter.TRASHED_ONLY -> allVideos.filter { it.isTrashed }
         }
         val sortedFolders = folders.sortedBy { it.name.lowercase() }
         val sortedVideos = when (mode) {
@@ -307,6 +332,37 @@ class BrowserViewModel @Inject constructor(
                 videoMetadataExtractor.repairThumbnailIfNeeded(video)
             }
         }
+    }
+
+    /**
+     * Ensure a VideoItemEntity exists for the given browsed item. If not, create a minimal one
+     * based on the filesystem entry and trigger metadata extraction in background.
+     */
+    suspend fun ensureVideoRecord(item: BrowseItem): Long {
+        // Double-check in case another path created it meanwhile
+        val existing = videoRepository.getByRelativePath(item.relativePath)
+        if (existing != null) return existing.id
+
+        val file = File(storagePaths.userdataRoot, item.relativePath)
+        if (!file.exists()) return -1L
+
+        val entity = VideoItemEntity(
+            relativePath = item.relativePath,
+            fileName = item.name,
+            localAbsolutePath = file.absolutePath,
+            fileSize = file.length(),
+            syncRelationId = 0
+        )
+        val id = videoRepository.upsert(entity)
+
+        // Trigger metadata extraction in the background
+        val saved = videoRepository.getById(id)
+        if (saved != null) {
+            withContext(Dispatchers.IO) {
+                videoMetadataExtractor.extractAndSave(saved)
+            }
+        }
+        return id
     }
 
     fun getFolderVideoIds(): List<Long> {
