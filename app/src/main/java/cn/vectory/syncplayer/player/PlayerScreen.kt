@@ -5,9 +5,7 @@ import android.media.AudioManager
 import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -40,6 +38,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -53,8 +52,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -125,6 +126,9 @@ fun PlayerScreen(
 
     var originalBrightness by remember { mutableFloatStateOf(-1f) }
 
+    val insetsAnimFractionState = remember { mutableFloatStateOf(1f) }
+    val insetsAnimFraction by insetsAnimFractionState
+
     fun showOverlay(overlay: PlayerOverlay) {
         currentOverlay = overlay
         overlayHideJob.value?.cancel()
@@ -151,6 +155,28 @@ fun PlayerScreen(
             val restoreController = WindowCompat.getInsetsController(window, window.decorView)
             restoreController.show(WindowInsetsCompat.Type.systemBars())
             restoreController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+        }
+    }
+
+    DisposableEffect(window) {
+        val callback = object : WindowInsetsAnimationCompat.Callback(
+            WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_STOP
+        ) {
+            override fun onProgress(
+                insets: WindowInsetsCompat,
+                runningAnimations: MutableList<WindowInsetsAnimationCompat>
+            ): WindowInsetsCompat {
+                for (anim in runningAnimations) {
+                    if (anim.typeMask and WindowInsetsCompat.Type.systemBars() != 0) {
+                        insetsAnimFractionState.floatValue = anim.fraction
+                    }
+                }
+                return insets
+            }
+        }
+        ViewCompat.setWindowInsetsAnimationCallback(window.decorView, callback)
+        onDispose {
+            ViewCompat.setWindowInsetsAnimationCallback(window.decorView, null)
         }
     }
 
@@ -421,33 +447,49 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        if (showControls || progressAlwaysVisible || isHighSpeedSeeking) {
-            TopProgressBar(
-                currentPosition = currentPosition,
-                currentDuration = currentDuration,
-                fileName = videoItem?.fileName ?: "",
-                isTrashed = playbackRecord?.isTrashed ?: false,
-                isUserSeeking = isUserSeeking,
-                userSeekPosition = userSeekPosition,
-                isGestureSeeking = isGestureSeeking,
-                gestureSeekPosition = gestureSeekPosition,
-                isHighSpeedSeeking = isHighSpeedSeeking,
-                highSpeedSeekPosition = highSpeedSeekPosition,
-                onSeekChange = { isUserSeeking = true; userSeekPosition = it },
-                onSeekConfirm = {
-                    val target = (it * currentDuration).toLong()
-                    seekTarget = target
-                    currentPosition = target
-                    exoPlayer.seekTo(target)
-                    isUserSeeking = false
-                },
-                onExit = { doExit() },
-                onToggleTrash = { viewModel.toggleTrashed() },
+        val topBarVisible = showControls || progressAlwaysVisible || isHighSpeedSeeking
+        val topBarColor = LocalExtendedColors.current.playerTopBar
+        val topBarAlpha = when {
+            isFullscreen -> if (topBarVisible) 1f else 0f
+            progressAlwaysVisible -> 1f
+            isHighSpeedSeeking -> 1f
+            else -> insetsAnimFraction
+        }
+        val renderTopBar = topBarVisible || insetsAnimFraction > 0.01f
+
+        if (renderTopBar) {
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
-                    .then(if (!isFullscreen && showControls) Modifier.statusBarsPadding() else Modifier)
-            )
+                    .background(topBarColor)
+                    .then(if (!isFullscreen) Modifier.statusBarsPadding() else Modifier)
+                    .graphicsLayer { alpha = topBarAlpha }
+            ) {
+                TopProgressBar(
+                    currentPosition = currentPosition,
+                    currentDuration = currentDuration,
+                    fileName = videoItem?.fileName ?: "",
+                    isTrashed = playbackRecord?.isTrashed ?: false,
+                    isUserSeeking = isUserSeeking,
+                    userSeekPosition = userSeekPosition,
+                    isGestureSeeking = isGestureSeeking,
+                    gestureSeekPosition = gestureSeekPosition,
+                    isHighSpeedSeeking = isHighSpeedSeeking,
+                    highSpeedSeekPosition = highSpeedSeekPosition,
+                    onSeekChange = { isUserSeeking = true; userSeekPosition = it },
+                    onSeekConfirm = {
+                        val target = (it * currentDuration).toLong()
+                        seekTarget = target
+                        currentPosition = target
+                        exoPlayer.seekTo(target)
+                        isUserSeeking = false
+                    },
+                    onExit = { doExit() },
+                    onToggleTrash = { viewModel.toggleTrashed() },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
 
         Column(
@@ -497,7 +539,12 @@ fun PlayerScreen(
                         }
                     }
             )
-            if (showControls) {
+            if (showControls || insetsAnimFraction > 0.01f) {
+                val bottomBarAlpha = if (isFullscreen) {
+                    if (showControls) 1f else 0f
+                } else {
+                    insetsAnimFraction
+                }
                 BottomToolbar(
                     isPlaying = isPlaying,
                     playbackSpeed = playbackSpeed,
@@ -531,7 +578,8 @@ fun PlayerScreen(
                     onRotation = {
                         viewModel.toggleFullscreen()
                         showOverlay(PlayerOverlay.Orientation(if (isFullscreen) "ROTATION" else "FULLSCREEN"))
-                    }
+                    },
+                    modifier = Modifier.graphicsLayer { alpha = bottomBarAlpha }
                 )
             }
         }
