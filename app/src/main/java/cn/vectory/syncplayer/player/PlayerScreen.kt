@@ -162,6 +162,13 @@ fun PlayerScreen(
         val callback = object : WindowInsetsAnimationCompat.Callback(
             WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_STOP
         ) {
+            override fun onStart(
+                animation: WindowInsetsAnimationCompat,
+                bounds: WindowInsetsAnimationCompat.BoundsCompat
+            ): WindowInsetsAnimationCompat.BoundsCompat {
+                return bounds
+            }
+
             override fun onProgress(
                 insets: WindowInsetsCompat,
                 runningAnimations: MutableList<WindowInsetsAnimationCompat>
@@ -172,6 +179,12 @@ fun PlayerScreen(
                     }
                 }
                 return insets
+            }
+
+            override fun onEnd(animation: WindowInsetsAnimationCompat) {
+                if (animation.typeMask and WindowInsetsCompat.Type.systemBars() != 0) {
+                    insetsAnimFractionState.floatValue = if (showControls) 1f else 0f
+                }
             }
         }
         ViewCompat.setWindowInsetsAnimationCallback(window.decorView, callback)
@@ -451,11 +464,10 @@ fun PlayerScreen(
         val topBarColor = LocalExtendedColors.current.playerTopBar
         val topBarAlpha = when {
             isFullscreen -> if (topBarVisible) 1f else 0f
-            progressAlwaysVisible -> 1f
-            isHighSpeedSeeking -> 1f
+            topBarVisible -> 1f
             else -> insetsAnimFraction
         }
-        val renderTopBar = topBarVisible || insetsAnimFraction > 0.01f
+        val renderTopBar = topBarVisible || (insetsAnimFraction > 0.01f && !isFullscreen)
 
         if (renderTopBar) {
             Column(
@@ -539,12 +551,8 @@ fun PlayerScreen(
                         }
                     }
             )
-            if (showControls || insetsAnimFraction > 0.01f) {
-                val bottomBarAlpha = if (isFullscreen) {
-                    if (showControls) 1f else 0f
-                } else {
-                    insetsAnimFraction
-                }
+            if (isFullscreen && (showControls || insetsAnimFraction > 0.01f)) {
+                val bottomBarAlpha = if (showControls) 1f else insetsAnimFraction
                 BottomToolbar(
                     isPlaying = isPlaying,
                     playbackSpeed = playbackSpeed,
