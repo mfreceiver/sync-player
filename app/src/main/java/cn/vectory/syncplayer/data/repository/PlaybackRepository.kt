@@ -27,7 +27,7 @@ class PlaybackRepository @Inject constructor(
 
     suspend fun saveProgress(videoItemId: Long, position: Long, duration: Long) {
         val existing = playbackRecordDao.getByVideoId(videoItemId)
-        val isCompleted = duration > 0 && position >= (duration * 0.9)
+        val isCompleted = duration > 0 && position >= (duration * 0.95)
         if (existing != null) {
             playbackRecordDao.upsert(
                 existing.copy(
