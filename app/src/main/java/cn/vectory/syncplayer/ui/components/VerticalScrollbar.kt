@@ -11,6 +11,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import kotlinx.coroutines.delay
 
 private data class ThumbInfo(val offset: Float, val size: Float)
@@ -19,7 +20,7 @@ private data class ThumbInfo(val offset: Float, val size: Float)
 fun Modifier.verticalScrollbar(
     state: LazyListState,
     width: Dp = 4.dp,
-    color: Color = Color(0xFFBB86FC)
+    color: Color = LocalExtendedColors.current.scrollbarColor
 ): Modifier {
     val isScrollable by remember {
         derivedStateOf {
@@ -84,7 +85,7 @@ fun Modifier.verticalScrollbar(
 fun Modifier.gridVerticalScrollbar(
     state: LazyGridState,
     width: Dp = 4.dp,
-    color: Color = Color(0xFFBB86FC)
+    color: Color = LocalExtendedColors.current.scrollbarColor
 ): Modifier {
     val isScrollable by remember {
         derivedStateOf {

@@ -108,9 +108,9 @@ internal fun VideoGridItem(
 
             if (progress > 0f) {
                 val progressColor = if (isCompleted) {
-                    Color(0xFF69F0AE) // Green A200 — vivid green for completed
+                    LocalExtendedColors.current.syncCompleted
                 } else {
-                    Color(0xFF76FF03) // Green A400 — bright vivid green for in-progress
+                    MaterialTheme.colorScheme.primary
                 }
 
                 Canvas(

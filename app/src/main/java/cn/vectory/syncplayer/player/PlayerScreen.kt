@@ -64,6 +64,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import cn.vectory.syncplayer.player.GesturePlayerView.DoubleTapZone
+import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import cn.vectory.syncplayer.ui.util.formatDuration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -571,7 +572,7 @@ private fun TopProgressBar(
         modifier = modifier
             .fillMaxWidth()
             .height(32.dp)
-            .background(Color(0xFF0D47A1)),
+            .background(LocalExtendedColors.current.playerTopBar),
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(
@@ -615,13 +616,13 @@ private fun TopProgressBar(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF263238).copy(alpha = 0.75f))
+                    .background(LocalExtendedColors.current.playerProgressTrack.copy(alpha = 0.75f))
             )
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
                     .fillMaxWidth(sliderValue)
-                    .background(Color(0xFF0D47A1).copy(alpha = 0.75f))
+                    .background(LocalExtendedColors.current.playerProgressFill.copy(alpha = 0.75f))
             )
             Row(
                 modifier = Modifier

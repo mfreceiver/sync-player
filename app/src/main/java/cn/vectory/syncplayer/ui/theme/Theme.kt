@@ -14,6 +14,11 @@ data class ExtendedColors(
     val successGreen: Color,
     val placeholderGrey: Color,
     val trashRed: Color,
+    val syncCompleted: Color,
+    val scrollbarColor: Color,
+    val playerTopBar: Color,
+    val playerProgressTrack: Color,
+    val playerProgressFill: Color,
 )
 
 val LocalExtendedColors = staticCompositionLocalOf {
@@ -22,8 +27,75 @@ val LocalExtendedColors = staticCompositionLocalOf {
         successGreen = SuccessGreen,
         placeholderGrey = PlaceholderGrey,
         trashRed = TrashRed,
+        syncCompleted = SyncCompleted,
+        scrollbarColor = BluePrimary,
+        playerTopBar = PlayerTopBar,
+        playerProgressTrack = PlayerProgressTrack,
+        playerProgressFill = PlayerProgressFill,
     )
 }
+
+private val LightColorScheme = lightColorScheme(
+    primary = BluePrimary,
+    onPrimary = BlueOnPrimary,
+    primaryContainer = BluePrimaryContainer,
+    onPrimaryContainer = BlueOnPrimaryContainer,
+    secondary = BlueSecondary,
+    onSecondary = BlueOnSecondary,
+    secondaryContainer = BlueSecondaryContainer,
+    onSecondaryContainer = BlueOnSecondaryContainer,
+    tertiary = BlueTertiary,
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFF2DAFF),
+    onTertiaryContainer = Color(0xFF251431),
+    background = BlueSurface,
+    onBackground = Color(0xFF1B1B1F),
+    surface = BlueSurface,
+    onSurface = Color(0xFF1B1B1F),
+    surfaceVariant = BlueSurfaceVariant,
+    onSurfaceVariant = Color(0xFF43474E),
+    outline = Color(0xFF73777F),
+    outlineVariant = Color(0xFFC3C7CF),
+    error = Color(0xFFBA1A1A),
+    onError = Color.White,
+    errorContainer = Color(0xFFFFDAD6),
+    onErrorContainer = Color(0xFF410002),
+    inverseSurface = Color(0xFF2F3033),
+    inverseOnSurface = Color(0xFFF0F0F7),
+    inversePrimary = BluePrimaryDark,
+    surfaceTint = BluePrimary,
+)
+
+private val DarkColorScheme = darkColorScheme(
+    primary = BluePrimaryDark,
+    onPrimary = BlueOnPrimaryDark,
+    primaryContainer = BluePrimaryContainerDark,
+    onPrimaryContainer = BlueOnPrimaryContainerDark,
+    secondary = BlueSecondaryDark,
+    onSecondary = BlueOnSecondaryDark,
+    secondaryContainer = BlueSecondaryContainerDark,
+    onSecondaryContainer = BlueOnSecondaryContainerDark,
+    tertiary = BlueTertiaryDark,
+    onTertiary = Color(0xFF3B2948),
+    tertiaryContainer = Color(0xFF4F3D5C),
+    onTertiaryContainer = Color(0xFFF2DAFF),
+    background = BlueSurfaceDark,
+    onBackground = Color(0xFFE3E2E6),
+    surface = BlueSurfaceDark,
+    onSurface = Color(0xFFE3E2E6),
+    surfaceVariant = BlueSurfaceVariantDark,
+    onSurfaceVariant = Color(0xFFC3C7CF),
+    outline = Color(0xFF8D9199),
+    outlineVariant = Color(0xFF43474E),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    errorContainer = Color(0xFF93000A),
+    onErrorContainer = Color(0xFFFFDAD6),
+    inverseSurface = Color(0xFFE3E2E6),
+    inverseOnSurface = Color(0xFF1B1B1F),
+    inversePrimary = BluePrimary,
+    surfaceTint = BluePrimaryDark,
+)
 
 @Composable
 fun SyncPlayerTheme(
@@ -31,45 +103,56 @@ fun SyncPlayerTheme(
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    val baseScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context)
-            else dynamicLightColorScheme(context)
-        }
-        darkTheme -> darkColorScheme()
-        else -> lightColorScheme()
+    val blueScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+
+    val colorScheme = if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val context = LocalContext.current
+        val dynamicScheme = if (darkTheme) dynamicDarkColorScheme(context)
+        else dynamicLightColorScheme(context)
+        dynamicScheme.copy(
+            primary = blueScheme.primary,
+            onPrimary = blueScheme.onPrimary,
+            primaryContainer = blueScheme.primaryContainer,
+            onPrimaryContainer = blueScheme.onPrimaryContainer,
+            secondary = blueScheme.secondary,
+            onSecondary = blueScheme.onSecondary,
+            secondaryContainer = blueScheme.secondaryContainer,
+            onSecondaryContainer = blueScheme.onSecondaryContainer,
+        )
+    } else {
+        blueScheme
     }
 
-    val bluePrimary = Color(0xFF1565C0)
-    val blueOnPrimary = Color.White
-    val bluePrimaryContainer = Color(0xFF90CAF9)
-    val blueOnPrimaryContainer = Color(0xFF001D36)
-    val blueSecondaryContainer = Color(0xFFD4E4FF)
-    val blueOnSecondaryContainer = Color(0xFF001C3A)
-
-    val colorScheme = baseScheme.copy(
-        primary = bluePrimary,
-        onPrimary = blueOnPrimary,
-        primaryContainer = bluePrimaryContainer,
-        onPrimaryContainer = blueOnPrimaryContainer,
-        secondaryContainer = blueSecondaryContainer,
-        onSecondaryContainer = blueOnSecondaryContainer,
-    )
-
-    val typography = Typography()
-
-    val extendedColors = ExtendedColors(
-        folderAmber = FolderAmber,
-        successGreen = SuccessGreen,
-        placeholderGrey = PlaceholderGrey,
-        trashRed = TrashRed,
-    )
+    val extendedColors = if (darkTheme) {
+        ExtendedColors(
+            folderAmber = FolderAmber,
+            successGreen = SuccessGreen,
+            placeholderGrey = PlaceholderGrey,
+            trashRed = TrashRed,
+            syncCompleted = SyncCompleted,
+            scrollbarColor = BluePrimaryDark,
+            playerTopBar = PlayerTopBarDark,
+            playerProgressTrack = PlayerProgressTrackDark,
+            playerProgressFill = BluePrimaryDark,
+        )
+    } else {
+        ExtendedColors(
+            folderAmber = FolderAmber,
+            successGreen = SuccessGreen,
+            placeholderGrey = PlaceholderGrey,
+            trashRed = TrashRed,
+            syncCompleted = SyncCompleted,
+            scrollbarColor = BluePrimary,
+            playerTopBar = PlayerTopBar,
+            playerProgressTrack = PlayerProgressTrack,
+            playerProgressFill = PlayerProgressFill,
+        )
+    }
 
     CompositionLocalProvider(LocalExtendedColors provides extendedColors) {
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = typography,
+            typography = Typography(),
             content = content
         )
     }
