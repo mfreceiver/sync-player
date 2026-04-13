@@ -154,12 +154,6 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
-        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-        insetsController.hide(WindowInsetsCompat.Type.systemBars())
-        insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-    }
-
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
             playWhenReady = true
@@ -198,6 +192,26 @@ fun PlayerScreen(
         }
     }
     val isFullscreen by viewModel.isFullscreen.collectAsStateWithLifecycle()
+    LaunchedEffect(isFullscreen, showControls) {
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        when {
+            isFullscreen -> {
+                insetsController.hide(WindowInsetsCompat.Type.systemBars())
+                insetsController.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+            showControls -> {
+                insetsController.show(WindowInsetsCompat.Type.systemBars())
+                insetsController.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+            }
+            else -> {
+                insetsController.hide(WindowInsetsCompat.Type.systemBars())
+                insetsController.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        }
+    }
     LaunchedEffect(isFullscreen, videoItem) {
         val item = videoItem
         activity.requestedOrientation = if (item != null) {
@@ -432,6 +446,7 @@ fun PlayerScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
+                    .then(if (!isFullscreen && showControls) Modifier.statusBarsPadding() else Modifier)
             )
         }
 
