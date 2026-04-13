@@ -20,14 +20,13 @@ import cn.vectory.syncplayer.settings.SyncSourceListScreen
 import cn.vectory.syncplayer.settings.SyncSourceEditScreen
 import cn.vectory.syncplayer.settings.SyncRelationListScreen
 import cn.vectory.syncplayer.settings.SyncRelationEditScreen
-import cn.vectory.syncplayer.settings.PlaybackSettingsScreen
+import cn.vectory.syncplayer.settings.SettingsScreen
 import cn.vectory.syncplayer.settings.AboutScreen
 import cn.vectory.syncplayer.settings.SettingsViewModel
 import cn.vectory.syncplayer.settings.GainAnalysisScreen
 import cn.vectory.syncplayer.settings.MetadataRebuildScreen
 import cn.vectory.syncplayer.sync.SyncPreviewScreen
 import cn.vectory.syncplayer.sync.SyncPreviewViewModel
-import cn.vectory.syncplayer.sync.SyncPreviewScreen
 
 import androidx.hilt.navigation.compose.hiltViewModel
 
@@ -69,7 +68,7 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                     navController.navigate(Route.SyncRelationList.route, drawerNavOptions)
                 },
                 onNavigateToPlaybackSettings = {
-                    navController.navigate(Route.PlaybackSettings.route, drawerNavOptions)
+                    navController.navigate(Route.Settings.route, drawerNavOptions)
                 },
                 onNavigateToAbout = {
                     navController.navigate(Route.About.route, drawerNavOptions)
@@ -191,9 +190,9 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             )
         }
 
-        composable(Route.PlaybackSettings.route) {
+        composable(Route.Settings.route) {
             val viewModel: SettingsViewModel = hiltViewModel()
-            PlaybackSettingsScreen(
+            SettingsScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() },
                 onNavigateToMetadataRebuild = { navController.navigate(Route.MetadataRebuild.route) }

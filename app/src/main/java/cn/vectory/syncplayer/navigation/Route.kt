@@ -28,7 +28,7 @@ sealed class Route(val route: String) {
             "sync_preview/$relationId?initialTab=$initialTab"
     }
     data object Search : Route("search")
-    data object PlaybackSettings : Route("playback_settings")
+    data object Settings : Route("settings")
     data object GainAnalysis : Route("gain_analysis/{relationId}") {
         fun create(relationId: Long): String = "gain_analysis/$relationId"
     }

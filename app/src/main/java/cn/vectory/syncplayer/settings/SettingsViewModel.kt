@@ -7,14 +7,20 @@ import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import android.content.Context
+import android.content.ComponentName
+import android.content.pm.PackageManager
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import cn.vectory.syncplayer.provider.SyncDocumentsProvider
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val syncLogRepository: SyncLogRepository,
-    private val userPrefs: UserPreferencesRepository
+    private val userPrefs: UserPreferencesRepository,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val _longPressSpeed = MutableStateFlow(2.0f)
@@ -42,6 +48,10 @@ class SettingsViewModel @Inject constructor(
 
     private val _doubleTapAction = MutableStateFlow(DoubleTapAction.TRASH)
     val doubleTapAction: StateFlow<DoubleTapAction> = _doubleTapAction.asStateFlow()
+
+    // SAF provider toggle state
+    private val _safEnabled = MutableStateFlow(false)
+    val safEnabled: StateFlow<Boolean> = _safEnabled.asStateFlow()
 
     val syncLogs: StateFlow<List<SyncLogEntity>> = syncLogRepository.getRecentFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -72,6 +82,8 @@ class SettingsViewModel @Inject constructor(
             } catch (_: Exception) {
                 DoubleTapAction.TRASH
             }
+            // Load SAF provider state
+            _safEnabled.value = userPrefs.getSafProviderEnabled()
         }
     }
 
@@ -113,6 +125,22 @@ class SettingsViewModel @Inject constructor(
     fun setDoubleTapAction(action: DoubleTapAction) {
         _doubleTapAction.value = action
         viewModelScope.launch { userPrefs.setDoubleTapAction(action.name) }
+    }
+
+    fun setSafEnabled(enabled: Boolean) {
+        _safEnabled.value = enabled
+        val componentName = ComponentName(context, SyncDocumentsProvider::class.java)
+        val newState = if (enabled) {
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        } else {
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        }
+        context.packageManager.setComponentEnabledSetting(
+            componentName,
+            newState,
+            PackageManager.DONT_KILL_APP
+        )
+        viewModelScope.launch { userPrefs.setSafProviderEnabled(enabled) }
     }
 
     fun clearLogs() {

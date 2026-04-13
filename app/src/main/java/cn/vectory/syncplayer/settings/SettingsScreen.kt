@@ -22,7 +22,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun PlaybackSettingsScreen(
+fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
     onNavigateBack: () -> Unit,
     onNavigateToMetadataRebuild: () -> Unit = {}
@@ -35,6 +35,7 @@ fun PlaybackSettingsScreen(
     val progressAlwaysVisible by viewModel.progressAlwaysVisible.collectAsStateWithLifecycle()
     val volumeBalance by viewModel.volumeBalance.collectAsStateWithLifecycle()
     val doubleTapAction by viewModel.doubleTapAction.collectAsStateWithLifecycle()
+    val safEnabled by viewModel.safEnabled.collectAsStateWithLifecycle()
     var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -173,6 +174,30 @@ fun PlaybackSettingsScreen(
                         Switch(
                             checked = progressAlwaysVisible,
                             onCheckedChange = { viewModel.setProgressAlwaysVisible(it) }
+                        )
+                    }
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("SAF 文件共享", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "允许第三方播放器通过系统文件选择器访问已同步的视频文件",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("启用", style = MaterialTheme.typography.bodyMedium)
+                        Switch(
+                            checked = safEnabled,
+                            onCheckedChange = { viewModel.setSafEnabled(it) }
                         )
                     }
                 }
