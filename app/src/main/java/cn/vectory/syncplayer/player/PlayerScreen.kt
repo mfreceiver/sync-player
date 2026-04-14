@@ -460,10 +460,9 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        val topBarVisible = showControls || progressAlwaysVisible || isHighSpeedSeeking
+        val topBarVisible = !isFullscreen && (showControls || progressAlwaysVisible || isHighSpeedSeeking)
         val topBarColor = LocalExtendedColors.current.playerTopBar
         val topBarAlpha = when {
-            isFullscreen -> if (topBarVisible) 1f else 0f
             topBarVisible -> 1f
             else -> insetsAnimFraction
         }
@@ -475,7 +474,7 @@ fun PlayerScreen(
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
                     .background(topBarColor)
-                    .then(if (!isFullscreen) Modifier.statusBarsPadding() else Modifier)
+                    .statusBarsPadding()
                     .graphicsLayer { alpha = topBarAlpha }
             ) {
                 TopProgressBar(
@@ -551,7 +550,7 @@ fun PlayerScreen(
                         }
                     }
             )
-            if (isFullscreen && (showControls || insetsAnimFraction > 0.01f)) {
+            if (!isFullscreen && (showControls || insetsAnimFraction > 0.01f)) {
                 val bottomBarAlpha = if (showControls) 1f else insetsAnimFraction
                 BottomToolbar(
                     isPlaying = isPlaying,
