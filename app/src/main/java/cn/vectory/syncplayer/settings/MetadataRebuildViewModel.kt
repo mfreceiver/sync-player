@@ -106,17 +106,35 @@ class MetadataRebuildViewModel @Inject constructor(
                             }
                     }
 
+                    // 只将视频文件纳入重建范围，非视频文件不需要元数据提取
+                    val videoNewFiles = newFiles.filter { isVideoFile(it.fileName) }
+                    val nonVideoNewFiles = newFiles.filter { !isVideoFile(it.fileName) }
+
                     for (record in dbRecords) {
                         val file = File(record.localAbsolutePath)
                         if (!file.exists()) {
                             orphanedRecords.add(record)
-                        } else if (record.duration == null || record.thumbnailPath == null) {
+                        } else if (isVideoFile(record.fileName) && (record.duration == null || record.thumbnailPath == null)) {
                             incompleteRecords.add(record)
                         }
                     }
 
-                    _discoveryResult.value = DiscoveryResult(newFiles, orphanedRecords, incompleteRecords)
-                    _totalCount.value = newFiles.size + orphanedRecords.size + incompleteRecords.size
+                    _discoveryResult.value = DiscoveryResult(videoNewFiles, orphanedRecords, incompleteRecords)
+                    _totalCount.value = videoNewFiles.size + orphanedRecords.size + incompleteRecords.size
+
+                    // 非视频文件仍需创建 DB 记录以供浏览，但不计入重建进度
+                    if (nonVideoNewFiles.isNotEmpty()) {
+                        for (file in nonVideoNewFiles) {
+                            val entity = VideoItemEntity(
+                                relativePath = file.relativePath,
+                                fileName = file.fileName,
+                                localAbsolutePath = file.absolutePath,
+                                fileSize = file.fileSize,
+                                syncRelationId = 0
+                            )
+                            videoRepository.upsert(entity)
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 _error.value = "扫描失败: ${e.message}"
@@ -146,7 +164,7 @@ class MetadataRebuildViewModel @Inject constructor(
                         )
                         val id = videoRepository.upsert(entity)
                         val saved = videoRepository.getById(id)
-                        if (saved != null && isVideoFile(saved.fileName)) {
+                        if (saved != null) {
                             videoMetadataExtractor.extractAndSave(saved)
                         }
                         _completedCount.value++

@@ -4,6 +4,7 @@ import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
@@ -103,24 +104,27 @@ fun SyncPlayerTheme(
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
+    // Deterministic base scheme based on theme
+    val context = LocalContext.current
     val blueScheme = if (darkTheme) DarkColorScheme else LightColorScheme
-
-    val colorScheme = if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        val context = LocalContext.current
-        val dynamicScheme = if (darkTheme) dynamicDarkColorScheme(context)
-        else dynamicLightColorScheme(context)
-        dynamicScheme.copy(
-            primary = blueScheme.primary,
-            onPrimary = blueScheme.onPrimary,
-            primaryContainer = blueScheme.primaryContainer,
-            onPrimaryContainer = blueScheme.onPrimaryContainer,
-            secondary = blueScheme.secondary,
-            onSecondary = blueScheme.onSecondary,
-            secondaryContainer = blueScheme.secondaryContainer,
-            onSecondaryContainer = blueScheme.onSecondaryContainer,
-        )
-    } else {
-        blueScheme
+    // Cache dynamic color computation to avoid recomputing on every recomposition
+    val colorScheme = remember(darkTheme, dynamicColor) {
+        if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val dynamicScheme = if (darkTheme) dynamicDarkColorScheme(context)
+            else dynamicLightColorScheme(context)
+            dynamicScheme.copy(
+                primary = blueScheme.primary,
+                onPrimary = blueScheme.onPrimary,
+                primaryContainer = blueScheme.primaryContainer,
+                onPrimaryContainer = blueScheme.onPrimaryContainer,
+                secondary = blueScheme.secondary,
+                onSecondary = blueScheme.onSecondary,
+                secondaryContainer = blueScheme.secondaryContainer,
+                onSecondaryContainer = blueScheme.onSecondaryContainer,
+            )
+        } else {
+            blueScheme
+        }
     }
 
     val extendedColors = if (darkTheme) {

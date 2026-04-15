@@ -9,6 +9,8 @@ import cn.vectory.syncplayer.sync.checkNetworkAvailable
 import cn.vectory.syncplayer.sync.mapNetworkErrorMessage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.sftp.SFTPClient
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
@@ -174,6 +176,8 @@ class SftpFileClient(
                         offset += bytesRead
                         transferred += bytesRead
                         onProgress?.invoke(transferred, totalSize)
+                        // Cooperative cancellation check after each chunk read
+                        currentCoroutineContext().ensureActive()
                     }
                 }
             }

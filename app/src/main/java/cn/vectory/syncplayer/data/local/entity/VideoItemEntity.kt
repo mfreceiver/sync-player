@@ -6,7 +6,10 @@ import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "video_item",
-    indices = [Index(value = ["relativePath", "syncRelationId"], unique = true)]
+    indices = [
+        Index(value = ["relativePath", "syncRelationId"], unique = true),
+        Index(value = ["syncRelationId"])
+    ]
 )
 data class VideoItemEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

@@ -194,7 +194,7 @@ fun PlayerScreen(
     }
 
     val exoPlayer = remember {
-        ExoPlayer.Builder(context).build().apply {
+        ExoPlayer.Builder(context.applicationContext).build().apply {
             playWhenReady = true
         }
     }
@@ -263,8 +263,31 @@ fun PlayerScreen(
         val linear = 10f.pow(currentGainDb / 20f)
         exoPlayer.volume = linear.coerceIn(0f, 2f)
     }
-    LaunchedEffect(exoPlayer) {
-        while (true) {
+// Step 1: Replace 200ms polling with event-driven updates
+// Maintain current/duration only during playback, and keep gesture state in sync via a listener
+val playerListener = remember {
+    object : androidx.media3.common.Player.Listener {
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            val playerDur = exoPlayer.duration.coerceAtLeast(0)
+            if (currentDuration != playerDur) {
+                currentDuration = playerDur
+            }
+            gestureView.videoDuration = playerDur
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            // Ensure duration is up-to-date while playing/pausing
+            gestureView.videoDuration = exoPlayer.duration.coerceAtLeast(0)
+        }
+    }
+}
+DisposableEffect(exoPlayer) {
+    exoPlayer.addListener(playerListener)
+    onDispose { exoPlayer.removeListener(playerListener) }
+}
+LaunchedEffect(exoPlayer) {
+    while (true) {
+        if (exoPlayer.isPlaying) {
             val playerPos = exoPlayer.currentPosition.coerceAtLeast(0)
             val playerDur = exoPlayer.duration.coerceAtLeast(0)
             gestureView.videoDuration = playerDur
@@ -280,9 +303,10 @@ fun PlayerScreen(
             } else if (currentPosition != playerPos) {
                 currentPosition = playerPos
             }
-            delay(200L)
         }
+        delay(200L)
     }
+}
     LaunchedEffect(playbackSpeed) {
         if (!isLongPressing) {
             exoPlayer.playbackParameters = PlaybackParameters(playbackSpeed)
@@ -291,6 +315,8 @@ fun PlayerScreen(
     DisposableEffect(Unit) {
         onDispose {
             viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
+            // Clear the player from the view before releasing to avoid leaked references
+            gestureView.getPlayerView().player = null
             exoPlayer.release()
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }

@@ -1,6 +1,5 @@
 package cn.vectory.syncplayer.ui.components
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -15,7 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Icon
@@ -44,6 +43,13 @@ import androidx.compose.ui.unit.sp
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import cn.vectory.syncplayer.ui.util.formatDuration
 import cn.vectory.syncplayer.ui.util.isVideoFile
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.platform.LocalContext
+import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
+import coil.request.ImageRequest
+import java.io.File
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -202,52 +208,24 @@ private fun GridThumbnail(
     isVideo: Boolean,
     modifier: Modifier = Modifier
 ) {
-    var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-    var isExtremeRatio by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
-    LaunchedEffect(thumbnailPath) {
-        thumbnailPath?.let { path ->
-            try {
-                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(path, options)
-
-                if (options.outWidth > 0 && options.outHeight > 0) {
-                    val ratio = options.outWidth.toFloat() / options.outHeight.toFloat()
-                    isExtremeRatio = ratio > 2f || ratio < 0.5f
-                }
-
-                val targetWidth = 320
-                val sampleSize = if (options.outWidth > targetWidth) {
-                    Integer.highestOneBit(options.outWidth / targetWidth).coerceAtLeast(1)
-                } else 1
-
-                bitmap = BitmapFactory.decodeFile(
-                    path,
-                    BitmapFactory.Options().apply { inSampleSize = sampleSize }
-                )
-            } catch (_: Exception) {
-                bitmap = null
-            }
-        }
-    }
-
+    val hasPath = thumbnailPath != null
     Box(modifier = modifier) {
-        if (bitmap != null) {
-            Image(
-                painter = BitmapPainter(bitmap!!.asImageBitmap()),
+        if (hasPath) {
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(File(thumbnailPath!!))
+                    .size(640)
+                    .build(),
                 contentDescription = "缩略图",
                 modifier = Modifier.fillMaxSize(),
-                contentScale = if (isExtremeRatio) ContentScale.Crop else ContentScale.Fit
+                contentScale = ContentScale.Crop
             )
         } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center
-            ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Icon(
-                    imageVector = if (isVideo) Icons.Default.Movie else Icons.AutoMirrored.Filled.InsertDriveFile,
+                    imageVector = if (isVideo) Icons.Default.Movie else Icons.Default.InsertDriveFile,
                     contentDescription = if (isVideo) "视频" else "文件",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                     modifier = Modifier.size(32.dp)

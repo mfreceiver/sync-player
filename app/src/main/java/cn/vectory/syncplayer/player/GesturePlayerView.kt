@@ -15,6 +15,12 @@ class GesturePlayerView @JvmOverloads constructor(
     attrs: AttributeSet? = null
 ) : FrameLayout(context, attrs) {
 
+    private companion object {
+        const val VERTICAL_GESTURE_THRESHOLD = 20f
+        const val HORIZONTAL_GESTURE_THRESHOLD = 30f
+        const val SEEK_SENSITIVITY = 100f
+    }
+
     private val playerView = PlayerView(context).apply {
         controllerAutoShow = false
         useController = false
@@ -80,7 +86,7 @@ class GesturePlayerView @JvmOverloads constructor(
             val absDyFromStart = abs(dyFromStart)
 
             if (!isSeeking && !isAdjustingVertical) {
-                if (absDyFromStart > absDxFromStart && absDyFromStart > 20) {
+                if (absDyFromStart > absDxFromStart && absDyFromStart > VERTICAL_GESTURE_THRESHOLD) {
                     isAdjustingVertical = true
                     isInLeftHalf = e1.x < width / 2f
                     if (isInLeftHalf) {
@@ -90,14 +96,14 @@ class GesturePlayerView @JvmOverloads constructor(
                     } else {
                         gestureListener?.onVolumeGestureStart()
                     }
-                } else if (absDxFromStart > absDyFromStart && absDxFromStart > 30) {
+                } else if (absDxFromStart > absDyFromStart && absDxFromStart > HORIZONTAL_GESTURE_THRESHOLD) {
                     isSeeking = true
                     seekOffsetMs = 0L
                 }
             }
 
             if (isSeeking) {
-                seekOffsetMs = (dxFromStart * 100f).toLong()
+                seekOffsetMs = (dxFromStart * SEEK_SENSITIVITY).toLong()
                 val targetMs = (currentPosition + seekOffsetMs)
                     .coerceIn(0, videoDuration.coerceAtLeast(0))
                 gestureListener?.onSeekOverlay(targetMs, videoDuration)

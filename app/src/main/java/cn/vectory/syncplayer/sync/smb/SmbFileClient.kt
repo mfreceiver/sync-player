@@ -14,6 +14,8 @@ import jcifs.smb.SmbException
 import jcifs.smb.SmbFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Properties
@@ -22,7 +24,10 @@ class SmbFileClient(
     private val context: Context
 ) : RemoteFileClient {
 
-    private companion object { const val TAG = "SmbFileClient" }
+    private companion object {
+        const val TAG = "SmbFileClient"
+        const val MAX_REMOTE_FILES = 10000
+    }
 
     private var cifsContext: jcifs.CIFSContext? = null
     private var currentHost: String = ""
@@ -204,7 +209,7 @@ class SmbFileClient(
         share: String,
         remoteBasePath: String,
         result: MutableList<RemoteFile>,
-        maxFiles: Int = 10000
+        maxFiles: Int = MAX_REMOTE_FILES
     ) {
         if (result.size >= maxFiles) return
         val children = try {
@@ -270,6 +275,7 @@ class SmbFileClient(
                         output.write(buffer, 0, read)
                         transferred += read
                         onProgress?.invoke(transferred, totalSize)
+                        currentCoroutineContext().ensureActive()
                     }
                 }
             }

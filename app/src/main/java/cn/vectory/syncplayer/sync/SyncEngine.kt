@@ -495,9 +495,22 @@ class SyncEngine @Inject constructor(
                         }
                     }
                 }
-
-                for (entity in metadataQueue) {
-                    videoMetadataExtractor.extractAndSave(entity)
+                
+                // Parallel metadata extraction using a semaphore to bound concurrency
+                if (metadataQueue.isNotEmpty()) {
+                    val metadataSemaphore = Semaphore(maxConcurrency.coerceAtMost(3))
+                    coroutineScope {
+                        for (entity in metadataQueue) {
+                            metadataSemaphore.acquire()
+                            launch(Dispatchers.IO) {
+                                try {
+                                    videoMetadataExtractor.extractAndSave(entity)
+                                } finally {
+                                    metadataSemaphore.release()
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

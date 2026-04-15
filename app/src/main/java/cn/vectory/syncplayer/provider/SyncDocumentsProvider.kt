@@ -8,6 +8,7 @@ import android.database.Cursor
 import android.database.MatrixCursor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import android.graphics.Point
 import android.content.res.AssetFileDescriptor
 import java.io.File
@@ -207,8 +208,8 @@ class SyncDocumentsProvider : DocumentsProvider() {
                 val rel = runBlocking(Dispatchers.IO) { syncRelationDao().getById(parent.relationId) }
                 if (rel != null) {
                     val basePath = rel.localBasePath
-                    val items = runBlocking(Dispatchers.IO) { videoItemDao().getItemsInFolderSync(basePath) }
-                    val subFolders = runBlocking(Dispatchers.IO) { videoItemDao().getSubFoldersSync(basePath) }
+                    val items = runBlocking(Dispatchers.IO) { videoItemDao().getItemsInFolder(basePath).first() }
+                    val subFolders = runBlocking(Dispatchers.IO) { videoItemDao().getSubFolders(basePath).first() }
                     // subfolders
                     for (sub in subFolders) {
                         val id = DocumentId.Directory(rel.id, sub)
@@ -253,8 +254,8 @@ class SyncDocumentsProvider : DocumentsProvider() {
                 val rel = runBlocking(Dispatchers.IO) { syncRelationDao().getById(parent.relationId) }
                 if (rel != null) {
                     val basePath = if (parent.relativePath.isEmpty()) rel.localBasePath else rel.localBasePath + "/" + parent.relativePath
-                    val items = runBlocking(Dispatchers.IO) { videoItemDao().getItemsInFolderSync(basePath) }
-                    val subFolders = runBlocking(Dispatchers.IO) { videoItemDao().getSubFoldersSync(basePath) }
+                    val items = runBlocking(Dispatchers.IO) { videoItemDao().getItemsInFolder(basePath).first() }
+                    val subFolders = runBlocking(Dispatchers.IO) { videoItemDao().getSubFolders(basePath).first() }
                     for (sub in subFolders) {
                         val id = DocumentId.Directory(rel.id, sub)
                         val docId = DocumentId.encode(id)
@@ -318,7 +319,7 @@ class SyncDocumentsProvider : DocumentsProvider() {
     override fun querySearchDocuments(rootId: String?, query: String, projection: Array<out String>?): Cursor? {
         val projectionUsed = projection ?: DEFAULT_DOCUMENT_PROJECTION
         val cursor = MatrixCursor(projectionUsed)
-        val results = runBlocking(Dispatchers.IO) { videoItemDao().searchByFileNameSync(query) }
+        val results = runBlocking(Dispatchers.IO) { videoItemDao().searchByFileName(query).first() }
         for (video in results) {
             val docId = DocumentId.encode(DocumentId.Video(video.id))
             val mime = getMimeType(video.fileName)

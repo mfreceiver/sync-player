@@ -1,6 +1,6 @@
--keep class jcifs.** { *; }
--keep class net.schmizz.** { *; }
--keep class org.bouncycastle.** { *; }
+-keep class jcifs.**
+-keep class net.schmizz.**
+-keep class org.bouncycastle.**
 -dontwarn jcifs.**
 -dontwarn net.schmizz.**
 -dontwarn org.bouncycastle.**

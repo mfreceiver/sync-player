@@ -21,6 +21,9 @@ class PlaybackRepository @Inject constructor(
 
     fun getTrashedFlow(): Flow<List<PlaybackRecordEntity>> = playbackRecordDao.getTrashedFlow()
 
+    fun getByFolderFlow(folderPath: String): Flow<List<PlaybackRecordEntity>> =
+        playbackRecordDao.getByFolderFlow(folderPath)
+
     suspend fun getTrashed(): List<PlaybackRecordEntity> = playbackRecordDao.getTrashed()
 
     suspend fun upsert(record: PlaybackRecordEntity) = playbackRecordDao.upsert(record)

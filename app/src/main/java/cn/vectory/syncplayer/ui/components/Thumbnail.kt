@@ -1,27 +1,22 @@
 package cn.vectory.syncplayer.ui.components
 
-import android.graphics.BitmapFactory
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
+import coil.request.ImageRequest
+import java.io.File
 
 @Composable
 internal fun Thumbnail(
@@ -30,21 +25,13 @@ internal fun Thumbnail(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
 
-    LaunchedEffect(thumbnailPath) {
-        thumbnailPath?.let { path ->
-            try {
-                bitmap = BitmapFactory.decodeFile(path)
-            } catch (e: Exception) {
-                bitmap = null
-            }
-        }
-    }
-
-    if (bitmap != null) {
-        Image(
-            painter = BitmapPainter(bitmap!!.asImageBitmap()),
+    if (thumbnailPath != null) {
+        AsyncImage(
+            model = ImageRequest.Builder(context)
+                .data(File(thumbnailPath))
+                .size(320)
+                .build(),
             contentDescription = "缩略图",
             modifier = modifier,
             contentScale = ContentScale.Crop
@@ -55,7 +42,7 @@ internal fun Thumbnail(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = if (isVideo) Icons.Default.Movie else Icons.AutoMirrored.Filled.InsertDriveFile,
+                imageVector = if (isVideo) Icons.Default.Movie else Icons.Default.InsertDriveFile,
                 contentDescription = if (isVideo) "视频" else "文件",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                 modifier = Modifier.size(32.dp)

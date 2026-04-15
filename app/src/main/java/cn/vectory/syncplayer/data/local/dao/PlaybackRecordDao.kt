@@ -47,4 +47,15 @@ interface PlaybackRecordDao {
         WHERE videoItemId = :videoItemId
     """)
     suspend fun updateTrashed(videoItemId: Long, trashed: Boolean)
+
+    @Query("""
+        SELECT pr.* FROM playback_record pr
+        INNER JOIN video_item vi ON pr.videoItemId = vi.id
+        WHERE CASE
+            WHEN :folderPath = '' THEN vi.relativePath NOT LIKE '%/%'
+            ELSE vi.relativePath LIKE :folderPath || '/%'
+                 AND SUBSTR(vi.relativePath, LENGTH(:folderPath) + 2) NOT LIKE '%/%'
+        END
+    """)
+    fun getByFolderFlow(folderPath: String): Flow<List<PlaybackRecordEntity>>
 }

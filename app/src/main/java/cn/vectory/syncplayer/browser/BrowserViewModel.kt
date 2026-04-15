@@ -20,14 +20,17 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 
+@OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class BrowserViewModel @Inject constructor(
     private val videoRepository: VideoRepository,
@@ -88,12 +91,30 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
+    // Trigger thumbnail repair on folder change, not on sort/filter changes
+    init {
+        viewModelScope.launch {
+            effectiveFolder.collectLatest { folder ->
+                if (folder.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        val videos = videoRepository.getItemsInFolder(folder).first()
+                        repairMissingThumbnails(videos)
+                    }
+                }
+            }
+        }
+    }
+
     val hasConfig: StateFlow<Boolean> = syncRelationRepository.getAllWithSourceFlow()
         .map { it.isNotEmpty() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
-    private val playbackRecords = playbackRepository.getAllFlow()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    // Playback records will be loaded on-demand per-folder to avoid loading all into memory
+    // private val playbackRecords removed in favor of per-folder queries
+
+    private val folderPlaybackRecords = effectiveFolder.flatMapLatest { folder ->
+        playbackRepository.getByFolderFlow(folder)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val basePaths = syncRelationRepository.getAllWithSourceFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -108,12 +129,12 @@ class BrowserViewModel @Inject constructor(
         }?.value
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    @OptIn(FlowPreview::class)
+    @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
     val browseItems: StateFlow<List<BrowseItem>> = combine(
         effectiveFolder,
         _sortMode,
         _filter,
-        playbackRecords,
+        folderPlaybackRecords,
         basePaths
     ) { folder, mode, filterVal, records, relations ->
         val baseDirSet = relations.map { it.relation.localBasePath }.toSet()
@@ -203,7 +224,7 @@ class BrowserViewModel @Inject constructor(
         // Merge DB videos with disk-only items (disk items have null videoItemId)
         val allVideos = videos + diskOnlyItems
 
-        repairMissingThumbnails(videoEntities)
+        // repairMissingThumbnails(videoEntities) moved to per-folder trigger
 
         val filteredVideos = when (filterVal) {
             BrowseFilter.ALL -> allVideos

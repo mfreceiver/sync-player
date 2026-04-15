@@ -30,8 +30,8 @@ android {
         applicationId = "cn.vectory.syncplayer"
         minSdk = 34
         targetSdk = 35
-        versionCode = 62
-        versionName = "9.12.0"
+        versionCode = 63
+        versionName = "9.13.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -131,4 +131,7 @@ dependencies {
 
     // DataStore
     implementation(libs.datastore.preferences)
+
+    // Coil image loading (Compose integration)
+    implementation(libs.coil.compose)
 }

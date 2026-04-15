@@ -35,13 +35,13 @@ class SyncService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_CANCEL) {
             cancelSync()
-            return START_NOT_STICKY
+            return START_REDELIVER_INTENT
         }
 
         val relationId = intent?.getLongExtra(EXTRA_RELATION_ID, 0L) ?: 0L
 
         if (syncJob?.isActive == true) {
-            return START_NOT_STICKY
+            return START_REDELIVER_INTENT
         }
 
         syncJob?.cancel()
@@ -79,9 +79,13 @@ class SyncService : Service() {
             _syncProgress.value = syncEngine.progress.value
             SyncNotificationHelper.updateNotification(this@SyncService, _syncProgress.value)
 
-            delay(3000)
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            val finalProgress = syncEngine.progress.value
+            // If sync completed, allow a brief UX pause before stopping foreground
+            if (!finalProgress.isRunning) {
+                delay(1500)
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
         }
 
         serviceScope.launch {
@@ -91,7 +95,7 @@ class SyncService : Service() {
             }
         }
 
-        return START_NOT_STICKY
+        return START_REDELIVER_INTENT
     }
 
     private fun cancelSync() {
