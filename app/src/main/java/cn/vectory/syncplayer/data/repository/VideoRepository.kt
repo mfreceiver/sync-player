@@ -1,6 +1,7 @@
 package cn.vectory.syncplayer.data.repository
 
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao
+import cn.vectory.syncplayer.data.local.dao.VideoItemDao.ChildVideoStat
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
@@ -54,4 +55,7 @@ class VideoRepository @Inject constructor(
 
     fun getAllRelativePaths(): Flow<List<String>> =
         videoItemDao.getAllRelativePaths()
+
+    suspend fun getChildVideoStats(folderPath: String): List<ChildVideoStat> =
+        videoItemDao.getChildVideoStats(folderPath)
 }

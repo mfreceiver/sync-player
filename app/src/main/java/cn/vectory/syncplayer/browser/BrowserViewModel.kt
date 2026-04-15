@@ -64,11 +64,19 @@ class BrowserViewModel @Inject constructor(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
-    private val _savedScrollInfo = MutableStateFlow<Triple<String, Int, Int>?>(null)
-
     private val _refreshTrigger = MutableStateFlow(0L)
 
     private val effectiveFolder = combine(_currentFolder, _refreshTrigger) { folder, _ -> folder }
+
+    private val _scrollPositions = mutableMapOf<String, Pair<Int, Int>>()
+
+    fun saveScrollPosition(folder: String, firstVisibleItemIndex: Int, firstVisibleItemScrollOffset: Int) {
+        _scrollPositions[folder] = Pair(firstVisibleItemIndex, firstVisibleItemScrollOffset)
+    }
+
+    fun consumeScrollPosition(folder: String): Pair<Int, Int>? {
+        return _scrollPositions.remove(folder)
+    }
 
     init {
         viewModelScope.launch {
@@ -163,22 +171,7 @@ class BrowserViewModel @Inject constructor(
 
         val allFolderNames = (dbFolderNames.toSet() + physicalFolderNames).sortedBy { it.lowercase() }
 
-        val folders = allFolderNames.map { folderName ->
-            val fullPath = if (folder.isEmpty()) folderName else "$folder/$folderName"
-            BrowseItem(
-                videoItemId = null,
-                name = folderName,
-                relativePath = fullPath,
-                isDirectory = true,
-                isSyncBaseDir = baseDirSet.contains(fullPath),
-                containsSyncBaseDir = baseDirSet.any { it.startsWith("$fullPath/") },
-                isInSyncBaseDir = baseDirSet.any { fullPath.startsWith("$it/") }
-            )
-        }
-
         val videoEntities = videoRepository.getItemsInFolder(folder).first()
-        // Disk-only scanning: include files present on disk that do not have DB records
-        // Build a set of relative paths already covered by DB so we don't duplicate entries
         val dbVideoPaths = videoEntities.map { it.relativePath }.toSet()
 
         val diskOnlyItems = run {
@@ -199,6 +192,35 @@ class BrowserViewModel @Inject constructor(
             }
         }
 
+        val childStats = videoRepository.getChildVideoStats(folder)
+        val subFolderStatsMap = childStats
+            .filter { isVideoFile(it.fileName) }
+            .groupBy { stat ->
+                val afterFolder = if (folder.isEmpty()) stat.relativePath
+                    else stat.relativePath.substring(folder.length + 1)
+                afterFolder.substringBefore('/')
+            }
+
+        val folders = allFolderNames.map { folderName ->
+            val fullPath = if (folder.isEmpty()) folderName else "$folder/$folderName"
+            val stats = subFolderStatsMap[folderName]
+            val vidCount = stats?.size ?: 0
+            val playedCount = stats?.count { it.position > 0 || it.isCompleted } ?: 0
+            val trashedCount = stats?.count { it.isTrashed } ?: 0
+            BrowseItem(
+                videoItemId = null,
+                name = folderName,
+                relativePath = fullPath,
+                isDirectory = true,
+                isSyncBaseDir = baseDirSet.contains(fullPath),
+                containsSyncBaseDir = baseDirSet.any { it.startsWith("$fullPath/") },
+                isInSyncBaseDir = baseDirSet.any { fullPath.startsWith("$it/") },
+                videoCount = vidCount,
+                playedCount = playedCount,
+                trashedCount = trashedCount
+            )
+        }
+
         val videos = videoEntities
             .map { video ->
                 val record = recordMap[video.id]
@@ -217,11 +239,11 @@ class BrowserViewModel @Inject constructor(
                     playbackPosition = record?.position ?: 0,
                     playbackDuration = record?.duration ?: 0,
                     isCompleted = record?.isCompleted ?: false,
-                    isTrashed = record?.isTrashed ?: false
+                    isTrashed = record?.isTrashed ?: false,
+                    hasGainAdjusted = video.audioGainDb != null
                 )
             }
 
-        // Merge DB videos with disk-only items (disk items have null videoItemId)
         val allVideos = videos + diskOnlyItems
 
         // repairMissingThumbnails(videoEntities) moved to per-folder trigger
@@ -335,19 +357,6 @@ class BrowserViewModel @Inject constructor(
 
     fun clearError() {
         _error.value = null
-    }
-
-    fun saveScrollPosition(folder: String, firstVisibleItemIndex: Int, firstVisibleItemScrollOffset: Int) {
-        _savedScrollInfo.value = Triple(folder, firstVisibleItemIndex, firstVisibleItemScrollOffset)
-    }
-
-    fun consumeScrollPosition(folder: String): Pair<Int, Int>? {
-        val saved = _savedScrollInfo.value
-        if (saved != null && saved.first == folder) {
-            _savedScrollInfo.value = null
-            return Pair(saved.second, saved.third)
-        }
-        return null
     }
 
     private fun repairMissingThumbnails(videos: List<VideoItemEntity>) {

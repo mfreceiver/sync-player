@@ -21,7 +21,8 @@ internal fun buildMetadataLine(
     width: Int?,
     height: Int?,
     bitrate: Long?,
-    extension: String
+    extension: String,
+    hasGainAdjusted: Boolean = false
 ): String {
     val parts = mutableListOf<String>()
 
@@ -33,6 +34,10 @@ internal fun buildMetadataLine(
 
     if (width != null && height != null && width > 0 && height > 0) {
         parts.add("${width}×${height}")
+    }
+
+    if (hasGainAdjusted) {
+        parts.add("GAIN")
     }
 
     bitrate?.let { bps ->

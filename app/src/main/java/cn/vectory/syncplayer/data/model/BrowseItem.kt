@@ -22,5 +22,11 @@ data class BrowseItem(
     val isTrashed: Boolean = false,
     val isSyncBaseDir: Boolean = false,
     val containsSyncBaseDir: Boolean = false,
-    val isInSyncBaseDir: Boolean = false
+    val isInSyncBaseDir: Boolean = false,
+    // Folder statistics (non-zero only for directory items)
+    val videoCount: Int = 0,
+    val playedCount: Int = 0,
+    val trashedCount: Int = 0,
+    // Video metadata
+    val hasGainAdjusted: Boolean = false
 )

@@ -339,8 +339,13 @@ fun BrowserScreen(
         ) { paddingValues ->
             if (viewMode == BrowserViewModel.ViewMode.GRID) {
                 val gridState = rememberLazyGridState()
+                var previousFolder by remember { mutableStateOf(folder) }
                 LaunchedEffect(folder) {
-                    val saved = viewModel.consumeScrollPosition(folder)
+                    if (previousFolder != folder && !gridState.layoutInfo.visibleItemsInfo.isEmpty()) {
+                        viewModel.saveScrollPosition(previousFolder, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
+                    }
+                    previousFolder = folder
+                    val saved: Pair<Int, Int>? = viewModel.consumeScrollPosition(folder)
                     if (saved != null) {
                         gridState.scrollToItem(saved.first, saved.second)
                     }
@@ -436,8 +441,13 @@ fun BrowserScreen(
                 }
             } else {
                 val listState = rememberLazyListState()
+                var previousFolder by remember { mutableStateOf(folder) }
                 LaunchedEffect(folder) {
-                    val saved = viewModel.consumeScrollPosition(folder)
+                    if (previousFolder != folder && !listState.layoutInfo.visibleItemsInfo.isEmpty()) {
+                        viewModel.saveScrollPosition(previousFolder, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
+                    }
+                    previousFolder = folder
+                    val saved: Pair<Int, Int>? = viewModel.consumeScrollPosition(folder)
                     if (saved != null) {
                         listState.scrollToItem(saved.first, saved.second)
                     }
@@ -695,12 +705,28 @@ private fun FolderItem(
 
         Spacer(Modifier.width(12.dp))
 
-        Text(
-            text = item.name,
-            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = item.name,
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (item.videoCount > 0) {
+                val parts = mutableListOf<String>()
+                parts.add("视频数：${item.videoCount}")
+                if (item.playedCount > 0) parts.add("已播放：${item.playedCount}")
+                if (item.trashedCount > 0) parts.add("回收站：${item.trashedCount}个")
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = parts.joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
     }
 }
 
@@ -747,7 +773,8 @@ private fun FileItem(
                 width = item.width,
                 height = item.height,
                 bitrate = item.bitrate,
-                extension = item.name.substringAfterLast('.', "").lowercase()
+                extension = item.name.substringAfterLast('.', "").lowercase(),
+                hasGainAdjusted = item.hasGainAdjusted
             )
             if (metadata.isNotEmpty()) {
                 Spacer(Modifier.height(2.dp))

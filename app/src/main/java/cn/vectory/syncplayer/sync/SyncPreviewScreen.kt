@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -365,8 +366,11 @@ fun SyncPreviewScreen(
                             contentPadding = PaddingValues(vertical = 8.dp)
                         ) {
                             if (syncMode == SyncMode.DOWNLOAD) {
-                                items(remainingToDownload, key = { it.relativePath }) { action ->
+                                items(remainingToDownload, key = { "dl_${it.relativePath}" }) { action ->
                                     SyncActionItem(action = action, isDownload = true)
+                                }
+                                items(remainingToDelete, key = { "rm_${it.relativePath}" }) { action ->
+                                    SyncActionItem(action = action, isDownload = false, showStrikethrough = true)
                                 }
                             } else {
                                 items(remainingToDelete, key = { it.relativePath }) { action ->
@@ -461,14 +465,16 @@ private fun SyncDeleteWarningCard() {
 @Composable
 private fun SyncActionItem(
     action: SyncAction,
-    isDownload: Boolean
+    isDownload: Boolean,
+    showStrikethrough: Boolean = false
 ) {
     ListItem(
         headlineContent = {
             Text(
                 text = action.relativePath.substringAfterLast('/'),
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                textDecoration = if (showStrikethrough) TextDecoration.LineThrough else null
             )
         },
         supportingContent = {

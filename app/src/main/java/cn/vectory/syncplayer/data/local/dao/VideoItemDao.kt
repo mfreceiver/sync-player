@@ -82,6 +82,30 @@ interface VideoItemDao {
 
     @Query("SELECT DISTINCT relativePath FROM video_item")
     fun getAllRelativePaths(): Flow<List<String>>
-    
-    
+
+    @Query("""
+        SELECT vi.id, vi.relativePath, vi.fileName, vi.audioGainDb,
+               pr.position, pr.isCompleted, pr.isTrashed
+        FROM video_item vi
+        LEFT JOIN playback_record pr ON pr.videoItemId = vi.id
+        WHERE CASE
+            WHEN :folderPath = '' THEN
+                LENGTH(vi.relativePath) - LENGTH(REPLACE(vi.relativePath, '/', '')) = 1
+            ELSE
+                vi.relativePath LIKE :folderPath || '/%'
+                AND LENGTH(SUBSTR(vi.relativePath, LENGTH(:folderPath) + 2))
+                    - LENGTH(REPLACE(SUBSTR(vi.relativePath, LENGTH(:folderPath) + 2), '/', '')) = 1
+        END
+    """)
+    suspend fun getChildVideoStats(folderPath: String): List<ChildVideoStat>
+
+    data class ChildVideoStat(
+        val id: Long,
+        val relativePath: String,
+        val fileName: String,
+        val audioGainDb: Float?,
+        val position: Long,
+        val isCompleted: Boolean,
+        val isTrashed: Boolean
+    )
 }
