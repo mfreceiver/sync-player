@@ -36,9 +36,6 @@ class PlayerViewModel @Inject constructor(
     private val _allVideoIds = MutableStateFlow<List<Long>>(emptyList())
     val allVideoIds: StateFlow<List<Long>> = _allVideoIds.asStateFlow()
 
-    private val _progressAlwaysVisible = MutableStateFlow(false)
-    val progressAlwaysVisible: StateFlow<Boolean> = _progressAlwaysVisible.asStateFlow()
-
     private val _volumeBalance = MutableStateFlow(false)
     val volumeBalance: StateFlow<Boolean> = _volumeBalance.asStateFlow()
 
@@ -58,7 +55,6 @@ class PlayerViewModel @Inject constructor(
         loadFolderVideoIds()
         viewModelScope.launch {
             _speedMultiplier.value = userPrefs.getLongPressSpeed()
-            _progressAlwaysVisible.value = userPrefs.getProgressAlwaysVisible()
             _volumeBalance.value = userPrefs.getVolumeBalance()
             _doubleTapAction.value = try {
                 DoubleTapAction.valueOf(userPrefs.getDoubleTapAction())

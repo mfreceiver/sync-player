@@ -33,7 +33,6 @@ class UserPreferencesRepository @Inject constructor(
         val VIEW_MODE = stringPreferencesKey("view_mode")
         val GRID_COLUMNS = intPreferencesKey("grid_columns")
         val CONNECTION_TIMEOUT = intPreferencesKey("connection_timeout")
-        val PROGRESS_ALWAYS_VISIBLE = booleanPreferencesKey("progress_always_visible")
         val VOLUME_BALANCE = booleanPreferencesKey("volume_balance")
         val ANALYZE_ON_DOWNLOAD = booleanPreferencesKey("analyze_on_download")
         val DOUBLE_TAP_ACTION = stringPreferencesKey("double_tap_action")
@@ -68,10 +67,6 @@ class UserPreferencesRepository @Inject constructor(
         (it[Keys.CONNECTION_TIMEOUT] ?: 5).coerceIn(3, 60)
     }
 
-    val progressAlwaysVisible: Flow<Boolean> = dataStore.data.map {
-        it[Keys.PROGRESS_ALWAYS_VISIBLE] ?: false
-    }
-
     val volumeBalance: Flow<Boolean> = dataStore.data.map {
         it[Keys.VOLUME_BALANCE] ?: false
     }
@@ -96,7 +91,6 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun getViewMode(): String = viewMode.first()
     suspend fun getGridColumns(): Int = gridColumns.first()
     suspend fun getConnectionTimeout(): Int = connectionTimeout.first()
-    suspend fun getProgressAlwaysVisible(): Boolean = progressAlwaysVisible.first()
     suspend fun getVolumeBalance(): Boolean = volumeBalance.first()
     suspend fun getAnalyzeOnDownload(): Boolean = analyzeOnDownload.first()
     suspend fun getDoubleTapAction(): String = doubleTapAction.first()
@@ -132,10 +126,6 @@ class UserPreferencesRepository @Inject constructor(
 
     suspend fun setConnectionTimeout(timeoutSeconds: Int) {
         dataStore.edit { it[Keys.CONNECTION_TIMEOUT] = timeoutSeconds.coerceIn(3, 60) }
-    }
-
-    suspend fun setProgressAlwaysVisible(enabled: Boolean) {
-        dataStore.edit { it[Keys.PROGRESS_ALWAYS_VISIBLE] = enabled }
     }
 
     suspend fun setVolumeBalance(enabled: Boolean) {

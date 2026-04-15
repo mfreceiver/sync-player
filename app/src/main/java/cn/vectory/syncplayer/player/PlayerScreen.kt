@@ -38,7 +38,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -52,10 +51,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -126,9 +123,6 @@ fun PlayerScreen(
 
     var originalBrightness by remember { mutableFloatStateOf(-1f) }
 
-    val insetsAnimFractionState = remember { mutableFloatStateOf(1f) }
-    val insetsAnimFraction by insetsAnimFractionState
-
     fun showOverlay(overlay: PlayerOverlay) {
         currentOverlay = overlay
         overlayHideJob.value?.cancel()
@@ -139,60 +133,6 @@ fun PlayerScreen(
     }
 
     val window = activity.window
-    DisposableEffect(Unit) {
-        val currentBrightness = window.attributes.screenBrightness
-        if (currentBrightness >= 0) {
-            originalBrightness = currentBrightness
-        }
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        onDispose {
-            if (originalBrightness >= 0) {
-                val attrs = window.attributes
-                attrs.screenBrightness = originalBrightness
-                window.attributes = attrs
-            }
-            WindowCompat.setDecorFitsSystemWindows(window, true)
-            val restoreController = WindowCompat.getInsetsController(window, window.decorView)
-            restoreController.show(WindowInsetsCompat.Type.systemBars())
-            restoreController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
-        }
-    }
-
-    DisposableEffect(window) {
-        val callback = object : WindowInsetsAnimationCompat.Callback(
-            WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_STOP
-        ) {
-            override fun onStart(
-                animation: WindowInsetsAnimationCompat,
-                bounds: WindowInsetsAnimationCompat.BoundsCompat
-            ): WindowInsetsAnimationCompat.BoundsCompat {
-                return bounds
-            }
-
-            override fun onProgress(
-                insets: WindowInsetsCompat,
-                runningAnimations: MutableList<WindowInsetsAnimationCompat>
-            ): WindowInsetsCompat {
-                for (anim in runningAnimations) {
-                    if (anim.typeMask and WindowInsetsCompat.Type.systemBars() != 0) {
-                        insetsAnimFractionState.floatValue = anim.fraction
-                    }
-                }
-                return insets
-            }
-
-            override fun onEnd(animation: WindowInsetsAnimationCompat) {
-                if (animation.typeMask and WindowInsetsCompat.Type.systemBars() != 0) {
-                    insetsAnimFractionState.floatValue = if (showControls) 1f else 0f
-                }
-            }
-        }
-        ViewCompat.setWindowInsetsAnimationCallback(window.decorView, callback)
-        onDispose {
-            ViewCompat.setWindowInsetsAnimationCallback(window.decorView, null)
-        }
-    }
-
     val exoPlayer = remember {
         ExoPlayer.Builder(context.applicationContext).build().apply {
             playWhenReady = true
@@ -201,6 +141,30 @@ fun PlayerScreen(
     val gestureView = remember {
         GesturePlayerView(context).apply {
             getPlayerView().player = exoPlayer
+        }
+    }
+    DisposableEffect(Unit) {
+        val currentBrightness = window.attributes.screenBrightness
+        if (currentBrightness >= 0) {
+            originalBrightness = currentBrightness
+        }
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        insetsController.hide(WindowInsetsCompat.Type.systemBars())
+        insetsController.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        onDispose {
+            if (originalBrightness >= 0) {
+                val attrs = window.attributes
+                attrs.screenBrightness = originalBrightness
+                window.attributes = attrs
+            }
+            val restoreController = WindowCompat.getInsetsController(window, window.decorView)
+            restoreController.show(WindowInsetsCompat.Type.systemBars())
+            restoreController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+            viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
+            gestureView.getPlayerView().player = null
+            exoPlayer.release()
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
 
@@ -231,26 +195,6 @@ fun PlayerScreen(
         }
     }
     val isFullscreen by viewModel.isFullscreen.collectAsStateWithLifecycle()
-    LaunchedEffect(isFullscreen, showControls) {
-        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-        when {
-            isFullscreen -> {
-                insetsController.hide(WindowInsetsCompat.Type.systemBars())
-                insetsController.systemBarsBehavior =
-                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            }
-            showControls -> {
-                insetsController.show(WindowInsetsCompat.Type.systemBars())
-                insetsController.systemBarsBehavior =
-                    WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
-            }
-            else -> {
-                insetsController.hide(WindowInsetsCompat.Type.systemBars())
-                insetsController.systemBarsBehavior =
-                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            }
-        }
-    }
     LaunchedEffect(isFullscreen, videoItem) {
         val item = videoItem
         activity.requestedOrientation = if (item != null) {
@@ -312,15 +256,6 @@ LaunchedEffect(exoPlayer) {
             exoPlayer.playbackParameters = PlaybackParameters(playbackSpeed)
         }
     }
-    DisposableEffect(Unit) {
-        onDispose {
-            viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
-            // Clear the player from the view before releasing to avoid leaked references
-            gestureView.getPlayerView().player = null
-            exoPlayer.release()
-            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
-    }
 
     val lifecycleOwner = activity as? ComponentActivity
     if (lifecycleOwner != null) {
@@ -342,11 +277,14 @@ LaunchedEffect(exoPlayer) {
 
     var initialVolume by remember { mutableIntStateOf(0) }
     var lastAutoSwitchTime by remember { mutableLongStateOf(0L) }
+    var isExiting by remember { mutableStateOf(false) }
 
     fun doExit() {
+        if (isExiting) return
+        isExiting = true
         viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
-        gestureView.getPlayerView().visibility = android.view.View.INVISIBLE
-        exoPlayer.stop()
+        gestureView.getPlayerView().player = null
+        exoPlayer.pause()
         onExit()
     }
 
@@ -472,7 +410,6 @@ LaunchedEffect(exoPlayer) {
         }
     }
 
-    val progressAlwaysVisible by viewModel.progressAlwaysVisible.collectAsStateWithLifecycle()
     var showSpeedMenu by remember { mutableStateOf(false) }
 
     BackHandler { doExit() }
@@ -486,22 +423,15 @@ LaunchedEffect(exoPlayer) {
             modifier = Modifier.fillMaxSize()
         )
 
-        val topBarVisible = !isFullscreen && (showControls || progressAlwaysVisible || isHighSpeedSeeking)
-        val topBarColor = LocalExtendedColors.current.playerTopBar
-        val topBarAlpha = when {
-            topBarVisible -> 1f
-            else -> insetsAnimFraction
-        }
-        val renderTopBar = topBarVisible || (insetsAnimFraction > 0.01f && !isFullscreen)
+        val topBarVisible = !isFullscreen && (showControls || isHighSpeedSeeking)
 
-        if (renderTopBar) {
+        if (topBarVisible) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
-                    .background(topBarColor)
+                    .background(LocalExtendedColors.current.playerTopBar)
                     .statusBarsPadding()
-                    .graphicsLayer { alpha = topBarAlpha }
             ) {
                 TopProgressBar(
                     currentPosition = currentPosition,
@@ -576,8 +506,7 @@ LaunchedEffect(exoPlayer) {
                         }
                     }
             )
-            if (!isFullscreen && (showControls || insetsAnimFraction > 0.01f)) {
-                val bottomBarAlpha = if (showControls) 1f else insetsAnimFraction
+            if (!isFullscreen && showControls) {
                 BottomToolbar(
                     isPlaying = isPlaying,
                     playbackSpeed = playbackSpeed,
@@ -611,8 +540,7 @@ LaunchedEffect(exoPlayer) {
                     onRotation = {
                         viewModel.toggleFullscreen()
                         showOverlay(PlayerOverlay.Orientation(if (isFullscreen) "ROTATION" else "FULLSCREEN"))
-                    },
-                    modifier = Modifier.graphicsLayer { alpha = bottomBarAlpha }
+                    }
                 )
             }
         }
@@ -667,7 +595,7 @@ private fun TopProgressBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(32.dp)
+            .height(48.dp)
             .background(LocalExtendedColors.current.playerTopBar),
         verticalAlignment = Alignment.CenterVertically
     ) {

@@ -28,6 +28,15 @@ class GainAnalysisViewModel @Inject constructor(
 
     private val relationId: Long = savedStateHandle.get<Long>("relationId") ?: 0L
 
+    private val videoExtensions = setOf(
+        "mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "ts", "m4v", "3gp", "mpeg", "mpg"
+    )
+
+    private fun isVideoFile(fileName: String): Boolean {
+        val ext = fileName.substringAfterLast('.', "").lowercase()
+        return ext in videoExtensions
+    }
+
     private val _discoveredFiles = MutableStateFlow<List<VideoItemEntity>>(emptyList())
     val discoveredFiles = _discoveredFiles.asStateFlow()
 
@@ -66,7 +75,7 @@ class GainAnalysisViewModel @Inject constructor(
             _completedCount.value = 0
             try {
                 val videos = videoRepository.getBySyncRelationId(relationId)
-                    .filter { it.audioGainDb == null }
+                    .filter { it.audioGainDb == null && isVideoFile(it.fileName) }
                 _discoveredFiles.value = videos
                 _totalCount.value = videos.size
             } catch (e: Exception) {

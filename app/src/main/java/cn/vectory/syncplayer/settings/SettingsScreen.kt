@@ -32,7 +32,6 @@ fun SettingsScreen(
     val defaultFilter by viewModel.defaultFilter.collectAsStateWithLifecycle()
     val viewMode by viewModel.viewMode.collectAsStateWithLifecycle()
     val gridColumns by viewModel.gridColumns.collectAsStateWithLifecycle()
-    val progressAlwaysVisible by viewModel.progressAlwaysVisible.collectAsStateWithLifecycle()
     val volumeBalance by viewModel.volumeBalance.collectAsStateWithLifecycle()
     val doubleTapAction by viewModel.doubleTapAction.collectAsStateWithLifecycle()
     val safEnabled by viewModel.safEnabled.collectAsStateWithLifecycle()
@@ -150,30 +149,6 @@ fun SettingsScreen(
                         Switch(
                             checked = volumeBalance,
                             onCheckedChange = { viewModel.setVolumeBalance(it) }
-                        )
-                    }
-                }
-            }
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("进度常显", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "启用后播放界面顶部固定显示进度条，隐藏控制条时仍可见",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("启用", style = MaterialTheme.typography.bodyMedium)
-                        Switch(
-                            checked = progressAlwaysVisible,
-                            onCheckedChange = { viewModel.setProgressAlwaysVisible(it) }
                         )
                     }
                 }

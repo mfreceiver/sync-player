@@ -38,9 +38,6 @@ class SettingsViewModel @Inject constructor(
     private val _gridColumns = MutableStateFlow(3)
     val gridColumns: StateFlow<Int> = _gridColumns.asStateFlow()
 
-    private val _progressAlwaysVisible = MutableStateFlow(false)
-    val progressAlwaysVisible: StateFlow<Boolean> = _progressAlwaysVisible.asStateFlow()
-
     private val _volumeBalance = MutableStateFlow(false)
     val volumeBalance: StateFlow<Boolean> = _volumeBalance.asStateFlow()
 
@@ -75,7 +72,6 @@ class SettingsViewModel @Inject constructor(
                 BrowserViewModel.ViewMode.LIST
             }
             _gridColumns.value = userPrefs.getGridColumns()
-            _progressAlwaysVisible.value = userPrefs.getProgressAlwaysVisible()
             _volumeBalance.value = userPrefs.getVolumeBalance()
             _doubleTapAction.value = try {
                 DoubleTapAction.valueOf(userPrefs.getDoubleTapAction())
@@ -110,11 +106,6 @@ class SettingsViewModel @Inject constructor(
     fun setGridColumns(columns: Int) {
         _gridColumns.value = columns.coerceIn(1, 5)
         viewModelScope.launch { userPrefs.setGridColumns(columns) }
-    }
-
-    fun setProgressAlwaysVisible(enabled: Boolean) {
-        _progressAlwaysVisible.value = enabled
-        viewModelScope.launch { userPrefs.setProgressAlwaysVisible(enabled) }
     }
 
     fun setVolumeBalance(enabled: Boolean) {
