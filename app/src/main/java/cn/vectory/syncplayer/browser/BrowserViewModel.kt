@@ -74,8 +74,10 @@ class BrowserViewModel @Inject constructor(
         _scrollPositions[folder] = Pair(firstVisibleItemIndex, firstVisibleItemScrollOffset)
     }
 
-    fun consumeScrollPosition(folder: String): Pair<Int, Int>? {
-        return _scrollPositions.remove(folder)
+    fun getScrollPosition(folder: String): Pair<Int, Int>? = _scrollPositions[folder]
+
+    fun clearScrollPosition(folder: String) {
+        _scrollPositions.remove(folder)
     }
 
     init {
