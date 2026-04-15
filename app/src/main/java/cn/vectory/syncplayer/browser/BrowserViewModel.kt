@@ -76,10 +76,6 @@ class BrowserViewModel @Inject constructor(
 
     fun getScrollPosition(folder: String): Pair<Int, Int>? = _scrollPositions[folder]
 
-    fun clearScrollPosition(folder: String) {
-        _scrollPositions.remove(folder)
-    }
-
     init {
         viewModelScope.launch {
             _sortMode.value = try {

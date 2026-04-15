@@ -340,6 +340,7 @@ fun BrowserScreen(
             if (viewMode == BrowserViewModel.ViewMode.GRID) {
                 val gridState = rememberLazyGridState()
                 var previousFolder by remember { mutableStateOf(folder) }
+                var restoredFolder by remember { mutableStateOf(folder) }
                 LaunchedEffect(folder) {
                     if (previousFolder != folder) {
                         viewModel.saveScrollPosition(previousFolder, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
@@ -347,12 +348,12 @@ fun BrowserScreen(
                     previousFolder = folder
                 }
                 LaunchedEffect(folder, browseItems.size) {
-                    if (browseItems.isNotEmpty()) {
+                    if (browseItems.isNotEmpty() && restoredFolder != folder) {
                         val saved: Pair<Int, Int>? = viewModel.getScrollPosition(folder)
                         if (saved != null) {
                             gridState.scrollToItem(saved.first, saved.second)
-                            viewModel.clearScrollPosition(folder)
                         }
+                        restoredFolder = folder
                     }
                 }
                 LazyVerticalGrid(
@@ -447,6 +448,7 @@ fun BrowserScreen(
             } else {
                 val listState = rememberLazyListState()
                 var previousFolder by remember { mutableStateOf(folder) }
+                var restoredFolder by remember { mutableStateOf(folder) }
                 LaunchedEffect(folder) {
                     if (previousFolder != folder) {
                         viewModel.saveScrollPosition(previousFolder, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
@@ -454,12 +456,12 @@ fun BrowserScreen(
                     previousFolder = folder
                 }
                 LaunchedEffect(folder, browseItems.size) {
-                    if (browseItems.isNotEmpty()) {
+                    if (browseItems.isNotEmpty() && restoredFolder != folder) {
                         val saved: Pair<Int, Int>? = viewModel.getScrollPosition(folder)
                         if (saved != null) {
                             listState.scrollToItem(saved.first, saved.second)
-                            viewModel.clearScrollPosition(folder)
                         }
+                        restoredFolder = folder
                     }
                 }
                 LazyColumn(
