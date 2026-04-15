@@ -92,7 +92,6 @@ fun BrowserScreen(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
-    var isDrawerNavigating by remember { mutableStateOf(false) }
 
     LaunchedEffect(currentFolder) {
         if (viewModel.currentFolder.value.isEmpty()) {
@@ -121,8 +120,6 @@ fun BrowserScreen(
                     label = { Text("数据源") },
                     selected = false,
                     onClick = {
-                        if (isDrawerNavigating) return@NavigationDrawerItem
-                        isDrawerNavigating = true
                         scope.launch {
                             drawerState.close()
                             onNavigateToSyncSourceList()
@@ -135,8 +132,6 @@ fun BrowserScreen(
                     label = { Text("同步关系") },
                     selected = false,
                     onClick = {
-                        if (isDrawerNavigating) return@NavigationDrawerItem
-                        isDrawerNavigating = true
                         scope.launch {
                             drawerState.close()
                             onNavigateToSyncRelationList()
@@ -149,8 +144,6 @@ fun BrowserScreen(
                     label = { Text("设置") },
                     selected = false,
                     onClick = {
-                        if (isDrawerNavigating) return@NavigationDrawerItem
-                        isDrawerNavigating = true
                         scope.launch {
                             drawerState.close()
                             onNavigateToPlaybackSettings()
@@ -163,8 +156,6 @@ fun BrowserScreen(
                     label = { Text("关于") },
                     selected = false,
                     onClick = {
-                        if (isDrawerNavigating) return@NavigationDrawerItem
-                        isDrawerNavigating = true
                         scope.launch {
                             drawerState.close()
                             onNavigateToAbout()
@@ -181,7 +172,9 @@ fun BrowserScreen(
                     TopAppBar(
                         navigationIcon = {
                         IconButton(onClick = {
-                            scope.launch { drawerState.open() }
+                            scope.launch {
+                                if (drawerState.isClosed) drawerState.open()
+                            }
                         }) {
                             Icon(
                                 imageVector = Icons.Default.Menu,
