@@ -74,6 +74,8 @@ fun BrowserScreen(
     onNavigateToSyncPreview: (relationId: Long) -> Unit,
 ) {
     val browseItems by viewModel.browseItems.collectAsState()
+    val browseItemsFolder by viewModel.browseItemsFolder.collectAsState()
+    val hiddenByFilterCount by viewModel.hiddenByFilterCount.collectAsState()
     val hasConfig by viewModel.hasConfig.collectAsState()
     val sortMode by viewModel.sortMode.collectAsState()
     val filter by viewModel.filter.collectAsState()
@@ -340,20 +342,18 @@ fun BrowserScreen(
             if (viewMode == BrowserViewModel.ViewMode.GRID) {
                 val gridState = rememberLazyGridState()
                 var previousFolder by remember { mutableStateOf(folder) }
-                var restoredFolder by remember { mutableStateOf(folder) }
                 LaunchedEffect(folder) {
                     if (previousFolder != folder) {
                         viewModel.saveScrollPosition(previousFolder, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
                     }
                     previousFolder = folder
                 }
-                LaunchedEffect(folder, browseItems.size) {
-                    if (browseItems.isNotEmpty() && restoredFolder != folder) {
+                LaunchedEffect(browseItemsFolder) {
+                    if (browseItemsFolder == folder && browseItems.isNotEmpty()) {
                         val saved: Pair<Int, Int>? = viewModel.getScrollPosition(folder)
                         if (saved != null) {
                             gridState.scrollToItem(saved.first, saved.second)
                         }
-                        restoredFolder = folder
                     }
                 }
                 LazyVerticalGrid(
@@ -417,6 +417,21 @@ fun BrowserScreen(
                         }
                     }
 
+                    if (browseItems.isNotEmpty() && filter != BrowserViewModel.BrowseFilter.ALL && hiddenByFilterCount > 0) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "已通过筛选隐藏${hiddenByFilterCount}个文件",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
                     if (browseItems.isEmpty()) {
                         item(span = { GridItemSpan(maxLineSpan) }) {
                             Box(
@@ -436,7 +451,9 @@ fun BrowserScreen(
                                         modifier = Modifier.size(48.dp)
                                     )
                                     Text(
-                                        text = "当前目录为空",
+                                        text = if (filter != BrowserViewModel.BrowseFilter.ALL && hiddenByFilterCount > 0)
+                                            "已通过筛选隐藏${hiddenByFilterCount}个文件"
+                                        else "当前目录为空",
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -448,20 +465,18 @@ fun BrowserScreen(
             } else {
                 val listState = rememberLazyListState()
                 var previousFolder by remember { mutableStateOf(folder) }
-                var restoredFolder by remember { mutableStateOf(folder) }
                 LaunchedEffect(folder) {
                     if (previousFolder != folder) {
                         viewModel.saveScrollPosition(previousFolder, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
                     }
                     previousFolder = folder
                 }
-                LaunchedEffect(folder, browseItems.size) {
-                    if (browseItems.isNotEmpty() && restoredFolder != folder) {
+                LaunchedEffect(browseItemsFolder) {
+                    if (browseItemsFolder == folder && browseItems.isNotEmpty()) {
                         val saved: Pair<Int, Int>? = viewModel.getScrollPosition(folder)
                         if (saved != null) {
                             listState.scrollToItem(saved.first, saved.second)
                         }
-                        restoredFolder = folder
                     }
                 }
                 LazyColumn(
@@ -515,6 +530,21 @@ fun BrowserScreen(
                         )
                     }
 
+                    if (browseItems.isNotEmpty() && filter != BrowserViewModel.BrowseFilter.ALL && hiddenByFilterCount > 0) {
+                        item {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "已通过筛选隐藏${hiddenByFilterCount}个文件",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
                     if (browseItems.isEmpty()) {
                         item {
                             Box(
@@ -535,7 +565,9 @@ fun BrowserScreen(
                                         modifier = Modifier.size(48.dp)
                                     )
                                     Text(
-                                        text = "当前目录为空",
+                                        text = if (filter != BrowserViewModel.BrowseFilter.ALL && hiddenByFilterCount > 0)
+                                            "已通过筛选隐藏${hiddenByFilterCount}个文件"
+                                        else "当前目录为空",
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )

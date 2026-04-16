@@ -70,6 +70,12 @@ class BrowserViewModel @Inject constructor(
 
     private val _scrollPositions = mutableMapOf<String, Pair<Int, Int>>()
 
+    private val _browseItemsFolder = MutableStateFlow("")
+    val browseItemsFolder: StateFlow<String> = _browseItemsFolder.asStateFlow()
+
+    private val _hiddenByFilterCount = MutableStateFlow(0)
+    val hiddenByFilterCount: StateFlow<Int> = _hiddenByFilterCount.asStateFlow()
+
     fun saveScrollPosition(folder: String, firstVisibleItemIndex: Int, firstVisibleItemScrollOffset: Int) {
         _scrollPositions[folder] = Pair(firstVisibleItemIndex, firstVisibleItemScrollOffset)
     }
@@ -147,6 +153,7 @@ class BrowserViewModel @Inject constructor(
         buildBrowseItems(folder, mode, filterVal, records, baseDirSet)
     }
     .debounce(300)
+    .onEach { _browseItemsFolder.value = _currentFolder.value }
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private suspend fun buildBrowseItems(
@@ -168,6 +175,12 @@ class BrowserViewModel @Inject constructor(
             ?: emptySet()
 
         val allFolderNames = (dbFolderNames.toSet() + physicalFolderNames).sortedBy { it.lowercase() }
+
+        val folderHasSubDirs = allFolderNames.associateWith { folderName ->
+            val fullPath = if (folder.isEmpty()) folderName else "$folder/$folderName"
+            val childDir = File(storagePaths.userdataRoot, fullPath)
+            childDir.isDirectory && childDir.listFiles()?.any { it.isDirectory } == true
+        }
 
         val videoEntities = videoRepository.getItemsInFolder(folder).first()
         val dbVideoPaths = videoEntities.map { it.relativePath }.toSet()
@@ -260,7 +273,19 @@ class BrowserViewModel @Inject constructor(
             SortMode.DURATION_ASC -> filteredVideos.sortedBy { it.duration ?: 0L }
             SortMode.DURATION_DESC -> filteredVideos.sortedByDescending { it.duration ?: 0L }
         }
-        (sortedFolders + sortedVideos).distinctBy { it.relativePath }
+
+        val totalBeforeFilter = sortedFolders.size + allVideos.size
+        val filteredFolders = if (filterVal == BrowseFilter.UNWATCHED) {
+            sortedFolders.filter { folderItem ->
+                val hasSubDirs = folderHasSubDirs[folderItem.name] ?: true
+                !(folderItem.videoCount > 0 && folderItem.playedCount >= folderItem.videoCount && !hasSubDirs)
+            }
+        } else {
+            sortedFolders
+        }
+        _hiddenByFilterCount.value = (totalBeforeFilter - filteredFolders.size - sortedVideos.size).coerceAtLeast(0)
+
+        (filteredFolders + sortedVideos).distinctBy { it.relativePath }
     }
 
     fun setFolder(folder: String) {
