@@ -80,6 +80,8 @@ private sealed class PlayerOverlay {
     data class SpeedUp(val multiplier: Float) : PlayerOverlay()
     data object Previous : PlayerOverlay()
     data object Next : PlayerOverlay()
+    data object NoPrevious : PlayerOverlay()
+    data object NoNext : PlayerOverlay()
     data class TrashAction(val isIn: Boolean) : PlayerOverlay()
     data class Orientation(val label: String) : PlayerOverlay()
 }
@@ -367,17 +369,23 @@ LaunchedEffect(exoPlayer) {
         override fun onDoubleTap(zone: DoubleTapZone) {
             when (zone) {
                 DoubleTapZone.PREVIOUS -> {
-                    showOverlay(PlayerOverlay.Previous)
                     val prevId = viewModel.getPrevVideoId()
-                    if (prevId != null) switchToVideo(prevId)
+                    if (prevId != null) {
+                        showOverlay(PlayerOverlay.Previous)
+                        switchToVideo(prevId)
+                    } else {
+                        showOverlay(PlayerOverlay.NoPrevious)
+                    }
                 }
                 DoubleTapZone.NEXT -> {
                     val now = System.currentTimeMillis()
                     if (now - lastAutoSwitchTime < 500L) return
-                    showOverlay(PlayerOverlay.Next)
                     val nextId = viewModel.getNextVideoId()
                     if (nextId != null) {
+                        showOverlay(PlayerOverlay.Next)
                         switchToVideo(nextId)
+                    } else {
+                        showOverlay(PlayerOverlay.NoNext)
                     }
                 }
                 DoubleTapZone.CENTER -> {
@@ -520,6 +528,8 @@ LaunchedEffect(exoPlayer) {
                         if (prevId != null) {
                             showOverlay(PlayerOverlay.Previous)
                             switchToVideo(prevId)
+                        } else {
+                            showOverlay(PlayerOverlay.NoPrevious)
                         }
                     },
                     onNext = {
@@ -527,6 +537,8 @@ LaunchedEffect(exoPlayer) {
                         if (nextId != null) {
                             showOverlay(PlayerOverlay.Next)
                             switchToVideo(nextId)
+                        } else {
+                            showOverlay(PlayerOverlay.NoNext)
                         }
                     },
                     onRewind = { exoPlayer.seekTo((exoPlayer.currentPosition - 10_000).coerceAtLeast(0)) },
@@ -933,6 +945,8 @@ private fun PlayerOverlayView(overlay: PlayerOverlay?) {
                     is PlayerOverlay.SpeedUp -> Icons.Filled.FastForward
                     is PlayerOverlay.Previous -> Icons.Filled.SkipPrevious
                     is PlayerOverlay.Next -> Icons.Filled.SkipNext
+                    is PlayerOverlay.NoPrevious -> Icons.Filled.SkipPrevious
+                    is PlayerOverlay.NoNext -> Icons.Filled.SkipNext
                     is PlayerOverlay.TrashAction -> if (overlay.isIn) Icons.Filled.Delete else Icons.Outlined.DeleteOutline
                     is PlayerOverlay.Orientation -> if (overlay.label == "FULLSCREEN") Icons.Filled.Fullscreen else Icons.Filled.ScreenRotation
                 }
@@ -950,6 +964,8 @@ private fun PlayerOverlayView(overlay: PlayerOverlay?) {
                     is PlayerOverlay.SpeedUp -> "${overlay.multiplier}X"
                     is PlayerOverlay.Previous -> "PREVIOUS"
                     is PlayerOverlay.Next -> "NEXT"
+                    is PlayerOverlay.NoPrevious -> "NO PREVIOUS"
+                    is PlayerOverlay.NoNext -> "NO NEXT"
                     is PlayerOverlay.TrashAction -> if (overlay.isIn) "IN" else "OUT"
                     is PlayerOverlay.Orientation -> overlay.label
                 }
