@@ -16,9 +16,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.platform.LocalContext
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.browser.BrowserViewModel
-import androidx.hilt.navigation.compose.hiltViewModel
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -35,6 +36,7 @@ fun SettingsScreen(
     val volumeBalance by viewModel.volumeBalance.collectAsStateWithLifecycle()
     val doubleTapAction by viewModel.doubleTapAction.collectAsStateWithLifecycle()
     val safEnabled by viewModel.safEnabled.collectAsStateWithLifecycle()
+    val currentContext = LocalContext.current
     var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -173,6 +175,46 @@ fun SettingsScreen(
                         Switch(
                             checked = safEnabled,
                             onCheckedChange = { viewModel.setSafEnabled(it) }
+                        )
+                    }
+                }
+            }
+
+            // App lock card
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("应用安全锁", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "从后台切回应用时需要验证身份（指纹/面部/PIN）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    val secureLockEnabledState by viewModel.secureLockEnabled.collectAsStateWithLifecycle()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("启用", style = MaterialTheme.typography.bodyMedium)
+                        Switch(
+                            checked = secureLockEnabledState,
+                        onCheckedChange = { checked ->
+                                val activity = currentContext as? FragmentActivity
+                                if (activity != null) {
+                                    viewModel.authenticateAndToggle(activity, checked)
+                                }
+                            },
+                            enabled = viewModel.canAuthenticateBio
+                        )
+                    }
+                    if (!viewModel.canAuthenticateBio) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "设备未设置生物识别或PIN码",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
                         )
                     }
                 }
