@@ -30,8 +30,8 @@ android {
         applicationId = "cn.vectory.syncplayer"
         minSdk = 34
         targetSdk = 35
-        versionCode = 70
-        versionName = "9.14.1"
+        versionCode = 71
+        versionName = "9.15.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -81,6 +81,7 @@ dependencies {
     implementation(libs.lifecycle.runtime.ktx)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.lifecycle.viewmodel.compose)
+    implementation(libs.lifecycle.process)
 
     // Activity
     implementation(libs.activity.compose)
@@ -134,4 +135,7 @@ dependencies {
 
     // Coil image loading (Compose integration)
     implementation(libs.coil.compose)
+
+    // Biometric authentication for app lock
+    implementation(libs.biometric)
 }
