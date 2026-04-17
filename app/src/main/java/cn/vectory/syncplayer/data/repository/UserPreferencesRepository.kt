@@ -37,6 +37,7 @@ class UserPreferencesRepository @Inject constructor(
         val ANALYZE_ON_DOWNLOAD = booleanPreferencesKey("analyze_on_download")
         val DOUBLE_TAP_ACTION = stringPreferencesKey("double_tap_action")
         val SAF_PROVIDER_ENABLED = booleanPreferencesKey("saf_provider_enabled")
+        val SECURE_LOCK_ENABLED = booleanPreferencesKey("secure_lock_enabled")
     }
 
     val longPressSpeed: Flow<Float> = dataStore.data.map { it[Keys.LONG_PRESS_SPEED] ?: 2.0f }
@@ -83,6 +84,11 @@ class UserPreferencesRepository @Inject constructor(
         it[Keys.SAF_PROVIDER_ENABLED] ?: false
     }
 
+    // Secure lock enabled flag
+    val secureLockEnabled: Flow<Boolean> = dataStore.data.map {
+        it[Keys.SECURE_LOCK_ENABLED] ?: false
+    }
+
     suspend fun getLongPressSpeed(): Float = longPressSpeed.first()
     suspend fun getOrientation(): String? = orientation.first()
     suspend fun getDefaultSortMode(): String = defaultSortMode.first()
@@ -95,6 +101,8 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun getAnalyzeOnDownload(): Boolean = analyzeOnDownload.first()
     suspend fun getDoubleTapAction(): String = doubleTapAction.first()
     suspend fun getSafProviderEnabled(): Boolean = safProviderEnabled.first()
+
+    suspend fun getSecureLockEnabled(): Boolean = secureLockEnabled.first()
 
     suspend fun setLongPressSpeed(speed: Float) {
         dataStore.edit { it[Keys.LONG_PRESS_SPEED] = speed }
@@ -142,5 +150,9 @@ class UserPreferencesRepository @Inject constructor(
 
     suspend fun setSafProviderEnabled(enabled: Boolean) {
         dataStore.edit { it[Keys.SAF_PROVIDER_ENABLED] = enabled }
+    }
+
+    suspend fun setSecureLockEnabled(enabled: Boolean) {
+        dataStore.edit { it[Keys.SECURE_LOCK_ENABLED] = enabled }
     }
 }
