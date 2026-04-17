@@ -16,15 +16,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import cn.vectory.syncplayer.navigation.AppNavHost
 import cn.vectory.syncplayer.navigation.Route
+import cn.vectory.syncplayer.security.AppLockManager
+import cn.vectory.syncplayer.security.BiometricAuthManager
+import cn.vectory.syncplayer.security.LockScreenOverlay
 import cn.vectory.syncplayer.ui.theme.SyncPlayerTheme
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    @Inject lateinit var appLockManager: AppLockManager
+    @Inject lateinit var biometricAuthManager: BiometricAuthManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,6 +55,15 @@ class MainActivity : ComponentActivity() {
                     }
 
                     AppNavHost(navController = navController)
+
+                    // Overlay lock screen when needed
+                    val isLocked by appLockManager.isLocked.collectAsStateWithLifecycle()
+                    if (isLocked) {
+                        LockScreenOverlay(
+                            appLockManager = appLockManager,
+                            biometricAuthManager = biometricAuthManager
+                        )
+                    }
                 }
             }
         }
