@@ -2,6 +2,7 @@ package cn.vectory.syncplayer.browser
 
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -136,11 +137,15 @@ class BrowserViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             effectiveFolder.collectLatest { folder ->
-                if (folder.isNotEmpty()) {
-                    withContext(Dispatchers.IO) {
-                        val videos = videoRepository.getItemsInFolder(folder).first()
-                        repairMissingThumbnails(videos)
+                try {
+                    if (folder.isNotEmpty()) {
+                        withContext(Dispatchers.IO) {
+                            val videos = videoRepository.getItemsInFolder(folder).first()
+                            repairMissingThumbnails(videos)
+                        }
                     }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Thumbnail repair failed", e)
                 }
             }
         }
@@ -454,12 +459,24 @@ class BrowserViewModel @Inject constructor(
 
     fun setViewMode(mode: ViewMode) {
         _viewMode.value = mode
-        viewModelScope.launch { userPrefs.setViewMode(mode.name) }
+        viewModelScope.launch {
+            try {
+                userPrefs.setViewMode(mode.name)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save view mode", e)
+            }
+        }
     }
 
     fun setGridColumns(columns: Int) {
         _gridColumns.value = columns.coerceIn(1, 5)
-        viewModelScope.launch { userPrefs.setGridColumns(columns) }
+        viewModelScope.launch {
+            try {
+                userPrefs.setGridColumns(columns)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save grid columns", e)
+            }
+        }
     }
 
     // Star filter controls
@@ -473,20 +490,36 @@ class BrowserViewModel @Inject constructor(
 
     fun setBrowseMode(mode: BrowseMode) {
         _browseMode.value = mode
-        viewModelScope.launch { userPrefs.setBrowseMode(mode.name) }
+        viewModelScope.launch {
+            try {
+                userPrefs.setBrowseMode(mode.name)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save browse mode", e)
+            }
+        }
     }
 
     fun updateStar(videoItemId: Long, star: Int) {
         viewModelScope.launch {
-            videoRepository.updateStar(videoItemId, star)
-            _refreshTrigger.value++
+            try {
+                videoRepository.updateStar(videoItemId, star)
+                _refreshTrigger.value++
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to update star", e)
+                _error.value = e.message
+            }
         }
     }
 
     fun updateStarByPath(relativePath: String, star: Int) {
         viewModelScope.launch {
-            videoRepository.updateStarByPath(relativePath, star)
-            _refreshTrigger.value++
+            try {
+                videoRepository.updateStarByPath(relativePath, star)
+                _refreshTrigger.value++
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to update star by path", e)
+                _error.value = e.message
+            }
         }
     }
 
@@ -507,62 +540,77 @@ class BrowserViewModel @Inject constructor(
 
     fun markFolderRead(folderPath: String, read: Boolean) {
         viewModelScope.launch {
-            playbackRepository.markFolderCompleted(folderPath, read)
-            _refreshTrigger.value++
+            try {
+                playbackRepository.markFolderCompleted(folderPath, read)
+                _refreshTrigger.value++
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to mark folder read", e)
+                _error.value = e.message
+            }
         }
     }
 
     fun createFolder(parentPath: String, folderName: String) {
         viewModelScope.launch {
-            if (parentPath.isNotEmpty() && isFileInBaseDir(parentPath)) {
-                _error.value = "同步基目录内无法手动创建文件夹"
-                return@launch
+            try {
+                if (parentPath.isNotEmpty() && isFileInBaseDir(parentPath)) {
+                    _error.value = "同步基目录内无法手动创建文件夹"
+                    return@launch
+                }
+                val newDir = if (parentPath.isEmpty()) {
+                    File(storagePaths.userdataRoot, folderName)
+                } else {
+                    File(File(storagePaths.userdataRoot, parentPath), folderName)
+                }
+                if (newDir.exists()) {
+                    _error.value = "文件夹已存在"
+                    return@launch
+                }
+                if (!newDir.mkdirs()) {
+                    _error.value = "创建文件夹失败"
+                    return@launch
+                }
+                _refreshTrigger.value++
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to create folder", e)
+                _error.value = e.message
             }
-            val newDir = if (parentPath.isEmpty()) {
-                File(storagePaths.userdataRoot, folderName)
-            } else {
-                File(File(storagePaths.userdataRoot, parentPath), folderName)
-            }
-            if (newDir.exists()) {
-                _error.value = "文件夹已存在"
-                return@launch
-            }
-            if (!newDir.mkdirs()) {
-                _error.value = "创建文件夹失败"
-                return@launch
-            }
-            _refreshTrigger.value++
         }
     }
 
     fun deleteFolder(path: String) {
         viewModelScope.launch {
-            val dir = File(storagePaths.userdataRoot, path)
-            val isBase = syncRelationRepository.getByLocalBasePath(path) != null
-            if (isBase) {
-                _error.value = "同步基目录不能删除，请先删除对应的同步关系"
-                return@launch
+            try {
+                val dir = File(storagePaths.userdataRoot, path)
+                val isBase = syncRelationRepository.getByLocalBasePath(path) != null
+                if (isBase) {
+                    _error.value = "同步基目录不能删除，请先删除对应的同步关系"
+                    return@launch
+                }
+                val allBasePaths = syncRelationRepository.getAllBasePaths()
+                val hasDescendantBase = allBasePaths.any { basePath ->
+                    basePath.startsWith("$path/")
+                }
+                if (hasDescendantBase) {
+                    _error.value = "文件夹内包含同步基目录，请先删除对应的同步关系"
+                    return@launch
+                }
+                if (isFileInBaseDir(path)) {
+                    _error.value = "同步目录内的文件夹不能手动删除"
+                    return@launch
+                }
+                if (!dir.exists() || !dir.isDirectory) {
+                    _error.value = "文件夹不存在"
+                    return@launch
+                }
+                videoRepository.deleteByFolderPath(path)
+                playbackRepository.deleteByFolderPath(path)
+                dir.deleteRecursively()
+                _refreshTrigger.value++
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to delete folder", e)
+                _error.value = e.message
             }
-            val allBasePaths = syncRelationRepository.getAllBasePaths()
-            val hasDescendantBase = allBasePaths.any { basePath ->
-                basePath.startsWith("$path/")
-            }
-            if (hasDescendantBase) {
-                _error.value = "文件夹内包含同步基目录，请先删除对应的同步关系"
-                return@launch
-            }
-            if (isFileInBaseDir(path)) {
-                _error.value = "同步目录内的文件夹不能手动删除"
-                return@launch
-            }
-            if (!dir.exists() || !dir.isDirectory) {
-                _error.value = "文件夹不存在"
-                return@launch
-            }
-            videoRepository.deleteByFolderPath(path)
-            playbackRepository.deleteByFolderPath(path)
-            dir.deleteRecursively()
-            _refreshTrigger.value++
         }
     }
 
@@ -577,8 +625,12 @@ class BrowserViewModel @Inject constructor(
         }.take(5)
         if (needsRepair.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
-            needsRepair.forEach { video ->
-                videoMetadataExtractor.repairThumbnailIfNeeded(video)
+            try {
+                needsRepair.forEach { video ->
+                    videoMetadataExtractor.repairThumbnailIfNeeded(video)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Thumbnail repair failed", e)
             }
         }
     }
@@ -622,12 +674,17 @@ class BrowserViewModel @Inject constructor(
 
     fun toggleTrashed(videoItemId: Long) {
         viewModelScope.launch {
-            val video = videoRepository.getById(videoItemId)
-            if (video == null || !isFileInBaseDir(video.relativePath)) {
-                _error.value = "仅同步基目录内的文件可标记回收站"
-                return@launch
+            try {
+                val video = videoRepository.getById(videoItemId)
+                if (video == null || !isFileInBaseDir(video.relativePath)) {
+                    _error.value = "仅同步基目录内的文件可标记回收站"
+                    return@launch
+                }
+                playbackRepository.toggleTrashed(videoItemId)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to toggle trashed", e)
+                _error.value = e.message
             }
-            playbackRepository.toggleTrashed(videoItemId)
         }
     }
 
@@ -640,14 +697,19 @@ class BrowserViewModel @Inject constructor(
 
     fun deleteFile(relativePath: String) {
         viewModelScope.launch {
-            val video = videoRepository.getByRelativePath(relativePath)
-            if (video != null) {
-                playbackRepository.deleteByVideoId(video.id)
-                videoRepository.deleteByRelativePath(relativePath)
+            try {
+                val video = videoRepository.getByRelativePath(relativePath)
+                if (video != null) {
+                    playbackRepository.deleteByVideoId(video.id)
+                    videoRepository.deleteByRelativePath(relativePath)
+                }
+                val file = File(storagePaths.userdataRoot, relativePath)
+                if (file.exists()) file.delete()
+                _refreshTrigger.value++
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to delete file", e)
+                _error.value = e.message
             }
-            val file = File(storagePaths.userdataRoot, relativePath)
-            if (file.exists()) file.delete()
-            _refreshTrigger.value++
         }
     }
 
@@ -674,5 +736,9 @@ class BrowserViewModel @Inject constructor(
         } catch (e: Exception) {
             null
         }
+    }
+
+    companion object {
+        private const val TAG = "BrowserViewModel"
     }
 }

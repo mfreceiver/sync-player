@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.browser
 
+import cn.vectory.syncplayer.ui.util.formatFileSize
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -1058,14 +1059,7 @@ private fun SortFieldChip(
 }
 
 
-private fun formatFileSize(bytes: Long): String {
-    if (bytes <= 0) return "0 B"
-    val units = arrayOf("B", "KB", "MB", "GB", "TB")
-    val exp = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt()
-    val value = bytes / Math.pow(1024.0, exp.toDouble())
-    val unit = units.getOrElse(exp) { "B" }
-    return String.format("%.1f%s", value.toDouble(), unit)
-}
+
 
 @Composable
 private fun GridColumnChip(
@@ -1075,13 +1069,13 @@ private fun GridColumnChip(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        modifier = modifier.size(28.dp),
+        modifier = modifier,
         shape = RoundedCornerShape(8.dp),
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
         contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
         onClick = onClick
     ) {
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(28.dp)) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,

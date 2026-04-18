@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.sync
 
+import cn.vectory.syncplayer.ui.util.formatFileSize
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -331,20 +332,32 @@ fun SyncPreviewScreen(
                             )
                         }
                         val completedPaths = progress.completedPaths
-                        val remainingToDownload = if (isSyncing) {
-                            toDownload.filter { it.relativePath !in completedPaths }
-                        } else {
-                            toDownload
+                        val remainingToDownload by remember {
+                            derivedStateOf {
+                                if (isSyncing) {
+                                    toDownload.filter { it.relativePath !in completedPaths }
+                                } else {
+                                    toDownload
+                                }
+                            }
                         }
-                        val remainingToDelete = if (isSyncing || isDeleting) {
-                            toDelete.filter { it.relativePath !in completedPaths }
-                        } else {
-                            toDelete
+                        val remainingToDelete by remember {
+                            derivedStateOf {
+                                if (isSyncing || isDeleting) {
+                                    toDelete.filter { it.relativePath !in completedPaths }
+                                } else {
+                                    toDelete
+                                }
+                            }
                         }
-                        val currentItemsEmpty = if (syncMode == SyncMode.DOWNLOAD) {
-                            remainingToDownload.isEmpty() && remainingToDelete.isEmpty()
-                        } else {
-                            remainingToDelete.isEmpty()
+                        val currentItemsEmpty by remember {
+                            derivedStateOf {
+                                if (syncMode == SyncMode.DOWNLOAD) {
+                                    remainingToDownload.isEmpty() && remainingToDelete.isEmpty()
+                                } else {
+                                    remainingToDelete.isEmpty()
+                                }
+                            }
                         }
                         if (currentItemsEmpty && !isSyncing && !isDeleting) {
                             Card(
@@ -541,14 +554,7 @@ private fun SyncActionItem(
     )
 }
 
-private fun formatFileSize(bytes: Long): String {
-    return when {
-        bytes >= 1024L * 1024 * 1024 -> "%.1f GB".format(bytes / (1024.0 * 1024 * 1024))
-        bytes >= 1024L * 1024 -> "%.0f MB".format(bytes / (1024.0 * 1024))
-        bytes >= 1024L -> "%.1f KB".format(bytes / 1024.0)
-        else -> "$bytes B"
-    }
-}
+
 
 @Composable
 private fun SyncProgressCard(

@@ -75,4 +75,9 @@ interface PlaybackRecordDao {
         WHERE vi.relativePath LIKE :folderPath || '/%' AND pr.id IS NULL
     """)
     suspend fun getVideoIdsWithoutRecord(folderPath: String): List<Long>
+
+    @Transaction
+    suspend fun upsertAllBatch(records: List<PlaybackRecordEntity>) {
+        records.forEach { upsert(it) }
+    }
 }

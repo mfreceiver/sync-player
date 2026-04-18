@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.provider
 
+import android.content.Context
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
@@ -33,17 +34,15 @@ class SyncDocumentsProvider : DocumentsProvider() {
         fun storagePaths(): StoragePaths
     }
 
-    private val authority: String
-        get() = "${context!!.packageName}.documents"
+    private fun authority(c: Context): String =
+        "${c.packageName}.documents"
 
-    private fun entryPoint(): ProviderEntryPoint {
-        val appCtx = context!!.applicationContext
-        return EntryPointAccessors.fromApplication(appCtx, ProviderEntryPoint::class.java)
-    }
+    private fun entryPoint(c: Context): ProviderEntryPoint =
+        EntryPointAccessors.fromApplication(c.applicationContext, ProviderEntryPoint::class.java)
 
-    private fun videoItemDao(): VideoItemDao = entryPoint().videoItemDao()
-    private fun syncRelationDao(): SyncRelationDao = entryPoint().syncRelationDao()
-    private fun storagePaths(): StoragePaths = entryPoint().storagePaths()
+    private fun videoItemDao(c: Context): VideoItemDao = entryPoint(c).videoItemDao()
+    private fun syncRelationDao(c: Context): SyncRelationDao = entryPoint(c).syncRelationDao()
+    private fun storagePaths(c: Context): StoragePaths = entryPoint(c).storagePaths()
 
     companion object {
         private val DEFAULT_ROOT_PROJECTION = arrayOf(
@@ -68,11 +67,12 @@ class SyncDocumentsProvider : DocumentsProvider() {
     override fun onCreate(): Boolean = true
 
     override fun queryRoots(projection: Array<out String>?): Cursor? {
+        val ctx = context ?: return MatrixCursor(arrayOf(), 0)
         val projectionUsed = projection ?: DEFAULT_ROOT_PROJECTION
         val cursor = MatrixCursor(projectionUsed)
 
         val rootDocId = "root"
-        val icon = context!!.applicationInfo.icon
+        val icon = ctx.applicationInfo.icon
         val flags = DocumentsContract.Root.FLAG_LOCAL_ONLY or DocumentsContract.Root.FLAG_SUPPORTS_SEARCH
 
         val row = ArrayList<Any?>(projectionUsed.size)
@@ -88,11 +88,12 @@ class SyncDocumentsProvider : DocumentsProvider() {
             }
         }
         cursor.addRow(row.toArray())
-        cursor.setNotificationUri(context!!.contentResolver, DocumentsContract.buildRootsUri(authority))
+        cursor.setNotificationUri(ctx.contentResolver, DocumentsContract.buildRootsUri(authority(ctx)))
         return cursor
     }
 
     override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor? {
+        val ctx = context ?: return null
         val projectionUsed = projection ?: DEFAULT_DOCUMENT_PROJECTION
         val cursor = MatrixCursor(projectionUsed)
 
@@ -115,7 +116,7 @@ class SyncDocumentsProvider : DocumentsProvider() {
                 cursor.addRow(row.toArray())
             }
             is DocumentId.Relation -> {
-                val rel = runBlocking(Dispatchers.IO) { syncRelationDao().getById(id.relationId) }
+                val rel = runBlocking(Dispatchers.IO) { syncRelationDao(ctx).getById(id.relationId) }
                 val mime = DocumentsContract.Document.MIME_TYPE_DIR
                 val display = rel?.name ?: "Relation"
                 val lastMod = rel?.lastSyncTime ?: 0
@@ -135,7 +136,7 @@ class SyncDocumentsProvider : DocumentsProvider() {
                 cursor.addRow(row.toArray())
             }
             is DocumentId.Directory -> {
-                val rel = runBlocking(Dispatchers.IO) { syncRelationDao().getById(id.relationId) }
+                val rel = runBlocking(Dispatchers.IO) { syncRelationDao(ctx).getById(id.relationId) }
                 val mimeDir = DocumentsContract.Document.MIME_TYPE_DIR
                 val displayName = if (id.relativePath.isEmpty()) rel?.name ?: "Directory" else id.relativePath.substringAfterLast('/')
                 val lastMod = rel?.lastSyncTime ?: 0
@@ -155,7 +156,7 @@ class SyncDocumentsProvider : DocumentsProvider() {
                 cursor.addRow(row.toArray())
             }
             is DocumentId.Video -> {
-                val video = runBlocking(Dispatchers.IO) { videoItemDao().getById(id.videoItemId) }
+                val video = runBlocking(Dispatchers.IO) { videoItemDao(ctx).getById(id.videoItemId) }
                 if (video == null) return null
                 val mime = getMimeType(video.fileName)
                 val docId = DocumentId.encode(id)
@@ -174,16 +175,17 @@ class SyncDocumentsProvider : DocumentsProvider() {
                 cursor.addRow(row.toArray())
             }
         }
-        cursor.setNotificationUri(context!!.contentResolver, DocumentsContract.buildDocumentUri(authority, documentId))
+        cursor.setNotificationUri(ctx.contentResolver, DocumentsContract.buildDocumentUri(authority(ctx), documentId))
         return cursor
     }
 
     override fun queryChildDocuments(parentDocumentId: String, projection: Array<out String>?, sortOrder: String?): Cursor? {
+        val ctx = context ?: return null
         val projectionUsed = projection ?: DEFAULT_DOCUMENT_PROJECTION
         val cursor = MatrixCursor(projectionUsed)
         when (val parent = DocumentId.decode(parentDocumentId)) {
             DocumentId.Root -> {
-                val relations = runBlocking(Dispatchers.IO) { syncRelationDao().getAll() }
+                val relations = runBlocking(Dispatchers.IO) { syncRelationDao(ctx).getAll() }
                 for (rel in relations) {
                     val id = DocumentId.Relation(rel.id)
                     val docId = DocumentId.encode(id)
@@ -205,11 +207,11 @@ class SyncDocumentsProvider : DocumentsProvider() {
                 }
             }
             is DocumentId.Relation -> {
-                val rel = runBlocking(Dispatchers.IO) { syncRelationDao().getById(parent.relationId) }
+                val rel = runBlocking(Dispatchers.IO) { syncRelationDao(ctx).getById(parent.relationId) }
                 if (rel != null) {
                     val basePath = rel.localBasePath
-                    val items = runBlocking(Dispatchers.IO) { videoItemDao().getItemsInFolder(basePath).first() }
-                    val subFolders = runBlocking(Dispatchers.IO) { videoItemDao().getSubFolders(basePath).first() }
+                    val items = runBlocking(Dispatchers.IO) { videoItemDao(ctx).getItemsInFolder(basePath).first() }
+                    val subFolders = runBlocking(Dispatchers.IO) { videoItemDao(ctx).getSubFolders(basePath).first() }
                     // subfolders
                     for (sub in subFolders) {
                         val id = DocumentId.Directory(rel.id, sub)
@@ -251,11 +253,11 @@ class SyncDocumentsProvider : DocumentsProvider() {
                 }
             }
             is DocumentId.Directory -> {
-                val rel = runBlocking(Dispatchers.IO) { syncRelationDao().getById(parent.relationId) }
+                val rel = runBlocking(Dispatchers.IO) { syncRelationDao(ctx).getById(parent.relationId) }
                 if (rel != null) {
                     val basePath = if (parent.relativePath.isEmpty()) rel.localBasePath else rel.localBasePath + "/" + parent.relativePath
-                    val items = runBlocking(Dispatchers.IO) { videoItemDao().getItemsInFolder(basePath).first() }
-                    val subFolders = runBlocking(Dispatchers.IO) { videoItemDao().getSubFolders(basePath).first() }
+                    val items = runBlocking(Dispatchers.IO) { videoItemDao(ctx).getItemsInFolder(basePath).first() }
+                    val subFolders = runBlocking(Dispatchers.IO) { videoItemDao(ctx).getSubFolders(basePath).first() }
                     for (sub in subFolders) {
                         val id = DocumentId.Directory(rel.id, sub)
                         val docId = DocumentId.encode(id)
@@ -296,17 +298,18 @@ class SyncDocumentsProvider : DocumentsProvider() {
             }
             is DocumentId.Video -> {}
         }
-        cursor.setNotificationUri(context!!.contentResolver, DocumentsContract.buildChildDocumentsUri(authority, parentDocumentId))
+        cursor.setNotificationUri(ctx.contentResolver, DocumentsContract.buildChildDocumentsUri(authority(ctx), parentDocumentId))
         return cursor
     }
 
     override fun openDocument(documentId: String, mode: String, signal: CancellationSignal?): ParcelFileDescriptor? {
+        val ctx = context ?: throw FileNotFoundException("Provider not initialized")
         val id = DocumentId.decode(documentId)
         val videoId = when (id) {
             is DocumentId.Video -> id.videoItemId
             else -> throw FileNotFoundException("Unsupported document for openDocument: $documentId")
         }
-        val video = runBlocking(Dispatchers.IO) { videoItemDao().getById(videoId) } ?: throw FileNotFoundException("Video not found: $videoId")
+        val video = runBlocking(Dispatchers.IO) { videoItemDao(ctx).getById(videoId) } ?: throw FileNotFoundException("Video not found: $videoId")
         val file = File(video.localAbsolutePath)
         if (!file.exists()) throw FileNotFoundException("File does not exist: ${video.localAbsolutePath}")
         return ParcelFileDescriptor.open(file, ParcelFileDescriptor.parseMode(mode))
@@ -317,9 +320,10 @@ class SyncDocumentsProvider : DocumentsProvider() {
     }
 
     override fun querySearchDocuments(rootId: String?, query: String, projection: Array<out String>?): Cursor? {
+        val ctx = context ?: return null
         val projectionUsed = projection ?: DEFAULT_DOCUMENT_PROJECTION
         val cursor = MatrixCursor(projectionUsed)
-        val results = runBlocking(Dispatchers.IO) { videoItemDao().searchByFileName(query).first() }
+        val results = runBlocking(Dispatchers.IO) { videoItemDao(ctx).searchByFileName(query).first() }
         for (video in results) {
             val docId = DocumentId.encode(DocumentId.Video(video.id))
             val mime = getMimeType(video.fileName)

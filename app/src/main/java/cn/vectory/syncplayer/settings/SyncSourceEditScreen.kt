@@ -75,7 +75,7 @@ fun SyncSourceEditScreen(
             Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                     OutlinedTextField(
                         value = name,
-                        onValueChange = { viewModel.name.value = it },
+                        onValueChange = { viewModel.setName(it) },
                         label = { Text("名称") },
                         placeholder = { Text("家庭NAS", color = extendedColors.placeholderGrey) },
                         modifier = Modifier.fillMaxWidth(),
@@ -99,7 +99,7 @@ fun SyncSourceEditScreen(
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = host,
-                        onValueChange = { viewModel.host.value = it },
+                        onValueChange = { viewModel.setHost(it) },
                         label = { Text("服务器地址") },
                         placeholder = { Text("192.168.1.100", color = extendedColors.placeholderGrey) },
                         modifier = Modifier.fillMaxWidth(),
@@ -109,7 +109,7 @@ fun SyncSourceEditScreen(
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = port,
-                        onValueChange = { viewModel.port.value = it },
+                        onValueChange = { viewModel.setPort(it) },
                         label = { Text("端口") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
@@ -119,7 +119,7 @@ fun SyncSourceEditScreen(
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = username,
-                        onValueChange = { viewModel.username.value = it },
+                        onValueChange = { viewModel.setUsername(it) },
                         label = { Text("用户名") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
@@ -128,7 +128,7 @@ fun SyncSourceEditScreen(
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = password,
-                        onValueChange = { viewModel.password.value = it },
+                        onValueChange = { viewModel.setPassword(it) },
                         label = { Text("密码") },
                         singleLine = true,
                         visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),

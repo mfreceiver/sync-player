@@ -8,6 +8,7 @@ import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,6 +24,8 @@ class AppLockManager @Inject constructor(
 
     private val _isLocked = MutableStateFlow(false)
     val isLocked: StateFlow<Boolean> = _isLocked.asStateFlow()
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var hasBeenInBackground = false
     private var isFirstStart = true
@@ -47,7 +50,7 @@ class AppLockManager @Inject constructor(
             androidx.lifecycle.Lifecycle.Event.ON_START -> {
                 if (hasBeenInBackground || isFirstStart) {
                     isFirstStart = false
-                    CoroutineScope(Dispatchers.IO).launch {
+                    scope.launch {
                         if (userPrefs.getSecureLockEnabled()) {
                             _isLocked.value = true
                         }

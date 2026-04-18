@@ -1,6 +1,7 @@
 package cn.vectory.syncplayer.sync
 
 import android.content.Context
+import android.util.Log
 import cn.vectory.syncplayer.data.model.ActiveDownload
 import cn.vectory.syncplayer.data.model.SyncAction
 import cn.vectory.syncplayer.data.model.SyncActionType
@@ -72,6 +73,10 @@ class SyncEngine @Inject constructor(
     private val lastProgressUpdateMs = AtomicLong(0L)
     private val PROGRESS_THROTTLE_MS = 500L
 
+    companion object {
+        private const val TAG = "SyncEngine"
+    }
+
     suspend fun setPendingTask(task: PendingSyncTask) {
         pendingSyncActionDao.deleteByRelationId(task.relationId)
         val entities = mutableListOf<PendingSyncActionEntity>()
@@ -135,7 +140,11 @@ class SyncEngine @Inject constructor(
     val isSyncRunning: Boolean get() = _progress.value.isRunning
 
     private fun getLocalSyncRoot(relation: SyncRelation): File =
-        storagePaths.resolveUserData(relation.localBasePath.trimStart('/')).also { it.mkdirs() }
+        storagePaths.resolveUserData(relation.localBasePath.trimStart('/')).also {
+            if (!it.exists() && !it.mkdirs()) {
+                Log.w(TAG, "Failed to create directory: ${it.absolutePath}")
+            }
+        }
 
     private fun getClient(protocol: SyncProtocol): RemoteFileClient = when (protocol) {
         SyncProtocol.SMB -> smbFileClient
@@ -144,14 +153,20 @@ class SyncEngine @Inject constructor(
 
     private fun cleanupTempFiles(root: File) {
         root.walkTopDown().filter { it.name.endsWith(".sync_tmp") }.forEach {
-            it.delete()
+            if (!it.delete()) {
+                Log.w(TAG, "Failed to delete temp file: ${it.absolutePath}")
+            }
         }
     }
 
     private fun cleanupEmptyDirectories(root: File) {
         root.walkBottomUp()
             .filter { it.isDirectory && it != root && it.listFiles()?.isEmpty() == true }
-            .forEach { it.delete() }
+            .forEach {
+                if (!it.delete()) {
+                    Log.w(TAG, "Failed to delete empty directory: ${it.absolutePath}")
+                }
+            }
     }
 
     private fun formatSize(bytes: Long): String = when {
@@ -370,7 +385,11 @@ class SyncEngine @Inject constructor(
 
                     val saved = videoRepository.getByRelativePathAndRelationId(localRelPath, relationId)
                     if (saved != null && (saved.duration == null || saved.thumbnailPath == null)) {
-                        videoMetadataExtractor.extractAndSave(saved)
+                        try {
+                            videoMetadataExtractor.extractAndSave(saved)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Metadata extraction failed for ${saved.fileName}", e)
+                        }
                     }
 
                     syncLogRepository.log(
@@ -438,7 +457,9 @@ class SyncEngine @Inject constructor(
                                             }
                                         }
                                         if (!downloadSuccess && attempts < 3) {
-                                            if (tmpFile.exists()) tmpFile.delete()
+                                            if (tmpFile.exists() && !tmpFile.delete()) {
+                                                Log.w(TAG, "Failed to delete temp file on retry: ${tmpFile.absolutePath}")
+                                            }
                                         }
                                     }
 
@@ -447,10 +468,14 @@ class SyncEngine @Inject constructor(
                                     }
 
                                     if (downloadSuccess && tmpFile.exists()) {
-                                        if (finalFile.exists()) finalFile.delete()
+                                        if (finalFile.exists() && !finalFile.delete()) {
+                                            Log.w(TAG, "Failed to delete existing file before rename: ${finalFile.absolutePath}")
+                                        }
                                         if (!tmpFile.renameTo(finalFile)) {
                                             tmpFile.copyTo(finalFile)
-                                            tmpFile.delete()
+                                            if (!tmpFile.delete()) {
+                                                Log.w(TAG, "Failed to delete temp file after copy: ${tmpFile.absolutePath}")
+                                            }
                                         }
                                         totalBytesTransferred.addAndGet(action.fileSize)
                                         val entity = VideoItemEntity(
@@ -465,7 +490,11 @@ class SyncEngine @Inject constructor(
                                         videoRepository.upsert(entity)
                                         val savedEntity = videoRepository.getByRelativePath(localRelPath)
                                         if (savedEntity != null) {
-                                            videoMetadataExtractor.extractAndSave(savedEntity)
+                                            try {
+                                                videoMetadataExtractor.extractAndSave(savedEntity)
+                                            } catch (e: Exception) {
+                                                Log.w(TAG, "Metadata extraction failed for ${savedEntity.fileName}", e)
+                                            }
                                         }
                                         syncLogRepository.log(
                                             action = "DOWNLOAD",
@@ -475,7 +504,9 @@ class SyncEngine @Inject constructor(
                                             fileSize = action.fileSize
                                         )
                                     } else {
-                                        if (tmpFile.exists()) tmpFile.delete()
+                                        if (tmpFile.exists() && !tmpFile.delete()) {
+                                            Log.w(TAG, "Failed to delete temp file after failed download: ${tmpFile.absolutePath}")
+                                        }
                                         failedCount.incrementAndGet()
                                         syncLogRepository.log(
                                             action = "DOWNLOAD",
@@ -511,7 +542,9 @@ class SyncEngine @Inject constructor(
                 videoRepository.deleteByRelativePathAndRelationId(action.relativePath, relationId)
                 val physicalRelPath = storagePaths.toPathUnderBase(relation.localBasePath, action.relativePath)
                 val localFile = File(localRoot, physicalRelPath)
-                if (localFile.exists()) localFile.delete()
+                if (localFile.exists() && !localFile.delete()) {
+                    Log.w(TAG, "Failed to delete local file: ${localFile.absolutePath}")
+                }
 
                 syncLogRepository.log(
                     action = "DELETE_LOCAL",
@@ -685,11 +718,15 @@ class SyncEngine @Inject constructor(
                 val videoItem = videoRepository.getByRelativePath(action.relativePath)
                 if (videoItem != null) {
                     val localFile = File(videoItem.localAbsolutePath)
-                    if (localFile.exists()) localFile.delete()
+                    if (localFile.exists() && !localFile.delete()) {
+                        Log.w(TAG, "Failed to delete local file: ${localFile.absolutePath}")
+                    }
 
                     if (videoItem.thumbnailPath != null) {
                         val thumbnailFile = File(videoItem.thumbnailPath)
-                        if (thumbnailFile.exists()) thumbnailFile.delete()
+                        if (thumbnailFile.exists() && !thumbnailFile.delete()) {
+                            Log.w(TAG, "Failed to delete thumbnail: ${thumbnailFile.absolutePath}")
+                        }
                     }
 
                     playbackRepository.deleteByVideoId(videoItem.id)

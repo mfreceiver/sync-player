@@ -1,9 +1,10 @@
 package cn.vectory.syncplayer.data.local.entity
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "sync_log")
+@Entity(tableName = "sync_log", indices = [Index(value = ["timestamp"])])
 data class SyncLogEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val timestamp: Long = System.currentTimeMillis(),

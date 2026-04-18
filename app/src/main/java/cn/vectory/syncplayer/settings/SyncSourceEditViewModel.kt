@@ -10,6 +10,8 @@ import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -23,12 +25,32 @@ class SyncSourceEditViewModel @Inject constructor(
 
     val sourceId: Long = savedStateHandle.get<Long>("sourceId") ?: 0L
 
-    val name = MutableStateFlow("")
-    val protocol = MutableStateFlow(SyncProtocol.SMB)
-    val host = MutableStateFlow("")
-    val port = MutableStateFlow("445")
-    val username = MutableStateFlow("")
-    val password = MutableStateFlow("")
+    private val _name = MutableStateFlow("")
+    val name: StateFlow<String> = _name.asStateFlow()
+    fun setName(value: String) { _name.value = value }
+
+    private val _protocol = MutableStateFlow(SyncProtocol.SMB)
+    val protocol: StateFlow<SyncProtocol> = _protocol.asStateFlow()
+    fun setProtocol(p: SyncProtocol) {
+        _protocol.value = p
+        _port.value = if (p == SyncProtocol.SMB) "445" else "22"
+    }
+
+    private val _host = MutableStateFlow("")
+    val host: StateFlow<String> = _host.asStateFlow()
+    fun setHost(value: String) { _host.value = value }
+
+    private val _port = MutableStateFlow("445")
+    val port: StateFlow<String> = _port.asStateFlow()
+    fun setPort(value: String) { _port.value = value }
+
+    private val _username = MutableStateFlow("")
+    val username: StateFlow<String> = _username.asStateFlow()
+    fun setUsername(value: String) { _username.value = value }
+
+    private val _password = MutableStateFlow("")
+    val password: StateFlow<String> = _password.asStateFlow()
+    fun setPassword(value: String) { _password.value = value }
     val isTesting = MutableStateFlow(false)
     val testResult = MutableStateFlow<String?>(null)
     val isSaving = MutableStateFlow(false)
@@ -39,20 +61,15 @@ class SyncSourceEditViewModel @Inject constructor(
             viewModelScope.launch {
                 val existing = syncSourceRepository.getById(sourceId)
                 if (existing != null) {
-                    name.value = existing.name
-                    protocol.value = existing.protocol
-                    host.value = existing.host
-                    port.value = existing.port.toString()
-                    username.value = existing.username
-                    password.value = existing.password
+                    _name.value = existing.name
+                    _protocol.value = existing.protocol
+                    _host.value = existing.host
+                    _port.value = existing.port.toString()
+                    _username.value = existing.username
+                    _password.value = existing.password
                 }
             }
         }
-    }
-
-    fun setProtocol(p: SyncProtocol) {
-        protocol.value = p
-        port.value = if (p == SyncProtocol.SMB) "445" else "22"
     }
 
     fun testConnection() {
@@ -112,11 +129,11 @@ class SyncSourceEditViewModel @Inject constructor(
 
     private fun buildSource() = SyncSource(
         id = if (sourceId > 0L) sourceId else 0L,
-        name = name.value.trim(),
-        protocol = protocol.value,
-        host = host.value.trim(),
-        port = port.value.toIntOrNull() ?: if (protocol.value == SyncProtocol.SMB) 445 else 22,
-        username = username.value.trim(),
-        password = password.value
+        name = _name.value.trim(),
+        protocol = _protocol.value,
+        host = _host.value.trim(),
+        port = _port.value.toIntOrNull() ?: if (_protocol.value == SyncProtocol.SMB) 445 else 22,
+        username = _username.value.trim(),
+        password = _password.value
     )
 }

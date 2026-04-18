@@ -1,6 +1,7 @@
 package cn.vectory.syncplayer.player
 
 import android.content.pm.ActivityInfo
+import android.util.Log
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -53,8 +54,12 @@ class PlayerViewModel @Inject constructor(
     init {
         loadFolderVideoIds()
         viewModelScope.launch {
+            try {
                 _volumeBalance.value = userPrefs.getVolumeBalance()
-            _quickRecycle.value = userPrefs.getQuickRecycle()
+                _quickRecycle.value = userPrefs.getQuickRecycle()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load preferences", e)
+            }
         }
     }
 
@@ -74,19 +79,27 @@ class PlayerViewModel @Inject constructor(
             _allVideoIds.value = ids
         } else {
             viewModelScope.launch {
-                _allVideoIds.value = videoRepository.getAllIdsSorted()
+                try {
+                    _allVideoIds.value = videoRepository.getAllIdsSorted()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load video IDs", e)
+                }
             }
         }
     }
 
     fun loadVideo(videoItemId: Long) {
         viewModelScope.launch {
-            val video = videoRepository.getById(videoItemId)
-            _videoItem.value = video
-            if (video != null) {
-                _playbackRecord.value = playbackRepository.getByVideoId(video.id)
-                val gain = video.audioGainDb ?: 0f
-                _currentGainDb.value = if (_volumeBalance.value && video.audioGainDb != null) gain else 0f
+            try {
+                val video = videoRepository.getById(videoItemId)
+                _videoItem.value = video
+                if (video != null) {
+                    _playbackRecord.value = playbackRepository.getByVideoId(video.id)
+                    val gain = video.audioGainDb ?: 0f
+                    _currentGainDb.value = if (_volumeBalance.value && video.audioGainDb != null) gain else 0f
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load video $videoItemId", e)
             }
         }
     }
@@ -94,15 +107,23 @@ class PlayerViewModel @Inject constructor(
     fun saveProgress(position: Long, duration: Long) {
         val videoId = _videoItem.value?.id ?: return
         viewModelScope.launch {
-            playbackRepository.saveProgress(videoId, position, duration)
+            try {
+                playbackRepository.saveProgress(videoId, position, duration)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save progress", e)
+            }
         }
     }
 
     fun toggleTrashed() {
         val videoId = _videoItem.value?.id ?: return
         viewModelScope.launch {
-            playbackRepository.toggleTrashed(videoId)
-            _playbackRecord.value = playbackRepository.getByVideoId(videoId)
+            try {
+                playbackRepository.toggleTrashed(videoId)
+                _playbackRecord.value = playbackRepository.getByVideoId(videoId)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to toggle trashed", e)
+            }
         }
     }
 
@@ -145,5 +166,9 @@ class PlayerViewModel @Inject constructor(
         super.onCleared()
         _playbackSpeed.value = 1.0f
         _isFullscreen.value = false
+    }
+
+    companion object {
+        private const val TAG = "PlayerViewModel"
     }
 }

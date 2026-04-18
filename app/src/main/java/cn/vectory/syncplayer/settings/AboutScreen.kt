@@ -181,7 +181,8 @@ private fun LogEntryItem(log: SyncLogEntity) {
     }
 }
 
+private val logDateFormat = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.getDefault())
+
 private fun formatLogTimestamp(timestamp: Long): String {
-    val sdf = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.getDefault())
-    return sdf.format(java.util.Date(timestamp))
+    return logDateFormat.format(java.util.Date(timestamp))
 }

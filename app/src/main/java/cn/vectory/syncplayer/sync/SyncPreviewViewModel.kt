@@ -79,11 +79,19 @@ class SyncPreviewViewModel @Inject constructor(
             observeSyncCompletion()
         }
         viewModelScope.launch {
-            _allRelations.value = syncRelationRepository.getAllWithSource().map { it.relation }
+            try {
+                _allRelations.value = syncRelationRepository.getAllWithSource().map { it.relation }
+            } catch (e: Exception) {
+                _error.value = "加载同步关系失败: ${e.message}"
+            }
         }
         viewModelScope.launch {
-            val relation = syncRelationRepository.getById(relationId)
-            _currentRelationName.value = relation?.name ?: ""
+            try {
+                val relation = syncRelationRepository.getById(relationId)
+                _currentRelationName.value = relation?.name ?: ""
+            } catch (e: Exception) {
+                _error.value = "加载同步关系名称失败: ${e.message}"
+            }
         }
     }
 
@@ -138,37 +146,46 @@ class SyncPreviewViewModel @Inject constructor(
 
     fun startSync() {
         viewModelScope.launch {
-            val relation = syncRelationRepository.getById(relationId) ?: return@launch
-            syncEngine.setPendingTask(PendingSyncTask(
-                relationId = relationId,
-                relationName = relation.name,
-                localBasePath = relation.localBasePath,
-                toDownload = _toDownload.value,
-                toDelete = _toDelete.value
-            ))
-            _isSyncing.value = true
-            _error.value = null
-            SyncService.start(context, relationId)
-            observeSyncCompletion()
+            try {
+                val relation = syncRelationRepository.getById(relationId) ?: return@launch
+                syncEngine.setPendingTask(PendingSyncTask(
+                    relationId = relationId,
+                    relationName = relation.name,
+                    localBasePath = relation.localBasePath,
+                    toDownload = _toDownload.value,
+                    toDelete = _toDelete.value
+                ))
+                _isSyncing.value = true
+                _error.value = null
+                SyncService.start(context, relationId)
+                observeSyncCompletion()
+            } catch (e: Exception) {
+                _error.value = "启动同步失败: ${e.message}"
+            }
         }
     }
 
     private fun observeSyncCompletion() {
         viewModelScope.launch {
-            val result = syncEngine.progress.first { p ->
-                (p.relationId == relationId || p.relationId == 0L) &&
-                    (p.phase == SyncPhase.COMPLETED || p.phase == SyncPhase.FAILED || p.phase == SyncPhase.CANCELLED)
+            try {
+                val result = syncEngine.progress.first { p ->
+                    (p.relationId == relationId || p.relationId == 0L) &&
+                        (p.phase == SyncPhase.COMPLETED || p.phase == SyncPhase.FAILED || p.phase == SyncPhase.CANCELLED)
+                }
+                _isSyncing.value = false
+                if (result.phase == SyncPhase.COMPLETED) {
+                    _toDownload.value = emptyList()
+                    _toDelete.value = emptyList()
+                } else if (result.phase == SyncPhase.FAILED) {
+                    _error.value = "同步失败，请检查网络连接后重试"
+                } else if (result.phase == SyncPhase.CANCELLED) {
+                    _error.value = "同步已取消"
+                }
+                _syncComplete.value = true
+            } catch (e: Exception) {
+                _error.value = "监听同步状态失败: ${e.message}"
+                _isSyncing.value = false
             }
-            _isSyncing.value = false
-            if (result.phase == SyncPhase.COMPLETED) {
-                _toDownload.value = emptyList()
-                _toDelete.value = emptyList()
-            } else if (result.phase == SyncPhase.FAILED) {
-                _error.value = "同步失败，请检查网络连接后重试"
-            } else if (result.phase == SyncPhase.CANCELLED) {
-                _error.value = "同步已取消"
-            }
-            _syncComplete.value = true
         }
     }
 

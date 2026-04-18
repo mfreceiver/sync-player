@@ -34,7 +34,9 @@ fun GainAnalysisScreen(
     val completedPaths by viewModel.completedPaths.collectAsState()
     var isNavigatingBack by remember { mutableStateOf(false) }
 
-    val remainingFiles = discoveredFiles.filter { it.localAbsolutePath !in completedPaths }
+    val remainingFiles by remember {
+        derivedStateOf { discoveredFiles.filter { it.localAbsolutePath !in completedPaths } }
+    }
 
     Scaffold(
         topBar = {

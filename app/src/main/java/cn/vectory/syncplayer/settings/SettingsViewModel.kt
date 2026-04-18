@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.settings
 import android.content.Context
 import android.content.ComponentName
 import android.content.pm.PackageManager
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
@@ -42,23 +43,39 @@ class SettingsViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            combine(
-                userPrefs.volumeBalance,
-                userPrefs.quickRecycle,
-                userPrefs.safProviderEnabled,
-                userPrefs.secureLockEnabled
-            ) { volumeBalance, quickRecycle, safEnabled, secureLockEnabled ->
-                SettingsState(volumeBalance, quickRecycle, safEnabled, secureLockEnabled)
-            }.collect { _settingsState.value = it }
+            try {
+                combine(
+                    userPrefs.volumeBalance,
+                    userPrefs.quickRecycle,
+                    userPrefs.safProviderEnabled,
+                    userPrefs.secureLockEnabled
+                ) { volumeBalance, quickRecycle, safEnabled, secureLockEnabled ->
+                    SettingsState(volumeBalance, quickRecycle, safEnabled, secureLockEnabled)
+                }.collect { _settingsState.value = it }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load settings", e)
+            }
         }
     }
 
     fun setVolumeBalance(enabled: Boolean) {
-        viewModelScope.launch { userPrefs.setVolumeBalance(enabled) }
+        viewModelScope.launch {
+            try {
+                userPrefs.setVolumeBalance(enabled)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to set volume balance", e)
+            }
+        }
     }
 
     fun setQuickRecycle(enabled: Boolean) {
-        viewModelScope.launch { userPrefs.setQuickRecycle(enabled) }
+        viewModelScope.launch {
+            try {
+                userPrefs.setQuickRecycle(enabled)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to set quick recycle", e)
+            }
+        }
     }
 
     fun setSafEnabled(enabled: Boolean) {
@@ -73,11 +90,23 @@ class SettingsViewModel @Inject constructor(
             newState,
             PackageManager.DONT_KILL_APP
         )
-        viewModelScope.launch { userPrefs.setSafProviderEnabled(enabled) }
+        viewModelScope.launch {
+            try {
+                userPrefs.setSafProviderEnabled(enabled)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to set SAF enabled", e)
+            }
+        }
     }
 
     fun setSecureLockEnabled(enabled: Boolean) {
-        viewModelScope.launch { userPrefs.setSecureLockEnabled(enabled) }
+        viewModelScope.launch {
+            try {
+                userPrefs.setSecureLockEnabled(enabled)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to set secure lock", e)
+            }
+        }
     }
 
     fun authenticateAndToggle(activity: FragmentActivity, enable: Boolean) {
@@ -92,7 +121,15 @@ class SettingsViewModel @Inject constructor(
 
     fun clearLogs() {
         viewModelScope.launch {
-            syncLogRepository.clearOldLogs()
+            try {
+                syncLogRepository.clearOldLogs()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to clear logs", e)
+            }
         }
+    }
+
+    companion object {
+        private const val TAG = "SettingsViewModel"
     }
 }

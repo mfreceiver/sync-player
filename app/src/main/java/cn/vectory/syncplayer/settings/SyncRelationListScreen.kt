@@ -16,26 +16,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.data.model.SyncRelationWithSource
-import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.stateIn
 import java.text.SimpleDateFormat
 import java.util.Locale
-import javax.inject.Inject
-
-@HiltViewModel
-class SyncRelationListViewModel @Inject constructor(
-    private val syncRelationRepository: SyncRelationRepository
-) : ViewModel() {
-    val relationsWithSource = syncRelationRepository.getAllWithSourceFlow()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,6 +32,7 @@ fun SyncRelationListScreen(
     viewModel: SyncRelationListViewModel = hiltViewModel()
 ) {
     val relations by viewModel.relationsWithSource.collectAsStateWithLifecycle()
+    val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
     var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -102,7 +88,7 @@ fun SyncRelationListScreen(
                             supportingContent = {
                                 Text(
                                     "上次同步: ${lastSync?.let {
-                                        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(it)
+                                        dateFormat.format(it)
                                     } ?: "从未同步"}",
                                     color = resultColor
                                 )

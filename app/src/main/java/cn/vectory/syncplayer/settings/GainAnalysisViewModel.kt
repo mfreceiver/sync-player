@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.audio.AudioGainAnalyzer
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.ui.util.isVideoFile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -14,6 +15,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
@@ -27,15 +30,6 @@ class GainAnalysisViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val relationId: Long = savedStateHandle.get<Long>("relationId") ?: 0L
-
-    private val videoExtensions = setOf(
-        "mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "ts", "m4v", "3gp", "mpeg", "mpg"
-    )
-
-    private fun isVideoFile(fileName: String): Boolean {
-        val ext = fileName.substringAfterLast('.', "").lowercase()
-        return ext in videoExtensions
-    }
 
     private val _discoveredFiles = MutableStateFlow<List<VideoItemEntity>>(emptyList())
     val discoveredFiles = _discoveredFiles.asStateFlow()
@@ -106,40 +100,47 @@ class GainAnalysisViewModel @Inject constructor(
 
             val semaphore = Semaphore(3)
             val completed = AtomicInteger(0)
-            val activeMutex = kotlinx.coroutines.sync.Mutex()
+            val activeMutex = Mutex()
             val activeFiles = mutableMapOf<String, String>()
 
-            withContext(Dispatchers.IO) {
-                files.map { video ->
-                    async {
-                        semaphore.withPermit {
-                            activeMutex.lock()
-                            activeFiles[video.localAbsolutePath] = video.fileName
-                            _activeAnalysis.value = activeFiles.values.toList()
-                            activeMutex.unlock()
+            try {
+                withContext(Dispatchers.IO) {
+                    files.map { video ->
+                        async {
+                            semaphore.withPermit {
+                                activeMutex.withLock {
+                                    activeFiles[video.localAbsolutePath] = video.fileName
+                                    _activeAnalysis.value = activeFiles.values.toList()
+                                }
 
-                            val result = audioGainAnalyzer.analyze(video.localAbsolutePath)
-                            if (result != null) {
-                                videoRepository.upsert(video.copy(audioGainDb = result.gainDb))
-                            } else {
-                                videoRepository.upsert(video.copy(audioGainDb = 0f))
+                                val result = audioGainAnalyzer.analyze(video.localAbsolutePath)
+                                if (result != null) {
+                                    videoRepository.upsert(video.copy(audioGainDb = result.gainDb))
+                                } else {
+                                    videoRepository.upsert(video.copy(audioGainDb = 0f))
+                                }
+
+                                activeMutex.withLock {
+                                    activeFiles.remove(video.localAbsolutePath)
+                                    _activeAnalysis.value = activeFiles.values.toList()
+                                }
+
+                                val done = completed.incrementAndGet()
+                                _completedCount.value = done
+                                _completedPaths.value = _completedPaths.value + video.localAbsolutePath
                             }
-
-                            activeMutex.lock()
-                            activeFiles.remove(video.localAbsolutePath)
-                            _activeAnalysis.value = activeFiles.values.toList()
-                            activeMutex.unlock()
-
-                            val done = completed.incrementAndGet()
-                            _completedCount.value = done
-                            _completedPaths.value = _completedPaths.value + video.localAbsolutePath
                         }
-                    }
-                }.awaitAll()
-            }
+                    }.awaitAll()
+                }
 
-            _isAnalyzing.value = false
-            _isComplete.value = true
+                _isComplete.value = true
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _error.value = "分析失败: ${e.message}"
+            } finally {
+                _isAnalyzing.value = false
+            }
         }
     }
 

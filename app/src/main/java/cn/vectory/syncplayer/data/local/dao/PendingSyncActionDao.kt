@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.data.local.dao
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
+import androidx.room.Transaction
 import cn.vectory.syncplayer.data.local.entity.PendingSyncActionEntity
 
 @Dao
@@ -15,4 +16,10 @@ interface PendingSyncActionDao {
 
     @Query("DELETE FROM pending_sync_action WHERE relationId = :relationId")
     suspend fun deleteByRelationId(relationId: Long)
+
+    @Transaction
+    suspend fun replaceForRelation(relationId: Long, actions: List<PendingSyncActionEntity>) {
+        deleteByRelationId(relationId)
+        insertAll(actions)
+    }
 }

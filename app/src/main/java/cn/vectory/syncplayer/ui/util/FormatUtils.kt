@@ -69,6 +69,14 @@ internal val fileNameComparator: Comparator<String> = Comparator { a, b ->
     tokensA.size - tokensB.size
 }
 
+fun formatFileSize(bytes: Long): String {
+    if (bytes <= 0) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+    val digitGroups = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt()
+    val value = bytes / Math.pow(1024.0, digitGroups.toDouble())
+    return "%.1f %s".format(value, units[digitGroups.coerceAtMost(units.size - 1)])
+}
+
 internal fun formatDuration(ms: Long?): String {
     if (ms == null) return ""
     if (ms <= 0) return "0:00"

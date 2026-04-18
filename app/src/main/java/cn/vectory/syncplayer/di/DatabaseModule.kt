@@ -33,26 +33,33 @@ object DatabaseModule {
             AppDatabase::class.java,
             "sync-player.db"
         )
-            .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+            .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+            .fallbackToDestructiveMigration()
             .build()
     }
 
     @Provides
+    @Singleton
     fun provideSyncSourceDao(db: AppDatabase): SyncSourceDao = db.syncSourceDao()
 
     @Provides
+    @Singleton
     fun provideSyncRelationDao(db: AppDatabase): SyncRelationDao = db.syncRelationDao()
 
     @Provides
+    @Singleton
     fun provideVideoItemDao(db: AppDatabase): VideoItemDao = db.videoItemDao()
 
     @Provides
+    @Singleton
     fun providePlaybackRecordDao(db: AppDatabase): PlaybackRecordDao = db.playbackRecordDao()
 
     @Provides
+    @Singleton
     fun provideSyncLogDao(db: AppDatabase): SyncLogDao = db.syncLogDao()
 
     @Provides
+    @Singleton
     fun providePendingSyncActionDao(db: AppDatabase): PendingSyncActionDao = db.pendingSyncActionDao()
 
     @Provides
@@ -108,6 +115,13 @@ object DatabaseModule {
     private val MIGRATION_11_12 = object : Migration(11, 12) {
         override fun migrate(db: SupportSQLiteDatabase) {
             db.execSQL("ALTER TABLE video_item ADD COLUMN star INTEGER NOT NULL DEFAULT 0")
+        }
+    }
+
+    // Migration from 12 to 13: add timestamp index on sync_log
+    private val MIGRATION_12_13 = object : Migration(12, 13) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_sync_log_timestamp` ON `sync_log` (`timestamp`)")
         }
     }
 }

@@ -29,6 +29,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -112,7 +114,7 @@ internal fun DirectoryTreeDialog(
                 Spacer(Modifier.height(12.dp))
                 Spacer(Modifier.height(8.dp))
 
-                val flatList = buildFlatList()
+                val flatList by remember { derivedStateOf { buildFlatList() } }
 
                 LazyColumn(
                     modifier = Modifier.heightIn(min = 120.dp, max = 400.dp)

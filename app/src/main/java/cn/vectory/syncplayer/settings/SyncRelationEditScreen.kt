@@ -280,7 +280,7 @@ fun SyncRelationEditScreen(
                         }
                     } else {
                         LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
-                            items(remoteDirs) { dir ->
+                            items(remoteDirs, key = { it.name }) { dir ->
                                 TextButton(
                                     onClick = { viewModel.navigateRemoteInto(dir.name) },
                                     modifier = Modifier.fillMaxWidth()
@@ -340,7 +340,7 @@ fun SyncRelationEditScreen(
                     }
 
                     LazyColumn(modifier = Modifier.heightIn(max = 250.dp)) {
-                        items(localDirs) { dirName ->
+                        items(localDirs, key = { it }) { dirName ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()

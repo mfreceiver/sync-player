@@ -87,17 +87,19 @@ class PlaybackRepository @Inject constructor(
         // First ensure all videos in folder have playback records
         val dao = playbackRecordDao
         val videoIdsWithoutRecord = dao.getVideoIdsWithoutRecord(folderPath)
-        videoIdsWithoutRecord.forEach { videoId ->
-            dao.upsert(
+        if (videoIdsWithoutRecord.isNotEmpty()) {
+            val now = System.currentTimeMillis()
+            val records = videoIdsWithoutRecord.map { videoId ->
                 PlaybackRecordEntity(
                     videoItemId = videoId,
                     position = 0,
                     duration = 0,
-                    lastPlayedTime = System.currentTimeMillis(),
+                    lastPlayedTime = now,
                     isCompleted = completed,
                     isTrashed = false
                 )
-            )
+            }
+            dao.upsertAllBatch(records)
         }
         // Then update existing records
         dao.updateCompletedByFolder(folderPath, completed)

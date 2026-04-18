@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
+import cn.vectory.syncplayer.ui.util.formatFileSize
 import cn.vectory.syncplayer.MainActivity
 import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProgress
@@ -131,12 +132,5 @@ object SyncNotificationHelper {
         )
     }
 
-    private fun formatFileSize(bytes: Long): String {
-        return when {
-            bytes >= 1024L * 1024 * 1024 -> "%.1f GB".format(bytes / (1024.0 * 1024 * 1024))
-            bytes >= 1024L * 1024 -> "%.0f MB".format(bytes / (1024.0 * 1024))
-            bytes >= 1024 -> "%.1f KB".format(bytes / 1024.0)
-            else -> "$bytes B"
-        }
-    }
+
 }

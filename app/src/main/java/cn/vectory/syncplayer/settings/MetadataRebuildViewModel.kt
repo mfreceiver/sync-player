@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.settings
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
@@ -7,6 +8,7 @@ import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.VideoMetadataExtractor
+import cn.vectory.syncplayer.ui.util.isVideoFile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,15 +39,6 @@ class MetadataRebuildViewModel @Inject constructor(
     private val videoMetadataExtractor: VideoMetadataExtractor,
     private val storagePaths: StoragePaths
 ) : ViewModel() {
-
-    private val videoExtensions = setOf(
-        "mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "ts", "m4v", "3gp", "mpeg", "mpg"
-    )
-
-    private fun isVideoFile(fileName: String): Boolean {
-        val ext = fileName.substringAfterLast('.', "").lowercase()
-        return ext in videoExtensions
-    }
 
     private val _discoveryResult = MutableStateFlow<DiscoveryResult?>(null)
     val discoveryResult = _discoveryResult.asStateFlow()
@@ -165,7 +158,11 @@ class MetadataRebuildViewModel @Inject constructor(
                         val id = videoRepository.upsert(entity)
                         val saved = videoRepository.getById(id)
                         if (saved != null) {
-                            videoMetadataExtractor.extractAndSave(saved)
+                            try {
+                                videoMetadataExtractor.extractAndSave(saved)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to extract metadata for ${file.fileName}", e)
+                            }
                         }
                         _completedCount.value++
                     }
@@ -180,7 +177,11 @@ class MetadataRebuildViewModel @Inject constructor(
                     for (record in result.incompleteRecords) {
                         _currentFile.value = record.fileName
                         val fresh = videoRepository.getById(record.id) ?: continue
-                        videoMetadataExtractor.extractAndSave(fresh)
+                        try {
+                            videoMetadataExtractor.extractAndSave(fresh)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to extract metadata for ${record.fileName}", e)
+                        }
                         _completedCount.value++
                     }
                 }
@@ -203,5 +204,9 @@ class MetadataRebuildViewModel @Inject constructor(
         rebuildJob = null
         _isRebuilding.value = false
         _currentFile.value = null
+    }
+
+    companion object {
+        private const val TAG = "MetadataRebuildViewModel"
     }
 }

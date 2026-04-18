@@ -1,6 +1,7 @@
 -keep class jcifs.**
 -keep class net.schmizz.**
--keep class org.bouncycastle.**
+-keep class org.bouncycastle.jcajce.provider.digest.** { *; }
+-keep class org.bouncycastle.jce.provider.BouncyCastleProvider { *; }
 -dontwarn jcifs.**
 -dontwarn net.schmizz.**
 -dontwarn org.bouncycastle.**
