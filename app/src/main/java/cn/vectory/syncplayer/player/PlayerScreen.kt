@@ -156,9 +156,6 @@ fun PlayerScreen(
     var isUserSeeking by remember { mutableStateOf(false) }
     var userSeekPosition by remember { mutableFloatStateOf(0f) }
 
-    var isHighSpeedSeeking by remember { mutableStateOf(false) }
-    var highSpeedSeekPosition by remember { mutableLongStateOf(0L) }
-
     var speedOverlayMultiplier by remember { mutableStateOf<Float?>(null) }
 
     var originalBrightness by remember { mutableFloatStateOf(-1f) }
@@ -470,12 +467,11 @@ fun PlayerScreen(
     var seekPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var seekPreviewPosition by remember { mutableLongStateOf(0L) }
 
-    val isSeekingActive = isUserSeeking || isGestureSeeking || isHighSpeedSeeking
+    val isSeekingActive = isUserSeeking || isGestureSeeking
 
     val seekDisplayProgress = when {
         isUserSeeking -> userSeekPosition
         isGestureSeeking -> gestureSeekPosition
-        isHighSpeedSeeking && currentDuration > 0 -> (highSpeedSeekPosition.toFloat() / currentDuration.toFloat()).coerceIn(0f, 1f)
         currentDuration > 0 -> (currentPosition.toFloat() / currentDuration.toFloat()).coerceIn(0f, 1f)
         else -> 0f
     }
@@ -578,57 +574,14 @@ fun PlayerScreen(
                     .fillMaxWidth()
                     .navigationBarsPadding()
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .pointerInput(currentDuration) {
-                            awaitPointerEventScope {
-                                while (true) {
-                                    val down = awaitFirstDown(requireUnconsumed = false)
-                                    val startX = down.position.x
-                                    val basePosition = exoPlayer.currentPosition
-                                    val dur = currentDuration
-                                    if (dur <= 0) continue
-                                    down.consume()
-                                    isHighSpeedSeeking = true
-
-                                    do {
-                                        val event = awaitPointerEvent()
-                                        val change = event.changes.first()
-                                        change.consume()
-                                        val dx = change.position.x - startX
-                                        val ratio = dx / size.width
-                                        val targetMs = (basePosition + ratio * dur).toLong()
-                                            .coerceIn(0, dur)
-                                        highSpeedSeekPosition = targetMs
-                                    } while (change.pressed)
-
-                                    val finalTarget = highSpeedSeekPosition
-                                    seekTarget = finalTarget
-                                    currentPosition = finalTarget
-                                    exoPlayer.seekTo(finalTarget)
-                                    isHighSpeedSeeking = false
-                                    overlayHideJob.value?.cancel()
-                                    overlayHideJob.value = coroutineScope.launch {
-                                        delay(750L)
-                                        currentOverlay = null
-                                    }
-                                }
-                            }
-                        }
-                )
-
                 val showControlBar = controlsVisible || isSeekingActive
                 if (showControlBar) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .then(
-                                if (controlsVisible) Modifier.verticalGradientBackground(
-                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.5f)),
-                                    GradientHeight
-                                ) else Modifier
+                            .verticalGradientBackground(
+                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.5f)),
+                                GradientHeight
                             )
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                             .onSizeChanged { progressBarHeightPx = it.height }
@@ -639,23 +592,21 @@ fun PlayerScreen(
                                 .height(40.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (controlsVisible) {
-                                IconButton(
-                                    onClick = {
-                                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                                    },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                        contentDescription = if (isPlaying) "Pause" else "Play",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
+                            IconButton(
+                                onClick = {
+                                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                    contentDescription = if (isPlaying) "Pause" else "Play",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
                             }
 
-                            if (controlsVisible) { Spacer(modifier = Modifier.width(8.dp)) }
+                            Spacer(modifier = Modifier.width(8.dp))
 
                             val currentOnChange by rememberUpdatedState { pos: Float ->
                                 isUserSeeking = true
@@ -714,44 +665,42 @@ fun PlayerScreen(
                                 }
                             }
 
-                            if (controlsVisible) { Spacer(modifier = Modifier.width(8.dp)) }
+                            Spacer(modifier = Modifier.width(8.dp))
 
-                            if (controlsVisible) {
-                                Box {
-                                    IconButton(
-                                        onClick = { showSettingsPopup = !showSettingsPopup },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Settings,
-                                            contentDescription = "Settings",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
-                                    if (showSettingsPopup) {
-                                        SettingsPopup(
-                                            isFullscreen = isFullscreen,
-                                            playbackSpeed = playbackSpeed,
-                                            onDirectionChange = { fullscreen ->
-                                                if (fullscreen) {
-                                                    if (!isFullscreen) viewModel.toggleFullscreen()
-                                                } else {
-                                                    if (isFullscreen) viewModel.toggleFullscreen()
-                                                }
-                                                showOverlay(
-                                                    PlayerOverlay.Orientation(if (fullscreen) "FULLSCREEN" else "ROTATION")
-                                                )
-                                                showSettingsPopup = false
-                                            },
-                                            onSpeedChange = { speed ->
-                                                viewModel.setPlaybackSpeed(speed)
-                                                exoPlayer.playbackParameters = PlaybackParameters(speed)
-                                                showSettingsPopup = false
-                                            },
-                                            onDismiss = { showSettingsPopup = false }
-                                        )
-                                    }
+                            Box {
+                                IconButton(
+                                    onClick = { showSettingsPopup = !showSettingsPopup },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Settings,
+                                        contentDescription = "Settings",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                if (showSettingsPopup) {
+                                    SettingsPopup(
+                                        isFullscreen = isFullscreen,
+                                        playbackSpeed = playbackSpeed,
+                                        onDirectionChange = { fullscreen ->
+                                            if (fullscreen) {
+                                                if (!isFullscreen) viewModel.toggleFullscreen()
+                                            } else {
+                                                if (isFullscreen) viewModel.toggleFullscreen()
+                                            }
+                                            showOverlay(
+                                                PlayerOverlay.Orientation(if (fullscreen) "FULLSCREEN" else "ROTATION")
+                                            )
+                                            showSettingsPopup = false
+                                        },
+                                        onSpeedChange = { speed ->
+                                            viewModel.setPlaybackSpeed(speed)
+                                            exoPlayer.playbackParameters = PlaybackParameters(speed)
+                                            showSettingsPopup = false
+                                        },
+                                        onDismiss = { showSettingsPopup = false }
+                                    )
                                 }
                             }
                         }
@@ -790,12 +739,8 @@ fun PlayerScreen(
             val bitmapRatio = bitmap.height.toFloat() / bitmap.width.toFloat()
             val previewHeightDp = with(density) { (previewWidthPx * bitmapRatio).toDp() }.coerceAtMost(100.dp)
 
-            val sideElementsWidthPx = if (controlsVisible) {
-                with(density) { (32.dp + 8.dp + 8.dp + 32.dp).toPx() }
-            } else 0f
-            val progressBarStartPx = if (controlsVisible) {
-                with(density) { (32.dp + 8.dp).toPx() }
-            } else 0f
+            val sideElementsWidthPx = with(density) { (32.dp + 8.dp + 8.dp + 32.dp).toPx() }
+            val progressBarStartPx = with(density) { (32.dp + 8.dp).toPx() }
             val progressBarWidthPx = bottomAreaWidth.toFloat() - sideElementsWidthPx
 
             val maxOffsetPx = (bottomAreaWidth.toFloat() - previewWidthPx).coerceAtLeast(0f)
