@@ -51,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -207,6 +208,11 @@ fun PlayerScreen(
         }
     }
 
+    SideEffect {
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        insetsController.hide(WindowInsetsCompat.Type.systemBars())
+    }
+
     LaunchedEffect(speedMultiplier) {
         gestureView.speedMultiplier = speedMultiplier
     }
@@ -336,6 +342,7 @@ fun PlayerScreen(
         currentPosition = 0L
         currentDuration = 0L
         currentVideoId = newId
+        exoPlayer.playWhenReady = true
         viewModel.loadVideo(newId)
         showControls = true
     }
@@ -456,6 +463,7 @@ fun PlayerScreen(
 
     var showSettingsPopup by remember { mutableStateOf(false) }
     var bottomAreaWidth by remember { mutableIntStateOf(0) }
+    var bottomControlHeight by remember { mutableIntStateOf(0) }
 
     val previewExtractor = remember { SeekPreviewExtractor() }
     var seekPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -484,16 +492,6 @@ fun PlayerScreen(
         if (!isSeekingActive) {
             delay(100L)
             seekPreviewBitmap = null
-        }
-    }
-
-    var showSeekBarOverlay by remember { mutableStateOf(false) }
-    LaunchedEffect(isGestureSeeking, isHighSpeedSeeking, showControls) {
-        if ((isGestureSeeking || isHighSpeedSeeking) && !showControls) {
-            showSeekBarOverlay = true
-        } else if (!isGestureSeeking && !isHighSpeedSeeking) {
-            delay(100L)
-            showSeekBarOverlay = false
         }
     }
 
@@ -549,18 +547,17 @@ fun PlayerScreen(
                             .weight(1f)
                             .padding(horizontal = 4.dp)
                     )
-                    if (playbackRecord?.isTrashed == true) {
-                        IconButton(
-                            onClick = { viewModel.toggleTrashed() },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Delete,
-                                contentDescription = "Restore",
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
+                    val isTrashed = playbackRecord?.isTrashed == true
+                    IconButton(
+                        onClick = { viewModel.toggleTrashed() },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
+                            contentDescription = if (isTrashed) "Restore" else "Trash",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
             }
@@ -570,7 +567,10 @@ fun PlayerScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
-                .onSizeChanged { bottomAreaWidth = it.width }
+                .onSizeChanged {
+                    bottomAreaWidth = it.width
+                    bottomControlHeight = it.height
+                }
         ) {
             Column(
                 modifier = Modifier
@@ -618,13 +618,16 @@ fun PlayerScreen(
                         }
                 )
 
-                if (controlsVisible) {
+                val showControlBar = controlsVisible || isSeekingActive
+                if (showControlBar) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .verticalGradientBackground(
-                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.5f)),
-                                GradientHeight
+                            .then(
+                                if (controlsVisible) Modifier.verticalGradientBackground(
+                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.5f)),
+                                    GradientHeight
+                                ) else Modifier
                             )
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
@@ -634,35 +637,23 @@ fun PlayerScreen(
                                 .height(40.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            IconButton(
-                                onClick = {
-                                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                                },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                    contentDescription = if (isPlaying) "Pause" else "Play",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(24.dp)
-                                )
+                            if (controlsVisible) {
+                                IconButton(
+                                    onClick = {
+                                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                        contentDescription = if (isPlaying) "Pause" else "Play",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
                             }
 
-                            val displayElapsed = when {
-                                isUserSeeking -> (userSeekPosition * currentDuration).toLong()
-                                isGestureSeeking -> (gestureSeekPosition * currentDuration).toLong()
-                                isHighSpeedSeeking -> highSpeedSeekPosition
-                                else -> currentPosition
-                            }
-                            Text(
-                                text = "${formatDuration(displayElapsed)}/${formatDuration(currentDuration)}",
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelSmall,
-                                modifier = Modifier.widthIn(min = 90.dp, max = 90.dp),
-                                maxLines = 1
-                            )
-
-                            Spacer(modifier = Modifier.width(8.dp))
+                            if (controlsVisible) { Spacer(modifier = Modifier.width(8.dp)) }
 
                             val currentOnChange by rememberUpdatedState { pos: Float ->
                                 isUserSeeking = true
@@ -721,42 +712,44 @@ fun PlayerScreen(
                                 }
                             }
 
-                            Spacer(modifier = Modifier.width(8.dp))
+                            if (controlsVisible) { Spacer(modifier = Modifier.width(8.dp)) }
 
-                            Box {
-                                IconButton(
-                                    onClick = { showSettingsPopup = !showSettingsPopup },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Settings,
-                                        contentDescription = "Settings",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                                if (showSettingsPopup) {
-                                    SettingsPopup(
-                                        isFullscreen = isFullscreen,
-                                        playbackSpeed = playbackSpeed,
-                                        onDirectionChange = { fullscreen ->
-                                            if (fullscreen) {
-                                                if (!isFullscreen) viewModel.toggleFullscreen()
-                                            } else {
-                                                if (isFullscreen) viewModel.toggleFullscreen()
-                                            }
-                                            showOverlay(
-                                                PlayerOverlay.Orientation(if (fullscreen) "FULLSCREEN" else "ROTATION")
-                                            )
-                                            showSettingsPopup = false
-                                        },
-                                        onSpeedChange = { speed ->
-                                            viewModel.setPlaybackSpeed(speed)
-                                            exoPlayer.playbackParameters = PlaybackParameters(speed)
-                                            showSettingsPopup = false
-                                        },
-                                        onDismiss = { showSettingsPopup = false }
-                                    )
+                            if (controlsVisible) {
+                                Box {
+                                    IconButton(
+                                        onClick = { showSettingsPopup = !showSettingsPopup },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Settings,
+                                            contentDescription = "Settings",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    if (showSettingsPopup) {
+                                        SettingsPopup(
+                                            isFullscreen = isFullscreen,
+                                            playbackSpeed = playbackSpeed,
+                                            onDirectionChange = { fullscreen ->
+                                                if (fullscreen) {
+                                                    if (!isFullscreen) viewModel.toggleFullscreen()
+                                                } else {
+                                                    if (isFullscreen) viewModel.toggleFullscreen()
+                                                }
+                                                showOverlay(
+                                                    PlayerOverlay.Orientation(if (fullscreen) "FULLSCREEN" else "ROTATION")
+                                                )
+                                                showSettingsPopup = false
+                                            },
+                                            onSpeedChange = { speed ->
+                                                viewModel.setPlaybackSpeed(speed)
+                                                exoPlayer.playbackParameters = PlaybackParameters(speed)
+                                                showSettingsPopup = false
+                                            },
+                                            onDismiss = { showSettingsPopup = false }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -766,27 +759,24 @@ fun PlayerScreen(
 
         }
 
-        if (showSeekBarOverlay && !showControls) {
+        if (!showControls) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .height(2.dp)
                     .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(bottom = 48.dp)
+                    .background(Color.White.copy(alpha = 0.3f))
             ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(2.dp)
-                        .background(Color.White.copy(alpha = 0.5f))
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(seekDisplayProgress)
-                            .background(LocalExtendedColors.current.playerProgressFill)
-                    )
-                }
+                        .fillMaxHeight()
+                        .fillMaxWidth(
+                            if (currentDuration > 0)
+                                (currentPosition.toFloat() / currentDuration.toFloat()).coerceIn(0f, 1f)
+                            else 0f
+                        )
+                        .background(LocalExtendedColors.current.playerProgressFill)
+                )
             }
         }
 
@@ -798,16 +788,27 @@ fun PlayerScreen(
             val bitmapRatio = bitmap.height.toFloat() / bitmap.width.toFloat()
             val previewHeightDp = with(density) { (previewWidthPx * bitmapRatio).toDp() }.coerceAtMost(100.dp)
 
+            val sideElementsWidthPx = if (controlsVisible) {
+                with(density) { (32.dp + 8.dp + 8.dp + 32.dp).toPx() }
+            } else 0f
+            val progressBarStartPx = if (controlsVisible) {
+                with(density) { (32.dp + 8.dp).toPx() }
+            } else 0f
+            val progressBarWidthPx = bottomAreaWidth.toFloat() - sideElementsWidthPx
+
             val maxOffsetPx = (bottomAreaWidth.toFloat() - previewWidthPx).coerceAtLeast(0f)
-            val offsetPx = (seekDisplayProgress * bottomAreaWidth.toFloat() - previewWidthPx / 2f)
+            val progressPointPx = progressBarStartPx + seekDisplayProgress * progressBarWidthPx
+            val offsetPx = (progressPointPx - previewWidthPx / 2f)
                 .coerceIn(0f, maxOffsetPx)
             val offsetDp = with(density) { offsetPx.toDp() }
+
+            val bottomOffsetDp = with(density) { bottomControlHeight.toDp() } + 8.dp
 
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 108.dp, start = offsetDp)
+                    .padding(bottom = bottomOffsetDp, start = offsetDp)
             ) {
                 Box(
                     modifier = Modifier
@@ -830,7 +831,7 @@ fun PlayerScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = formatDuration(seekPreviewPosition),
+                            text = "${formatDuration(seekPreviewPosition)} / ${formatDuration(currentDuration)}",
                             color = Color.White,
                             style = MaterialTheme.typography.labelSmall
                         )
