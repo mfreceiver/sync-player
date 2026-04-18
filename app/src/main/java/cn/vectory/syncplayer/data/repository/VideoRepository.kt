@@ -79,4 +79,10 @@ class VideoRepository @Inject constructor(
         videoItemDao.getFlatItemsPaged(limit, offset)
 
     fun getFlatItemsFlow(): Flow<List<VideoItemEntity>> = videoItemDao.getFlatItemsFlow()
+
+    suspend fun getDirectChildThumbnails(folderPath: String, limit: Int = 4): List<String> =
+        videoItemDao.getDirectChildThumbnails(folderPath, limit)
+
+    suspend fun getDirectChildThumbnailsBatch(parentFolder: String): List<VideoItemDao.FolderThumbnailRow> =
+        videoItemDao.getDirectChildThumbnailsBatch(parentFolder)
 }

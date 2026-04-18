@@ -29,5 +29,6 @@ data class BrowseItem(
     val trashedCount: Int = 0,
     // Video metadata
     val hasGainAdjusted: Boolean = false,
-    val star: Int = 0
+    val star: Int = 0,
+    val thumbnailPaths: List<String> = emptyList()
 )

@@ -178,4 +178,34 @@ interface VideoItemDao {
         val isCompleted: Boolean,
         val isTrashed: Boolean
     )
+
+    @Query("""
+        SELECT thumbnailPath FROM video_item
+        WHERE thumbnailPath IS NOT NULL
+        AND CASE
+            WHEN :folderPath = '' THEN relativePath NOT LIKE '%/%'
+            ELSE relativePath LIKE :folderPath || '/%'
+                 AND SUBSTR(relativePath, LENGTH(:folderPath) + 2) NOT LIKE '%/%'
+        END
+        ORDER BY fileName ASC
+        LIMIT :limit
+    """)
+    suspend fun getDirectChildThumbnails(folderPath: String, limit: Int = 4): List<String>
+
+    data class FolderThumbnailRow(
+        val relativePath: String,
+        val thumbnailPath: String
+    )
+
+    @Query("""
+        SELECT relativePath, thumbnailPath FROM video_item
+        WHERE thumbnailPath IS NOT NULL
+        AND CASE
+            WHEN :parentFolder = '' THEN relativePath LIKE '%/%' AND relativePath NOT LIKE '%/%/%'
+            ELSE relativePath LIKE :parentFolder || '/%'
+                 AND SUBSTR(relativePath, LENGTH(:parentFolder) + 2) NOT LIKE '%/%'
+        END
+        ORDER BY relativePath
+    """)
+    suspend fun getDirectChildThumbnailsBatch(parentFolder: String): List<FolderThumbnailRow>
 }
