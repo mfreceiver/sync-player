@@ -26,5 +26,6 @@ data class VideoItemEntity(
     val thumbnailPath: String? = null,
     val audioGainDb: Float? = null,
     val dateSynced: Long = System.currentTimeMillis(),
-    val remoteModifiedTime: Long? = null
+    val remoteModifiedTime: Long? = null,
+    val star: Int = 0
 )

@@ -33,7 +33,7 @@ object DatabaseModule {
             AppDatabase::class.java,
             "sync-player.db"
         )
-            .addMigrations(MIGRATION_9_10, MIGRATION_10_11)
+            .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
             .build()
     }
 
@@ -101,6 +101,13 @@ object DatabaseModule {
         override fun migrate(db: SupportSQLiteDatabase) {
             // Create index on syncRelationId to speed up lookups by relation
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_video_item_syncRelationId` ON `video_item` (`syncRelationId`)")
+        }
+    }
+
+    // Migration from 11 to 12: add star column to video_item
+    private val MIGRATION_11_12 = object : Migration(11, 12) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE video_item ADD COLUMN star INTEGER NOT NULL DEFAULT 0")
         }
     }
 }
