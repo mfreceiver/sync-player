@@ -75,6 +75,15 @@ class SyncRelationEditViewModel @Inject constructor(
     private val _browseError = MutableStateFlow<RemoteBrowseError?>(null)
     val browseError = _browseError.asStateFlow()
 
+    private val _isBrowsing = MutableStateFlow(false)
+    val isBrowsing = _isBrowsing.asStateFlow()
+
+    private val _isTesting = MutableStateFlow(false)
+    val isTesting = _isTesting.asStateFlow()
+
+    private val _testResult = MutableStateFlow<String?>(null)
+    val testResult = _testResult.asStateFlow()
+
     init {
         loadSources()
         if (relationId > 0) loadRelation()
@@ -157,26 +166,62 @@ class SyncRelationEditViewModel @Inject constructor(
             }
             _error.value = null
             _browseError.value = null
+            _isBrowsing.value = true
+            val client = when (source.protocol) {
+                SyncProtocol.SMB -> smbFileClient
+                SyncProtocol.SFTP -> sftpFileClient
+            }
             try {
-                val client = when (source.protocol) {
-                    SyncProtocol.SMB -> smbFileClient
-                    SyncProtocol.SFTP -> sftpFileClient
-                }
                 client.connect(source, _currentRemoteBrowsePath.value)
                 _remoteDirectories.value = client.listDirectories(_currentRemoteBrowsePath.value)
-                client.disconnect()
             } catch (e: Exception) {
                 _browseError.value = classifyRemoteError(e)
-                try { when (source.protocol) {
-                    SyncProtocol.SMB -> smbFileClient.disconnect()
-                    SyncProtocol.SFTP -> sftpFileClient.disconnect()
-                } } catch (_: Exception) {}
+                _remoteDirectories.value = emptyList()
+            } finally {
+                _isBrowsing.value = false
+                try { client.disconnect() } catch (_: Exception) {}
             }
         }
     }
 
     fun clearBrowseError() {
         _browseError.value = null
+    }
+
+    fun testRemotePath() {
+        viewModelScope.launch {
+            val sourceId = _selectedSourceId.value
+            val source = _availableSources.value.find { it.id == sourceId }
+            if (source == null) {
+                _testResult.value = "请先选择数据源"
+                return@launch
+            }
+            val path = _remotePath.value.trim()
+            if (path.isBlank()) {
+                _testResult.value = "请先输入远端目录"
+                return@launch
+            }
+            _isTesting.value = true
+            _testResult.value = null
+            val client = when (source.protocol) {
+                SyncProtocol.SMB -> smbFileClient
+                SyncProtocol.SFTP -> sftpFileClient
+            }
+            try {
+                client.connect(source, path)
+                client.listDirectories(path)
+                _testResult.value = "目录可访问"
+            } catch (e: Exception) {
+                _testResult.value = when (classifyRemoteError(e)) {
+                    RemoteBrowseError.PATH_NOT_FOUND -> "目录不存在"
+                    RemoteBrowseError.TIMEOUT -> "连接超时，请检查网络"
+                    RemoteBrowseError.OTHER -> "无法访问: ${e.message}"
+                }
+            } finally {
+                _isTesting.value = false
+                try { client.disconnect() } catch (_: Exception) {}
+            }
+        }
     }
 
     fun navigateRemoteUp() {

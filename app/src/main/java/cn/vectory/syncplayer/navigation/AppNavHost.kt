@@ -21,7 +21,6 @@ import cn.vectory.syncplayer.settings.SyncSourceEditScreen
 import cn.vectory.syncplayer.settings.SyncRelationListScreen
 import cn.vectory.syncplayer.settings.SyncRelationEditScreen
 import cn.vectory.syncplayer.settings.SettingsScreen
-import cn.vectory.syncplayer.settings.AboutScreen
 import cn.vectory.syncplayer.settings.SettingsViewModel
 import cn.vectory.syncplayer.settings.GainAnalysisScreen
 import cn.vectory.syncplayer.settings.MetadataRebuildScreen
@@ -69,9 +68,6 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                 },
                 onNavigateToPlaybackSettings = {
                     navController.navigate(Route.Settings.route, drawerNavOptions)
-                },
-                onNavigateToAbout = {
-                    navController.navigate(Route.About.route, drawerNavOptions)
                 },
                 onNavigateToSyncPreview = { relationId ->
                     navController.navigate(Route.SyncPreview.create(relationId, "delete"))
@@ -212,14 +208,6 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
 
         composable(Route.MetadataRebuild.route) {
             MetadataRebuildScreen(onBack = { navController.popBackStack() })
-        }
-
-        composable(Route.About.route) {
-            val viewModel: SettingsViewModel = hiltViewModel()
-            AboutScreen(
-                viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() }
-            )
         }
     }
 }

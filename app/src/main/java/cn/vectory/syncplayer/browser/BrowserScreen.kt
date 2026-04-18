@@ -82,7 +82,6 @@ fun BrowserScreen(
     onNavigateToSyncSourceList: () -> Unit,
     onNavigateToSyncRelationList: () -> Unit,
     onNavigateToPlaybackSettings: () -> Unit,
-    onNavigateToAbout: () -> Unit,
     onNavigateToSyncPreview: (relationId: Long) -> Unit,
 ) {
     val browseItems by viewModel.browseItems.collectAsState()
@@ -177,18 +176,6 @@ fun BrowserScreen(
                         scope.launch {
                             drawerState.close()
                             onNavigateToPlaybackSettings()
-                        }
-                    },
-                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
-                )
-                NavigationDrawerItem(
-                    icon = { Icon(Icons.Default.Info, contentDescription = null) },
-                    label = { Text("关于") },
-                    selected = false,
-                    onClick = {
-                        scope.launch {
-                            drawerState.close()
-                            onNavigateToAbout()
                         }
                     },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
@@ -876,6 +863,7 @@ fun BrowserScreen(
                 directoryTree = tree,
                 currentPath = folder,
                 onNavigate = { path ->
+                    viewModel.clearScrollPosition(path)
                     viewModel.setFolder(path)
                 },
                 onDismiss = { showDirectoryTree = false },

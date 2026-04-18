@@ -6,11 +6,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -18,6 +20,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.data.model.SyncRelationWithSource
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
+import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -93,22 +96,58 @@ fun SyncRelationListScreen(
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(item.relation.name, style = MaterialTheme.typography.titleMedium)
                             Spacer(Modifier.height(4.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Filled.Cloud,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "${item.sourceName}  ${item.relation.remotePath}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                             Text(
-                                "${item.sourceName} → ${item.relation.remotePath}",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                "本地: ${item.relation.localBasePath}",
-                                style = MaterialTheme.typography.bodyMedium
+                                item.relation.localBasePath,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Spacer(Modifier.height(4.dp))
+
+                            val extendedColors = LocalExtendedColors.current
                             val lastSync = item.relation.lastSyncTime
+                            val lastResult = item.relation.lastSyncResult
+                            val isSuccess = lastResult != null && !lastResult.contains("失败")
+                            val resultColor = when {
+                                lastResult == null -> MaterialTheme.colorScheme.onSurfaceVariant
+                                isSuccess -> extendedColors.successGreen
+                                else -> MaterialTheme.colorScheme.error
+                            }
+
                             Text(
                                 "上次同步: ${lastSync?.let {
                                     SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(it)
                                 } ?: "从未同步"}",
-                                style = MaterialTheme.typography.bodySmall
+                                style = MaterialTheme.typography.bodySmall,
+                                color = resultColor
                             )
+
+                            if (lastResult != null && !isSuccess) {
+                                Text(
+                                    lastResult,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    maxLines = 2
+                                )
+                            }
                             Spacer(Modifier.height(12.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),

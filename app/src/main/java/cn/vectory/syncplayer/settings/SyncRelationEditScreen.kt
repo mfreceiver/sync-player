@@ -43,6 +43,9 @@ fun SyncRelationEditScreen(
     val currentLocalPath by viewModel.currentLocalBrowsePath.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val browseError by viewModel.browseError.collectAsStateWithLifecycle()
+    val isBrowsing by viewModel.isBrowsing.collectAsStateWithLifecycle()
+    val isTesting by viewModel.isTesting.collectAsStateWithLifecycle()
+    val testResult by viewModel.testResult.collectAsStateWithLifecycle()
     val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
     val saveResult by viewModel.saveResult.collectAsStateWithLifecycle()
 
@@ -101,15 +104,17 @@ fun SyncRelationEditScreen(
                 singleLine = true
             )
 
-            Box {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { sourceExpanded = true }
+            ) {
                 OutlinedTextField(
                     value = sources.find { it.id == selectedSourceId }?.name ?: "请选择数据源",
                     onValueChange = {},
                     label = { Text("数据源") },
                     readOnly = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { sourceExpanded = true },
+                    modifier = Modifier.fillMaxWidth(),
                     trailingIcon = {
                         IconButton(onClick = { sourceExpanded = true }) {
                             Icon(Icons.Filled.ArrowDropDown, contentDescription = "展开")
@@ -148,6 +153,28 @@ fun SyncRelationEditScreen(
                 }) {
                     Icon(Icons.Filled.FolderOpen, contentDescription = "浏览")
                 }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { viewModel.testRemotePath() },
+                    enabled = !isTesting && selectedSourceId > 0L && remotePath.isNotBlank(),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(if (isTesting) "测试中…" else "测试远端目录")
+                }
+            }
+
+            testResult?.let {
+                Text(
+                    it,
+                    color = if (it.contains("可访问")) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
 
             Row(
@@ -245,21 +272,30 @@ fun SyncRelationEditScreen(
                             Text(".. (上级目录)")
                         }
                     }
-                    LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
-                        items(remoteDirs) { dir ->
-                            TextButton(
-                                onClick = { viewModel.navigateRemoteInto(dir.name) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        Icons.Filled.Folder,
-                                        contentDescription = null,
-                                        tint = extendedColors.folderAmber,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(dir.name)
+                    if (isBrowsing) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        }
+                    } else {
+                        LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                            items(remoteDirs) { dir ->
+                                TextButton(
+                                    onClick = { viewModel.navigateRemoteInto(dir.name) },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Filled.Folder,
+                                            contentDescription = null,
+                                            tint = extendedColors.folderAmber,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(dir.name)
+                                    }
                                 }
                             }
                         }

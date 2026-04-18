@@ -97,6 +97,10 @@ class SyncPreviewViewModel @Inject constructor(
                     }
                     _toDownload.value = emptyList()
                     _toDelete.value = actions
+                    if (actions.isEmpty() && errMsg == null) {
+                        syncRelationRepository.updateLastSync(relationId, "已同步，无需操作")
+                        _syncComplete.value = true
+                    }
                 } else {
                     val (downloads, deletes) = syncEngine.dryRun(relationId)
                     _toDownload.value = downloads
@@ -104,6 +108,9 @@ class SyncPreviewViewModel @Inject constructor(
                     val phase = syncEngine.progress.value.phase
                     if (phase == SyncPhase.FAILED) {
                         _error.value = "连接远程服务器失败，请检查网络连接和服务器配置"
+                    } else if (downloads.isEmpty() && deletes.isEmpty()) {
+                        syncRelationRepository.updateLastSync(relationId, "已同步，无需操作")
+                        _syncComplete.value = true
                     }
                 }
                 _previewLoaded.value = true
