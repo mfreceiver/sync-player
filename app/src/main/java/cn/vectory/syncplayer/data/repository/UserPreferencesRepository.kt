@@ -29,6 +29,7 @@ class UserPreferencesRepository @Inject constructor(
         val ORIENTATION = stringPreferencesKey("orientation")
         val DEFAULT_SORT_MODE = stringPreferencesKey("default_sort_mode")
         val DEFAULT_FILTER = stringPreferencesKey("default_filter")
+        val BROWSE_MODE = stringPreferencesKey("browse_mode")
         val MAX_CONCURRENT_DOWNLOADS = intPreferencesKey("max_concurrent_downloads")
         val VIEW_MODE = stringPreferencesKey("view_mode")
         val GRID_COLUMNS = intPreferencesKey("grid_columns")
@@ -62,6 +63,10 @@ class UserPreferencesRepository @Inject constructor(
 
     val gridColumns: Flow<Int> = dataStore.data.map {
         (it[Keys.GRID_COLUMNS] ?: 3).coerceIn(1, 5)
+    }
+
+    val browseMode: Flow<String> = dataStore.data.map {
+        it[Keys.BROWSE_MODE] ?: "DIRECTORY"
     }
 
     val connectionTimeout: Flow<Int> = dataStore.data.map {
@@ -103,6 +108,8 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun getSafProviderEnabled(): Boolean = safProviderEnabled.first()
 
     suspend fun getSecureLockEnabled(): Boolean = secureLockEnabled.first()
+
+    suspend fun getBrowseMode(): String = browseMode.first()
 
     suspend fun setLongPressSpeed(speed: Float) {
         dataStore.edit { it[Keys.LONG_PRESS_SPEED] = speed }
@@ -154,5 +161,9 @@ class UserPreferencesRepository @Inject constructor(
 
     suspend fun setSecureLockEnabled(enabled: Boolean) {
         dataStore.edit { it[Keys.SECURE_LOCK_ENABLED] = enabled }
+    }
+
+    suspend fun setBrowseMode(mode: String) {
+        dataStore.edit { it[Keys.BROWSE_MODE] = mode }
     }
 }

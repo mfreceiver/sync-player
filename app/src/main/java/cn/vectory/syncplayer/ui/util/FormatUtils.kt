@@ -1,5 +1,17 @@
 package cn.vectory.syncplayer.ui.util
 
+import java.text.Collator
+import java.util.Locale
+
+private val collator: Collator = Collator.getInstance(Locale.CHINA).apply {
+    strength = Collator.PRIMARY
+    decomposition = Collator.CANONICAL_DECOMPOSITION
+}
+
+internal val fileNameComparator: Comparator<String> = Comparator { a, b ->
+    collator.compare(a, b)
+}
+
 internal fun formatDuration(ms: Long?): String {
     if (ms == null) return ""
     if (ms <= 0) return "0:00"

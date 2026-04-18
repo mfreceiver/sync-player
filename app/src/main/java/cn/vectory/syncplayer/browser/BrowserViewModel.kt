@@ -12,10 +12,13 @@ import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.data.model.SyncRelationWithSource
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.VideoMetadataExtractor
 import cn.vectory.syncplayer.ui.util.getMimeType
 import cn.vectory.syncplayer.ui.util.isVideoFile
+import cn.vectory.syncplayer.ui.util.fileNameComparator
+import cn.vectory.syncplayer.ui.components.DirectoryNode
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +48,10 @@ class BrowserViewModel @Inject constructor(
     enum class SortMode { FILENAME_ASC, FILENAME_DESC, DURATION_ASC, DURATION_DESC }
     enum class BrowseFilter { ALL, VIDEO_ONLY, UNWATCHED }
     enum class ViewMode { LIST, GRID }
+    // Star-based filtering for videos
+    enum class StarFilterMode { OFF, EQ, GT, LT }
+    // Browse mode controls how items are presented
+    enum class BrowseMode { DIRECTORY, FILE }
 
     private val _currentFolder = MutableStateFlow("")
     val currentFolder: StateFlow<String> = _currentFolder.asStateFlow()
@@ -54,6 +61,19 @@ class BrowserViewModel @Inject constructor(
 
     private val _filter = MutableStateFlow(BrowseFilter.ALL)
     val filter: StateFlow<BrowseFilter> = _filter.asStateFlow()
+
+    // Star and browse mode related state
+    private val _starFilterMode = MutableStateFlow(StarFilterMode.OFF)
+    val starFilterMode: StateFlow<StarFilterMode> = _starFilterMode.asStateFlow()
+
+    private val _starFilterValue = MutableStateFlow(0)
+    val starFilterValue: StateFlow<Int> = _starFilterValue.asStateFlow()
+
+    private val _browseMode = MutableStateFlow(BrowseMode.DIRECTORY)
+    val browseMode: StateFlow<BrowseMode> = _browseMode.asStateFlow()
+
+    private val _flatTotalCount = MutableStateFlow(0)
+    val flatTotalCount: StateFlow<Int> = _flatTotalCount.asStateFlow()
 
     private val _viewMode = MutableStateFlow(ViewMode.LIST)
     val viewMode: StateFlow<ViewMode> = _viewMode.asStateFlow()
@@ -100,6 +120,11 @@ class BrowserViewModel @Inject constructor(
                 ViewMode.LIST
             }
             _gridColumns.value = userPrefs.getGridColumns()
+            _browseMode.value = try {
+                BrowseMode.valueOf(userPrefs.getBrowseMode())
+            } catch (_: Exception) {
+                BrowseMode.DIRECTORY
+            }
         }
     }
 
@@ -150,7 +175,10 @@ class BrowserViewModel @Inject constructor(
         basePaths
     ) { folder, mode, filterVal, records, relations ->
         val baseDirSet = relations.map { it.relation.localBasePath }.toSet()
-        buildBrowseItems(folder, mode, filterVal, records, baseDirSet)
+        val starMode = _starFilterMode.value
+        val starValue = _starFilterValue.value
+        val browseModeVal = _browseMode.value
+        buildBrowseItems(folder, mode, filterVal, starMode, starValue, browseModeVal, records, baseDirSet)
     }
     .debounce(300)
     .onEach { _browseItemsFolder.value = _currentFolder.value }
@@ -160,9 +188,68 @@ class BrowserViewModel @Inject constructor(
         folder: String,
         mode: SortMode,
         filterVal: BrowseFilter,
+        starMode: StarFilterMode,
+        starValue: Int,
+        browseModeVal: BrowseMode,
         records: List<PlaybackRecordEntity>,
         baseDirSet: Set<String>
     ): List<BrowseItem> = withContext(Dispatchers.IO) {
+        // === FILE MODE: flat list, no folders ===
+        if (browseModeVal == BrowseMode.FILE) {
+            _flatTotalCount.value = videoRepository.getTotalItemCount()
+            val videoEntities = videoRepository.getFlatItemsFlow().first()
+            val allRecords = playbackRepository.getAllFlow().first()
+            val recordMap = allRecords.associateBy { it.videoItemId }
+
+            val allVideos = videoEntities.map { video ->
+                val record = recordMap[video.id]
+                BrowseItem(
+                    videoItemId = video.id,
+                    name = video.fileName,
+                    relativePath = video.relativePath,
+                    isDirectory = false,
+                    fileSize = video.fileSize,
+                    duration = video.duration,
+                    width = video.width,
+                    height = video.height,
+                    bitrate = video.bitrate,
+                    frameRate = video.frameRate,
+                    thumbnailPath = video.thumbnailPath,
+                    playbackPosition = record?.position ?: 0,
+                    playbackDuration = record?.duration ?: 0,
+                    isCompleted = record?.isCompleted ?: false,
+                    isTrashed = record?.isTrashed ?: false,
+                    hasGainAdjusted = video.audioGainDb != null,
+                    star = video.star
+                )
+            }
+
+            val filtered = when (filterVal) {
+                BrowseFilter.ALL -> allVideos
+                BrowseFilter.VIDEO_ONLY -> allVideos.filter { isVideoFile(it.name) }
+                BrowseFilter.UNWATCHED -> allVideos.filter {
+                    isVideoFile(it.name) && it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
+                }
+            }
+
+            val starFiltered = when (starMode) {
+                StarFilterMode.OFF -> filtered
+                StarFilterMode.EQ -> filtered.filter { it.star == starValue }
+                StarFilterMode.GT -> filtered.filter { it.star > starValue }
+                StarFilterMode.LT -> filtered.filter { it.star < starValue }
+            }
+
+            _hiddenByFilterCount.value = (allVideos.size - starFiltered.size).coerceAtLeast(0)
+
+            return@withContext when (mode) {
+            SortMode.FILENAME_ASC -> starFiltered.sortedWith(compareBy(fileNameComparator) { it.name })
+            SortMode.FILENAME_DESC -> starFiltered.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
+                SortMode.DURATION_ASC -> starFiltered.sortedBy { it.duration ?: 0L }
+                SortMode.DURATION_DESC -> starFiltered.sortedByDescending { it.duration ?: 0L }
+            }
+        }
+
+        // === DIRECTORY MODE: original logic with star filtering added ===
         val dbFolderNames = videoRepository.getSubFolders(folder).first()
 
         val recordMap = records.associateBy { it.videoItemId }
@@ -174,7 +261,7 @@ class BrowserViewModel @Inject constructor(
             ?.toSet()
             ?: emptySet()
 
-        val allFolderNames = (dbFolderNames.toSet() + physicalFolderNames).sortedBy { it.lowercase() }
+        val allFolderNames = (dbFolderNames.toSet() + physicalFolderNames).sortedWith(fileNameComparator)
 
         val folderHasSubDirs = allFolderNames.associateWith { folderName ->
             val fullPath = if (folder.isEmpty()) folderName else "$folder/$folderName"
@@ -251,13 +338,12 @@ class BrowserViewModel @Inject constructor(
                     playbackDuration = record?.duration ?: 0,
                     isCompleted = record?.isCompleted ?: false,
                     isTrashed = record?.isTrashed ?: false,
-                    hasGainAdjusted = video.audioGainDb != null
+                    hasGainAdjusted = video.audioGainDb != null,
+                    star = video.star
                 )
             }
 
         val allVideos = videos + diskOnlyItems
-
-        // repairMissingThumbnails(videoEntities) moved to per-folder trigger
 
         val filteredVideos = when (filterVal) {
             BrowseFilter.ALL -> allVideos
@@ -266,12 +352,20 @@ class BrowserViewModel @Inject constructor(
                 isVideoFile(it.name) && it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
             }
         }
-        val sortedFolders = folders.sortedBy { it.name.lowercase() }
+
+        val starFilteredVideos = when (starMode) {
+            StarFilterMode.OFF -> filteredVideos
+            StarFilterMode.EQ -> filteredVideos.filter { it.star == starValue }
+            StarFilterMode.GT -> filteredVideos.filter { it.star > starValue }
+            StarFilterMode.LT -> filteredVideos.filter { it.star < starValue }
+        }
+
+        val sortedFolders = folders.sortedWith(compareBy(fileNameComparator) { it.name })
         val sortedVideos = when (mode) {
-            SortMode.FILENAME_ASC -> filteredVideos.sortedBy { it.name.lowercase() }
-            SortMode.FILENAME_DESC -> filteredVideos.sortedByDescending { it.name.lowercase() }
-            SortMode.DURATION_ASC -> filteredVideos.sortedBy { it.duration ?: 0L }
-            SortMode.DURATION_DESC -> filteredVideos.sortedByDescending { it.duration ?: 0L }
+            SortMode.FILENAME_ASC -> starFilteredVideos.sortedWith(compareBy(fileNameComparator) { it.name })
+            SortMode.FILENAME_DESC -> starFilteredVideos.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
+            SortMode.DURATION_ASC -> starFilteredVideos.sortedBy { it.duration ?: 0L }
+            SortMode.DURATION_DESC -> starFilteredVideos.sortedByDescending { it.duration ?: 0L }
         }
 
         val totalBeforeFilter = sortedFolders.size + allVideos.size
@@ -322,6 +416,78 @@ class BrowserViewModel @Inject constructor(
     fun setGridColumns(columns: Int) {
         _gridColumns.value = columns.coerceIn(1, 5)
         viewModelScope.launch { userPrefs.setGridColumns(columns) }
+    }
+
+    // Star filter controls
+    fun setStarFilterMode(mode: StarFilterMode) {
+        _starFilterMode.value = mode
+    }
+
+    fun setStarFilterValue(value: Int) {
+        _starFilterValue.value = value
+    }
+
+    fun setBrowseMode(mode: BrowseMode) {
+        _browseMode.value = mode
+        viewModelScope.launch { userPrefs.setBrowseMode(mode.name) }
+    }
+
+    fun updateStar(videoItemId: Long, star: Int) {
+        viewModelScope.launch {
+            videoRepository.updateStar(videoItemId, star)
+            _refreshTrigger.value++
+        }
+    }
+
+    fun updateStarByPath(relativePath: String, star: Int) {
+        viewModelScope.launch {
+            videoRepository.updateStarByPath(relativePath, star)
+            _refreshTrigger.value++
+        }
+    }
+
+    suspend fun getRecursiveFolderStats(folderPath: String) = videoRepository.getRecursiveFolderStats(folderPath)
+
+    suspend fun buildDirectoryTree(): List<DirectoryNode> {
+        val allPaths = videoRepository.getAllRelativePathsList()
+        val dirPaths = mutableSetOf<String>()
+        for (path in allPaths) {
+            var parent = path.substringBeforeLast('/')
+            while (parent.isNotEmpty()) {
+                dirPaths.add(parent)
+                parent = parent.substringBeforeLast('/')
+            }
+        }
+        val allDirs = dirPaths.sortedWith(fileNameComparator)
+        val basePathsSet = basePaths.value.map { it.relation.localBasePath }.toSet()
+
+        val rootChildren = mutableListOf<DirectoryNode>()
+        val nodeMap = mutableMapOf<String, DirectoryNode>()
+
+        for (dir in allDirs) {
+            val name = dir.substringAfterLast('/')
+            val node = DirectoryNode(
+                name = name,
+                fullPath = dir,
+                isSyncBaseDir = basePathsSet.contains(dir)
+            )
+            nodeMap[dir] = node
+            val parentPath = dir.substringBeforeLast('/')
+            if (parentPath.isEmpty()) {
+                rootChildren.add(node)
+            } else {
+                nodeMap[parentPath]?.children?.add(node)
+            }
+        }
+
+        return rootChildren
+    }
+
+    fun markFolderRead(folderPath: String, read: Boolean) {
+        viewModelScope.launch {
+            playbackRepository.markFolderCompleted(folderPath, read)
+            _refreshTrigger.value++
+        }
     }
 
     fun createFolder(parentPath: String, folderName: String) {

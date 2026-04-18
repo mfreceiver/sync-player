@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.ui.util.fileNameComparator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -79,7 +80,7 @@ class SearchViewModel @Inject constructor(
                     relativePath = folderPath,
                     isDirectory = true
                 )
-            }.sortedBy { it.name.lowercase() }
+            }.sortedWith(compareBy(fileNameComparator) { it.name })
             result.addAll(matchingFolders)
         }
 
@@ -103,7 +104,7 @@ class SearchViewModel @Inject constructor(
                     isCompleted = record?.isCompleted ?: false,
                     isTrashed = record?.isTrashed ?: false
                 )
-            }.sortedBy { it.name.lowercase() }
+            }.sortedWith(compareBy(fileNameComparator) { it.name })
             result.addAll(matchingFiles)
         }
 
