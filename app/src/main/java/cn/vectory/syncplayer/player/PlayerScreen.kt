@@ -393,7 +393,10 @@ LaunchedEffect(exoPlayer) {
                         showOverlay(PlayerOverlay.NoNext)
                     }
                 }
-                DoubleTapZone.CENTER -> {
+                DoubleTapZone.CENTER_TOP -> {
+                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                }
+                DoubleTapZone.CENTER_BOTTOM -> {
                     if (quickRecycle) {
                         val wasTrashed = playbackRecord?.isTrashed ?: false
                         showOverlay(PlayerOverlay.TrashAction(!wasTrashed))
@@ -567,9 +570,7 @@ LaunchedEffect(exoPlayer) {
         val currentSpeedOverlay = speedOverlayMultiplier
         if (currentSpeedOverlay != null) {
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding(),
+                modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.TopCenter
             ) {
                 Surface(
@@ -578,8 +579,7 @@ LaunchedEffect(exoPlayer) {
                     tonalElevation = 0.dp
                 ) {
                     Row(
-                        modifier = Modifier
-                            .padding(top = 56.dp, start = 20.dp, end = 20.dp, bottom = 12.dp),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {

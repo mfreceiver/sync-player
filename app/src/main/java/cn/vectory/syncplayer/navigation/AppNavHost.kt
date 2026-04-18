@@ -103,7 +103,11 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             )
         }
 
-        composable(Route.SyncSourceList.route) {
+        composable(
+            route = Route.SyncSourceList.route,
+            enterTransition = { fadeIn(tween(150)) },
+            exitTransition = { fadeOut(tween(100)) }
+        ) {
             SyncSourceListScreen(
                 onNavigateBack = { navController.popBackStack() },
                 onNavigateToEdit = { sourceId ->
@@ -119,7 +123,9 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             route = Route.SyncSourceEdit.route,
             arguments = listOf(
                 navArgument("sourceId") { type = NavType.LongType; defaultValue = 0L }
-            )
+            ),
+            enterTransition = { fadeIn(tween(150)) },
+            exitTransition = { fadeOut(tween(100)) }
         ) {
             SyncSourceEditScreen(
                 onNavigateBack = { navController.popBackStack() },
@@ -127,7 +133,11 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             )
         }
 
-        composable(Route.SyncRelationList.route) {
+        composable(
+            route = Route.SyncRelationList.route,
+            enterTransition = { fadeIn(tween(150)) },
+            exitTransition = { fadeOut(tween(100)) }
+        ) {
             SyncRelationListScreen(
                 onNavigateBack = { navController.popBackStack() },
                 onNavigateToEdit = { relationId ->
@@ -146,7 +156,9 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             route = Route.SyncRelationEdit.route,
             arguments = listOf(
                 navArgument("relationId") { type = NavType.LongType; defaultValue = 0L }
-            )
+            ),
+            enterTransition = { fadeIn(tween(150)) },
+            exitTransition = { fadeOut(tween(100)) }
         ) {
             SyncRelationEditScreen(
                 onNavigateBack = { navController.popBackStack() },
@@ -189,7 +201,11 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             )
         }
 
-        composable(Route.Settings.route) {
+        composable(
+            route = Route.Settings.route,
+            enterTransition = { fadeIn(tween(150)) },
+            exitTransition = { fadeOut(tween(100)) }
+        ) {
             val viewModel: SettingsViewModel = hiltViewModel()
             SettingsScreen(
                 viewModel = viewModel,

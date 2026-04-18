@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,7 +31,7 @@ class SyncSourceListViewModel @Inject constructor(
     private val syncSourceRepository: SyncSourceRepository
 ) : ViewModel() {
     val sources: StateFlow<List<SyncSource>> = syncSourceRepository.getAllFlow()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,6 +88,13 @@ fun SyncSourceListScreen(
                         ListItem(
                             headlineContent = { Text(source.name) },
                             supportingContent = { Text("${source.protocol.name} · ${source.host}:${source.port}") },
+                            leadingContent = {
+                                Icon(
+                                    imageVector = Icons.Default.Cloud,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
                             trailingContent = {
                                 IconButton(onClick = { onNavigateToEdit(source.id) }) {
                                     Icon(

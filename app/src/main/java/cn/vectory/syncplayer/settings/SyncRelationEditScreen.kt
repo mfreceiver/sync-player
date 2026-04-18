@@ -176,7 +176,6 @@ fun SyncRelationEditScreen(
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -199,7 +198,6 @@ fun SyncRelationEditScreen(
             }
 
             if (viewModel.relationId > 0L) {
-                Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = { showDeleteDialog = true },
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
@@ -216,7 +214,6 @@ fun SyncRelationEditScreen(
             }
 
             testResult?.let {
-                Spacer(Modifier.height(8.dp))
                 Text(
                     it,
                     color = if (it.contains("可访问")) MaterialTheme.colorScheme.primary
@@ -225,11 +222,9 @@ fun SyncRelationEditScreen(
                 )
             }
             error?.let {
-                Spacer(Modifier.height(4.dp))
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
             saveResult?.let {
-                Spacer(Modifier.height(4.dp))
                 Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
             }
         }

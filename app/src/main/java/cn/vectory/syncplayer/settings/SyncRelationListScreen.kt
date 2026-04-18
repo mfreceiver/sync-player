@@ -52,7 +52,7 @@ fun SyncRelationListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("同步关系管理") },
+                title = { Text("同步关系") },
                 navigationIcon = {
                     IconButton(
                         onClick = {
@@ -101,26 +101,22 @@ fun SyncRelationListScreen(
                         ListItem(
                             headlineContent = { Text(item.relation.name) },
                             supportingContent = {
-                                Column {
-                                    Text("${item.sourceName} · ${item.relation.remotePath}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(
-                                        "上次同步: ${lastSync?.let {
-                                            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(it)
-                                        } ?: "从未同步"}",
-                                        color = resultColor
-                                    )
-                                    if (lastResult != null && !isSuccess) {
-                                        Text(lastResult, color = MaterialTheme.colorScheme.error, maxLines = 2)
-                                    }
+                                Text(
+                                    "上次同步: ${lastSync?.let {
+                                        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(it)
+                                    } ?: "从未同步"}",
+                                    color = resultColor
+                                )
+                                if (lastResult != null && !isSuccess) {
+                                    Text(lastResult, color = MaterialTheme.colorScheme.error, maxLines = 2)
                                 }
                             },
                             leadingContent = {
-                                Box(
-                                    modifier = Modifier.fillMaxHeight(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(Icons.Default.Sync, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                }
+                                Icon(
+                                    Icons.Default.Sync,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
                             },
                             trailingContent = {
                                 IconButton(onClick = { onNavigateToEdit(item.relation.id) }) {
@@ -129,7 +125,6 @@ fun SyncRelationListScreen(
                             },
                             modifier = Modifier.clickable { onNavigateToSyncPreview(item.relation.id) }
                         )
-                        HorizontalDivider()
                     }
                 }
             }

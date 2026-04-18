@@ -52,7 +52,7 @@ class GesturePlayerView @JvmOverloads constructor(
         fun onHideOverlay() {}
     }
 
-    enum class DoubleTapZone { PREVIOUS, NEXT, CENTER }
+    enum class DoubleTapZone { PREVIOUS, NEXT, CENTER_TOP, CENTER_BOTTOM }
 
     fun setOnSingleTapCallback(callback: (() -> Unit)?) {
         singleTapCallback = callback
@@ -130,11 +130,14 @@ class GesturePlayerView @JvmOverloads constructor(
 
         override fun onDoubleTap(e: MotionEvent): Boolean {
             val x = e.x
+            val y = e.y
             val w = width.toFloat()
+            val h = height.toFloat()
             val zone = when {
                 x < w / 4f -> DoubleTapZone.PREVIOUS
                 x > w * 3f / 4f -> DoubleTapZone.NEXT
-                else -> DoubleTapZone.CENTER
+                y < h / 2f -> DoubleTapZone.CENTER_TOP
+                else -> DoubleTapZone.CENTER_BOTTOM
             }
             gestureListener?.onDoubleTap(zone)
             return true
