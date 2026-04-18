@@ -91,7 +91,7 @@ fun PlayerScreen(
     viewModel: PlayerViewModel,
     videoItemId: Long,
     onExit: () -> Unit,
-) {
+                        ) {
     val context = LocalContext.current
     val activity = context as? android.app.Activity ?: return
     val coroutineScope = rememberCoroutineScope()
@@ -122,6 +122,9 @@ fun PlayerScreen(
 
     var isHighSpeedSeeking by remember { mutableStateOf(false) }
     var highSpeedSeekPosition by remember { mutableLongStateOf(0L) }
+
+    // New: show a top-position speed overlay during long-press gestures (until release)
+    var speedOverlayMultiplier by remember { mutableStateOf<Float?>(null) }
 
     var originalBrightness by remember { mutableFloatStateOf(-1f) }
 
@@ -407,14 +410,17 @@ LaunchedEffect(exoPlayer) {
                 isGestureSeeking = true
                 gestureSeekPosition = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
             }
-            showOverlay(PlayerOverlay.Seek(positionMs, durationMs))
+            // Do not show a centered bubble for gesture seek; progress will be reflected in the top bar
         }
         override fun onLongPressSpeedOverlay(multiplier: Float) {
-            showOverlay(PlayerOverlay.SpeedUp(multiplier))
+            // Move speed overlay to the top and keep visible until release
+            speedOverlayMultiplier = multiplier
         }
         override fun onHideOverlay() {
             overlayHideJob.value?.cancel()
             currentOverlay = null
+            // Clear any persistent speed overlay when overlay is hidden
+            speedOverlayMultiplier = null
         }
     }
 
@@ -431,7 +437,7 @@ LaunchedEffect(exoPlayer) {
             modifier = Modifier.fillMaxSize()
         )
 
-        val topBarVisible = !isFullscreen && (showControls || isHighSpeedSeeking)
+        val topBarVisible = !isFullscreen && (showControls || isHighSpeedSeeking || isGestureSeeking)
 
         if (topBarVisible) {
             Column(
@@ -497,7 +503,6 @@ LaunchedEffect(exoPlayer) {
                                     val targetMs = (basePosition + ratio * dur).toLong()
                                         .coerceIn(0, dur)
                                     highSpeedSeekPosition = targetMs
-                                    showOverlay(PlayerOverlay.Seek(targetMs, dur))
                                 } while (change.pressed)
 
                                 val finalTarget = highSpeedSeekPosition
@@ -558,6 +563,41 @@ LaunchedEffect(exoPlayer) {
         }
 
         PlayerOverlayView(currentOverlay)
+
+        // Top-position speed overlay (long-press) - show until release
+        val currentSpeedOverlay = speedOverlayMultiplier
+        if (currentSpeedOverlay != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding(),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color.Black.copy(alpha = 0.6f),
+                    tonalElevation = 0.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Speed,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = "${currentSpeedOverlay}X",
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
