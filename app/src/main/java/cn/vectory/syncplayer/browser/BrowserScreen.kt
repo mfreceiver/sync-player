@@ -849,24 +849,7 @@ fun BrowserScreen(
     if (showDirectoryTree) {
         val directoryTree = remember { mutableStateOf<List<DirectoryNode>?>(null) }
         LaunchedEffect(Unit) {
-            val rootChildren = viewModel.loadSubFolders("")
-            if (folder.isNotEmpty()) {
-                val segments = folder.split("/")
-                var currentPath = ""
-                var currentLevel = rootChildren.toMutableList()
-                for (segment in segments) {
-                    val targetPath = if (currentPath.isEmpty()) segment else "$currentPath/$segment"
-                    val targetNode = currentLevel.find { it.fullPath == targetPath }
-                    if (targetNode != null) {
-                        targetNode.isLoaded = true
-                        targetNode.isExpanded = true
-                        targetNode.children.addAll(viewModel.loadSubFolders(targetPath))
-                        currentLevel = targetNode.children
-                    }
-                    currentPath = targetPath
-                }
-            }
-            directoryTree.value = rootChildren
+            directoryTree.value = viewModel.loadSubFolders("")
         }
         val tree = directoryTree.value
         if (tree != null) {

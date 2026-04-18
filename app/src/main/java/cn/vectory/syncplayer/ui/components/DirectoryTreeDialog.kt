@@ -3,12 +3,12 @@ package cn.vectory.syncplayer.ui.components
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -47,24 +48,8 @@ import kotlinx.coroutines.launch
 data class DirectoryNode(
     val name: String,
     val fullPath: String,
-    val children: MutableList<DirectoryNode> = mutableListOf(),
-    val isSyncBaseDir: Boolean = false,
-    var isExpanded: Boolean = false,
-    var isLoaded: Boolean = false
-) {
-    /**
-     * Create an independent deep copy of this node tree.
-     * Used to trigger Compose recomposition when internal mutable state changes.
-     */
-    fun deepCopy(): DirectoryNode = DirectoryNode(
-        name = name,
-        fullPath = fullPath,
-        children = children.map { it.deepCopy() }.toMutableList(),
-        isSyncBaseDir = isSyncBaseDir,
-        isExpanded = isExpanded,
-        isLoaded = isLoaded
-    )
-}
+    val isSyncBaseDir: Boolean = false
+)
 
 @Composable
 internal fun DirectoryTreeDialog(
@@ -75,15 +60,44 @@ internal fun DirectoryTreeDialog(
     onLoadChildren: suspend (String) -> List<DirectoryNode>,
     modifier: Modifier = Modifier
 ) {
-    val treeState = remember(directoryTree) {
-        mutableStateOf(directoryTree.map { it.deepCopy() }.also { tree ->
-            expandAncestors(tree, currentPath)
-        })
-    }
-
     val selectedPath = remember { mutableStateOf(currentPath) }
     val scope = rememberCoroutineScope()
     val loadingPath = remember { mutableStateOf<String?>(null) }
+
+    val expandedPaths = remember { mutableStateMapOf<String, Boolean>() }
+    val childrenMap = remember { mutableStateMapOf<String, List<DirectoryNode>>() }
+
+    fun loadChildrenInto(node: DirectoryNode) {
+        if (childrenMap.containsKey(node.fullPath)) {
+            val isExpanded = expandedPaths[node.fullPath] == true
+            expandedPaths[node.fullPath] = !isExpanded
+            return
+        }
+        loadingPath.value = node.fullPath
+        scope.launch {
+            val children = onLoadChildren(node.fullPath)
+            childrenMap[node.fullPath] = children
+            expandedPaths[node.fullPath] = true
+            loadingPath.value = null
+        }
+    }
+
+    fun buildFlatList(): List<FlatEntry> {
+        val result = mutableListOf<FlatEntry>()
+        fun walk(nodes: List<DirectoryNode>, level: Int) {
+            for (node in nodes) {
+                val children = childrenMap[node.fullPath]
+                val isExpanded = expandedPaths[node.fullPath] == true
+                val isLeaf = children != null && children.isEmpty()
+                result.add(FlatEntry(node, level, isExpanded, isLeaf))
+                if (isExpanded && children != null) {
+                    walk(children, level + 1)
+                }
+            }
+        }
+        walk(directoryTree, 1)
+        return result
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -101,52 +115,41 @@ internal fun DirectoryTreeDialog(
                 HorizontalDivider()
                 Spacer(Modifier.height(8.dp))
 
+                val flatList = buildFlatList()
+
                 LazyColumn(
-                    modifier = Modifier.heightIn(max = 400.dp)
+                    modifier = Modifier.heightIn(min = 120.dp, max = 400.dp)
                 ) {
                     item {
-                        DirectoryTreeNode(
-                            node = DirectoryNode(
-                                name = "根目录",
-                                fullPath = "",
-                                isExpanded = true
-                            ),
+                        DirectoryTreeRow(
+                            name = "根目录",
+                            fullPath = "",
                             level = 0,
-                            currentPath = selectedPath.value,
+                            isExpanded = true,
+                            isLeaf = false,
                             isLoading = false,
-                            onSelect = { selectedPath.value = it },
+                            isSelected = selectedPath.value.isEmpty(),
+                            isSyncBaseDir = false,
+                            onSelect = { selectedPath.value = "" },
                             onToggleExpand = {}
                         )
                     }
 
                     items(
-                        items = flattenedNodes(treeState.value),
+                        items = flatList,
                         key = { it.node.fullPath }
-                    ) { item ->
-                        DirectoryTreeNode(
-                            node = item.node,
-                            level = item.level,
-                            currentPath = selectedPath.value,
-                            isLoading = loadingPath.value == item.node.fullPath,
-                            onSelect = { selectedPath.value = it },
-                            onToggleExpand = { path ->
-                                val node = findNode(treeState.value, path)
-                                if (node != null && !node.isLoaded) {
-                                    loadingPath.value = path
-                                    scope.launch {
-                                        val children = onLoadChildren(path)
-                                        node.children.clear()
-                                        node.children.addAll(children)
-                                        node.isLoaded = true
-                                        node.isExpanded = true
-                                        loadingPath.value = null
-                                        treeState.value = treeState.value.map { it.deepCopy() }
-                                    }
-                                } else if (node != null) {
-                                    node.isExpanded = !node.isExpanded
-                                    treeState.value = treeState.value.map { it.deepCopy() }
-                                }
-                            }
+                    ) { entry ->
+                        DirectoryTreeRow(
+                            name = entry.node.name,
+                            fullPath = entry.node.fullPath,
+                            level = entry.level,
+                            isExpanded = entry.isExpanded,
+                            isLeaf = entry.isLeaf,
+                            isLoading = loadingPath.value == entry.node.fullPath,
+                            isSelected = selectedPath.value == entry.node.fullPath,
+                            isSyncBaseDir = entry.node.isSyncBaseDir,
+                            onSelect = { selectedPath.value = entry.node.fullPath },
+                            onToggleExpand = { loadChildrenInto(entry.node) }
                         )
                     }
                 }
@@ -174,19 +177,29 @@ internal fun DirectoryTreeDialog(
     }
 }
 
+private data class FlatEntry(
+    val node: DirectoryNode,
+    val level: Int,
+    val isExpanded: Boolean,
+    val isLeaf: Boolean
+)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DirectoryTreeNode(
-    node: DirectoryNode,
+private fun DirectoryTreeRow(
+    name: String,
+    fullPath: String,
     level: Int,
-    currentPath: String,
+    isExpanded: Boolean,
+    isLeaf: Boolean,
     isLoading: Boolean,
-    onSelect: (String) -> Unit,
-    onToggleExpand: (String) -> Unit
+    isSelected: Boolean,
+    isSyncBaseDir: Boolean,
+    onSelect: () -> Unit,
+    onToggleExpand: () -> Unit
 ) {
-    val isSelected = node.fullPath == currentPath
+    val isRoot = fullPath.isEmpty()
     val extendedColors = LocalExtendedColors.current
-    val isRoot = node.fullPath.isEmpty()
 
     val backgroundColor = if (isSelected) {
         MaterialTheme.colorScheme.secondaryContainer
@@ -201,10 +214,8 @@ private fun DirectoryTreeNode(
             .clip(RoundedCornerShape(8.dp))
             .background(backgroundColor)
             .combinedClickable {
-                onSelect(node.fullPath)
-                if (!isRoot) {
-                    onToggleExpand(node.fullPath)
-                }
+                onSelect()
+                if (!isRoot) onToggleExpand()
             }
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
@@ -217,17 +228,17 @@ private fun DirectoryTreeNode(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp)
             )
-        } else if (node.isSyncBaseDir) {
+        } else if (isSyncBaseDir) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = Icons.Default.Folder,
-                    contentDescription = "文件夹",
+                    contentDescription = null,
                     tint = extendedColors.folderAmber,
                     modifier = Modifier.size(20.dp)
                 )
                 Icon(
                     imageVector = Icons.Default.Cloud,
-                    contentDescription = "同步基目录",
+                    contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
                         .size(8.dp)
@@ -237,7 +248,7 @@ private fun DirectoryTreeNode(
         } else {
             Icon(
                 imageVector = Icons.Default.Folder,
-                contentDescription = "文件夹",
+                contentDescription = null,
                 tint = extendedColors.folderAmber,
                 modifier = Modifier.size(20.dp)
             )
@@ -246,14 +257,14 @@ private fun DirectoryTreeNode(
         Spacer(Modifier.width(8.dp))
 
         Text(
-            text = node.name,
+            text = name,
             style = MaterialTheme.typography.bodyMedium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
 
-        if (!isRoot && (node.children.isNotEmpty() || !node.isLoaded)) {
+        if (!isRoot && !isLeaf) {
             if (isLoading) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(14.dp),
@@ -262,58 +273,12 @@ private fun DirectoryTreeNode(
                 )
             } else {
                 Icon(
-                    imageVector = if (node.isExpanded) Icons.Filled.ExpandMore else Icons.Filled.ChevronRight,
-                    contentDescription = if (node.isExpanded) "折叠" else "展开",
+                    imageVector = if (isExpanded) Icons.Filled.ExpandMore else Icons.Filled.ChevronRight,
+                    contentDescription = if (isExpanded) "折叠" else "展开",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(16.dp)
                 )
             }
         }
-    }
-}
-
-private data class FlatNode(
-    val node: DirectoryNode,
-    val level: Int
-)
-
-private fun flattenedNodes(roots: List<DirectoryNode>): List<FlatNode> {
-    val result = mutableListOf<FlatNode>()
-    fun walk(nodes: List<DirectoryNode>, level: Int) {
-        for (node in nodes) {
-            result.add(FlatNode(node, level))
-            if (node.isExpanded) {
-                walk(node.children, level + 1)
-            }
-        }
-    }
-    walk(roots, 1)
-    return result
-}
-
-private fun findNode(roots: List<DirectoryNode>, path: String): DirectoryNode? {
-    for (node in roots) {
-        if (node.fullPath == path) return node
-        findNode(node.children, path)?.let { return it }
-    }
-    return null
-}
-
-private fun expandAncestors(nodes: List<DirectoryNode>, targetPath: String) {
-    if (targetPath.isEmpty()) return
-    fun walk(node: DirectoryNode): Boolean {
-        if (node.fullPath == targetPath) {
-            return true
-        }
-        for (child in node.children) {
-            if (walk(child)) {
-                node.isExpanded = true
-                return true
-            }
-        }
-        return false
-    }
-    for (node in nodes) {
-        walk(node)
     }
 }

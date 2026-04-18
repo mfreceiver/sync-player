@@ -16,8 +16,7 @@ class BiometricAuthManager @Inject constructor(
     fun canAuthenticate(): Boolean {
         val biometricManager = BiometricManager.from(context)
         return biometricManager.canAuthenticate(
-            BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                BiometricManager.Authenticators.BIOMETRIC_WEAK
+            BiometricManager.Authenticators.BIOMETRIC_WEAK
         ) == BiometricManager.BIOMETRIC_SUCCESS
     }
 
@@ -43,8 +42,7 @@ class BiometricAuthManager @Inject constructor(
             .setTitle(title)
             .setSubtitle(subtitle)
             .setAllowedAuthenticators(
-                BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                    BiometricManager.Authenticators.BIOMETRIC_WEAK
+                BiometricManager.Authenticators.BIOMETRIC_WEAK
             )
             .build()
 
