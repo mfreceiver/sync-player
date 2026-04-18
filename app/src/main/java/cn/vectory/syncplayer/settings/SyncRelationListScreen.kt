@@ -74,18 +74,17 @@ fun SyncRelationListScreen(
             }
         }
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (relations.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("尚未配置同步关系，点击右下角 + 新增同步关系")
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(vertical = 8.dp)
+        if (relations.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("尚未配置同步关系，点击右下角 + 新增同步关系")
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentPadding = PaddingValues(top = 0.dp, bottom = 8.dp)
                 ) {
                     items(relations, key = { it.relation.id }) { item ->
                         val extendedColors = LocalExtendedColors.current
@@ -128,6 +127,5 @@ fun SyncRelationListScreen(
                     }
                 }
             }
-        }
     }
 }

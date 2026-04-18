@@ -80,7 +80,7 @@ fun SyncSourceListScreen(
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(vertical = 8.dp)
+                contentPadding = PaddingValues(top = 0.dp, bottom = 8.dp)
             ) {
                 items(sources, key = { it.id }) { source ->
                     ListItem(
