@@ -81,4 +81,25 @@ class PlaybackRepository @Inject constructor(
 
     suspend fun deleteByFolderPath(folderPath: String) =
         playbackRecordDao.deleteByFolderPath(folderPath)
+
+    // Phase 2: ensure folder has corresponding playback records and mark all as completed/uncompleted
+    suspend fun markFolderCompleted(folderPath: String, completed: Boolean) {
+        // First ensure all videos in folder have playback records
+        val dao = playbackRecordDao
+        val videoIdsWithoutRecord = dao.getVideoIdsWithoutRecord(folderPath)
+        videoIdsWithoutRecord.forEach { videoId ->
+            dao.upsert(
+                PlaybackRecordEntity(
+                    videoItemId = videoId,
+                    position = 0,
+                    duration = 0,
+                    lastPlayedTime = System.currentTimeMillis(),
+                    isCompleted = completed,
+                    isTrashed = false
+                )
+            )
+        }
+        // Then update existing records
+        dao.updateCompletedByFolder(folderPath, completed)
+    }
 }

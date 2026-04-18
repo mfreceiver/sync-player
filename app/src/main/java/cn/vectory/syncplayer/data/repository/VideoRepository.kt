@@ -58,4 +58,22 @@ class VideoRepository @Inject constructor(
 
     suspend fun getChildVideoStats(folderPath: String): List<ChildVideoStat> =
         videoItemDao.getChildVideoStats(folderPath)
+
+    // New helper APIs for phase 2/3
+    suspend fun getRecursiveFolderStats(folderPath: String) = videoItemDao.getRecursiveFolderStats(folderPath)
+
+    fun getAllItemsFlow(): Flow<List<VideoItemEntity>> = videoItemDao.getAllItemsFlow()
+
+    suspend fun getTotalItemCount(): Int = videoItemDao.getTotalItemCount()
+
+    suspend fun getAllRelativePathsList(): List<String> = videoItemDao.getAllRelativePathsList()
+
+    suspend fun updateStar(id: Long, star: Int) = videoItemDao.updateStar(id, star)
+
+    suspend fun updateStarByPath(relativePath: String, star: Int) = videoItemDao.updateStarByPath(relativePath, star)
+
+    suspend fun getFlatItemsPaged(limit: Int, offset: Int): List<VideoItemEntity> =
+        videoItemDao.getFlatItemsPaged(limit, offset)
+
+    fun getFlatItemsFlow(): Flow<List<VideoItemEntity>> = videoItemDao.getFlatItemsFlow()
 }

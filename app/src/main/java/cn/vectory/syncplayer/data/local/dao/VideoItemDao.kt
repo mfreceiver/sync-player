@@ -83,6 +83,54 @@ interface VideoItemDao {
     @Query("SELECT DISTINCT relativePath FROM video_item")
     fun getAllRelativePaths(): Flow<List<String>>
 
+    // Recursive folder statistics for requirement 1 (all files under a folder path)
+    data class RecursiveFolderStat(
+        val totalFileCount: Int,
+        val totalVideoCount: Int,
+        val totalSize: Long
+    )
+
+    @Query("""
+        SELECT 
+            COUNT(*) as totalFileCount,
+            SUM(CASE WHEN fileName LIKE '%.mp4' OR fileName LIKE '%.mkv' OR fileName LIKE '%.avi' 
+                OR fileName LIKE '%.mov' OR fileName LIKE '%.wmv' OR fileName LIKE '%.flv' 
+                OR fileName LIKE '%.webm' OR fileName LIKE '%.ts' OR fileName LIKE '%.m4v' 
+                OR fileName LIKE '%.3gp' OR fileName LIKE '%.rmvb' OR fileName LIKE '%.rm' THEN 1 ELSE 0 END) as totalVideoCount,
+            COALESCE(SUM(fileSize), 0) as totalSize
+        FROM video_item
+        WHERE relativePath LIKE :folderPath || '/%'
+    """
+    )
+    suspend fun getRecursiveFolderStats(folderPath: String): RecursiveFolderStat
+
+    // Flat mode: get all items for file browsing mode
+    @Query("SELECT * FROM video_item")
+    fun getAllItemsFlow(): Flow<List<VideoItemEntity>>
+
+    // Flat mode: get total count for scrollbar estimation
+    @Query("SELECT COUNT(*) FROM video_item")
+    suspend fun getTotalItemCount(): Int
+
+    // Get all distinct directory paths for directory tree building
+    @Query("SELECT DISTINCT relativePath FROM video_item")
+    suspend fun getAllRelativePathsList(): List<String>
+
+    // Update star rating for a video item
+    @Query("UPDATE video_item SET star = :star WHERE id = :id")
+    suspend fun updateStar(id: Long, star: Int)
+
+    // Update star rating by relative path (for non-DB files that get a record)
+    @Query("UPDATE video_item SET star = :star WHERE relativePath = :relativePath")
+    suspend fun updateStarByPath(relativePath: String, star: Int)
+
+    // Get flat items with pagination for file mode
+    @Query("SELECT * FROM video_item ORDER BY fileName ASC LIMIT :limit OFFSET :offset")
+    suspend fun getFlatItemsPaged(limit: Int, offset: Int): List<VideoItemEntity>
+
+    @Query("SELECT * FROM video_item ORDER BY fileName ASC")
+    fun getFlatItemsFlow(): Flow<List<VideoItemEntity>>
+
     @Query("""
         SELECT vi.id, vi.relativePath, vi.fileName, vi.audioGainDb,
                pr.position, pr.isCompleted, pr.isTrashed

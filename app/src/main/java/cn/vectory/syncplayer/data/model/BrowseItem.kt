@@ -28,5 +28,6 @@ data class BrowseItem(
     val playedCount: Int = 0,
     val trashedCount: Int = 0,
     // Video metadata
-    val hasGainAdjusted: Boolean = false
+    val hasGainAdjusted: Boolean = false,
+    val star: Int = 0
 )

@@ -58,4 +58,21 @@ interface PlaybackRecordDao {
         END
     """)
     fun getByFolderFlow(folderPath: String): Flow<List<PlaybackRecordEntity>>
+
+    // Batch mark as completed (mark read) for all videos in a folder recursively
+    @Query("""
+        UPDATE playback_record SET isCompleted = :completed
+        WHERE videoItemId IN (
+            SELECT id FROM video_item WHERE relativePath LIKE :folderPath || '/%'
+        )
+    """)
+    suspend fun updateCompletedByFolder(folderPath: String, completed: Boolean)
+
+    // Get video IDs in a folder that don't have playback records
+    @Query("""
+        SELECT vi.id FROM video_item vi
+        LEFT JOIN playback_record pr ON pr.videoItemId = vi.id
+        WHERE vi.relativePath LIKE :folderPath || '/%' AND pr.id IS NULL
+    """)
+    suspend fun getVideoIdsWithoutRecord(folderPath: String): List<Long>
 }
