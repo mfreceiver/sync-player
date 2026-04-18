@@ -79,34 +79,31 @@ fun SyncSourceListScreen(
             }
         } else {
             LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(top = 4.dp, bottom = 16.dp)
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentPadding = PaddingValues(vertical = 8.dp)
             ) {
                 items(sources, key = { it.id }) { source ->
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        ListItem(
-                            headlineContent = { Text(source.name) },
-                            supportingContent = { Text("${source.protocol.name} · ${source.host}:${source.port}") },
-                            leadingContent = {
+                    ListItem(
+                        headlineContent = { Text(source.name) },
+                        supportingContent = { Text("${source.protocol.name} · ${source.host}:${source.port}") },
+                        leadingContent = {
+                            Icon(
+                                imageVector = Icons.Default.Cloud,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        trailingContent = {
+                            IconButton(onClick = { onNavigateToEdit(source.id) }) {
                                 Icon(
-                                    imageVector = Icons.Default.Cloud,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "编辑",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                            },
-                            trailingContent = {
-                                IconButton(onClick = { onNavigateToEdit(source.id) }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = "编辑",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            },
-                            modifier = Modifier.clickable { onNavigateToEdit(source.id) }
-                        )
-                    }
+                            }
+                        },
+                        modifier = Modifier.clickable { onNavigateToEdit(source.id) }
+                    )
                 }
             }
         }

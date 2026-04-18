@@ -964,20 +964,21 @@ private fun FolderItem(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            if (item.videoCount > 0) {
-                val parts = mutableListOf<String>()
-                parts.add("视频数：${item.videoCount}")
-                if (item.playedCount > 0) parts.add("已播放：${item.playedCount}")
-                if (item.trashedCount > 0) parts.add("回收站：${item.trashedCount}个")
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = parts.joinToString(" · "),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+            val infoText = buildString {
+                if (item.videoCount > 0) {
+                    append("视频数：${item.videoCount}")
+                    if (item.playedCount > 0) append(" · 已播放：${item.playedCount}")
+                    if (item.trashedCount > 0) append(" · 回收站：${item.trashedCount}个")
+                }
             }
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = infoText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
