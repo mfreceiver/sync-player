@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -382,8 +383,15 @@ fun BrowserScreen(
                                             FilterChip(
                                                 selected = gridColumns == col,
                                                 onClick = { viewModel.setGridColumns(col) },
-                                                label = { Text("$col") },
-                                                modifier = Modifier.height(28.dp)
+                                                label = {
+                                                    Text(
+                                                        "$col",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        textAlign = TextAlign.Center,
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    )
+                                                },
+                                                modifier = Modifier.size(28.dp)
                                             )
                                         }
                                     }
