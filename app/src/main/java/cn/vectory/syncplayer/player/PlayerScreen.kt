@@ -570,7 +570,9 @@ LaunchedEffect(exoPlayer) {
         val currentSpeedOverlay = speedOverlayMultiplier
         if (currentSpeedOverlay != null) {
             Box(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 32.dp),
                 contentAlignment = Alignment.TopCenter
             ) {
                 Surface(

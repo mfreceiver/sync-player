@@ -60,12 +60,6 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                 onNavigateToSearch = {
                     navController.navigate(Route.Search.route)
                 },
-                onNavigateToSyncSourceList = {
-                    navController.navigate(Route.SyncSourceList.route, drawerNavOptions)
-                },
-                onNavigateToSyncRelationList = {
-                    navController.navigate(Route.SyncRelationList.route, drawerNavOptions)
-                },
                 onNavigateToPlaybackSettings = {
                     navController.navigate(Route.Settings.route, drawerNavOptions)
                 },
@@ -104,9 +98,7 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
         }
 
         composable(
-            route = Route.SyncSourceList.route,
-            enterTransition = { fadeIn(tween(150)) },
-            exitTransition = { fadeOut(tween(100)) }
+            route = Route.SyncSourceList.route
         ) {
             SyncSourceListScreen(
                 onNavigateBack = { navController.popBackStack() },
@@ -123,9 +115,7 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             route = Route.SyncSourceEdit.route,
             arguments = listOf(
                 navArgument("sourceId") { type = NavType.LongType; defaultValue = 0L }
-            ),
-            enterTransition = { fadeIn(tween(150)) },
-            exitTransition = { fadeOut(tween(100)) }
+            )
         ) {
             SyncSourceEditScreen(
                 onNavigateBack = { navController.popBackStack() },
@@ -134,9 +124,7 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
         }
 
         composable(
-            route = Route.SyncRelationList.route,
-            enterTransition = { fadeIn(tween(150)) },
-            exitTransition = { fadeOut(tween(100)) }
+            route = Route.SyncRelationList.route
         ) {
             SyncRelationListScreen(
                 onNavigateBack = { navController.popBackStack() },
@@ -156,9 +144,7 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             route = Route.SyncRelationEdit.route,
             arguments = listOf(
                 navArgument("relationId") { type = NavType.LongType; defaultValue = 0L }
-            ),
-            enterTransition = { fadeIn(tween(150)) },
-            exitTransition = { fadeOut(tween(100)) }
+            )
         ) {
             SyncRelationEditScreen(
                 onNavigateBack = { navController.popBackStack() },
@@ -202,16 +188,16 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
         }
 
         composable(
-            route = Route.Settings.route,
-            enterTransition = { fadeIn(tween(150)) },
-            exitTransition = { fadeOut(tween(100)) }
+            route = Route.Settings.route
         ) {
             val viewModel: SettingsViewModel = hiltViewModel()
             SettingsScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() },
                 onNavigateToMetadataRebuild = { navController.navigate(Route.MetadataRebuild.route) },
-                onNavigateToGainAnalysis = { navController.navigate(Route.GainAnalysis.create()) }
+                onNavigateToGainAnalysis = { navController.navigate(Route.GainAnalysis.create()) },
+                onNavigateToSyncSourceList = { navController.navigate(Route.SyncSourceList.route) },
+                onNavigateToSyncRelationList = { navController.navigate(Route.SyncRelationList.route) }
             )
         }
 

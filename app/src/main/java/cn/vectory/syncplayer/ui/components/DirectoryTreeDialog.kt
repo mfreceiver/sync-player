@@ -2,8 +2,8 @@ package cn.vectory.syncplayer.ui.components
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,11 +25,9 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -112,7 +110,6 @@ internal fun DirectoryTreeDialog(
                 )
 
                 Spacer(Modifier.height(12.dp))
-                HorizontalDivider()
                 Spacer(Modifier.height(8.dp))
 
                 val flatList = buildFlatList()
@@ -130,7 +127,10 @@ internal fun DirectoryTreeDialog(
                             isLoading = false,
                             isSelected = selectedPath.value.isEmpty(),
                             isSyncBaseDir = false,
-                            onSelect = { selectedPath.value = "" },
+                            onSelect = {
+                                onNavigate("")
+                                onDismiss()
+                            },
                             onToggleExpand = {}
                         )
                     }
@@ -148,28 +148,12 @@ internal fun DirectoryTreeDialog(
                             isLoading = loadingPath.value == entry.node.fullPath,
                             isSelected = selectedPath.value == entry.node.fullPath,
                             isSyncBaseDir = entry.node.isSyncBaseDir,
-                            onSelect = { selectedPath.value = entry.node.fullPath },
+                            onSelect = {
+                                onNavigate(entry.node.fullPath)
+                                onDismiss()
+                            },
                             onToggleExpand = { loadChildrenInto(entry.node) }
                         )
-                    }
-                }
-
-                Spacer(Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(Modifier.height(8.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = {
-                        onNavigate(selectedPath.value)
-                        onDismiss()
-                    }) {
-                        Text("确认")
-                    }
-                    TextButton(onClick = onDismiss) {
-                        Text("取消")
                     }
                 }
             }
@@ -214,7 +198,6 @@ private fun DirectoryTreeRow(
             .background(backgroundColor, RoundedCornerShape(8.dp))
             .combinedClickable {
                 onSelect()
-                if (!isRoot) onToggleExpand()
             }
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
@@ -275,7 +258,9 @@ private fun DirectoryTreeRow(
                     imageVector = if (isExpanded) Icons.Filled.ExpandMore else Icons.Filled.ChevronRight,
                     contentDescription = if (isExpanded) "折叠" else "展开",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier
+                        .size(16.dp)
+                        .clickable { onToggleExpand() }
                 )
             }
         }

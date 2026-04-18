@@ -7,11 +7,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -28,7 +30,9 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
     onNavigateBack: () -> Unit,
     onNavigateToMetadataRebuild: () -> Unit = {},
-    onNavigateToGainAnalysis: () -> Unit = {}
+    onNavigateToGainAnalysis: () -> Unit = {},
+    onNavigateToSyncSourceList: () -> Unit = {},
+    onNavigateToSyncRelationList: () -> Unit = {}
 ) {
     val volumeBalance by viewModel.volumeBalance.collectAsStateWithLifecycle()
     val quickRecycle by viewModel.quickRecycle.collectAsStateWithLifecycle()
@@ -62,8 +66,20 @@ fun SettingsScreen(
                 .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 16.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
+            ListItem(
+                headlineContent = { Text("配置数据源") },
+                leadingContent = { Icon(Icons.Default.Cloud, contentDescription = null) },
+                modifier = Modifier.clickable { onNavigateToSyncSourceList() }
+            )
+
+            ListItem(
+                headlineContent = { Text("配置同步关系") },
+                leadingContent = { Icon(Icons.Default.Sync, contentDescription = null) },
+                modifier = Modifier.clickable { onNavigateToSyncRelationList() }
+            )
+
             ListItem(
                 headlineContent = { Text("快捷回收") },
                 supportingContent = { Text("启用时双击屏幕中部标记回收") },
@@ -75,8 +91,6 @@ fun SettingsScreen(
                     )
                 }
             )
-
-            HorizontalDivider()
 
             ListItem(
                 headlineContent = { Text("音量均衡") },
@@ -91,8 +105,6 @@ fun SettingsScreen(
                 modifier = Modifier.clickable { onNavigateToGainAnalysis() }
             )
 
-            HorizontalDivider()
-
             ListItem(
                 headlineContent = { Text("安卓存储框架") },
                 leadingContent = { Icon(Icons.Default.FolderOpen, contentDescription = null) },
@@ -103,8 +115,6 @@ fun SettingsScreen(
                     )
                 }
             )
-
-            HorizontalDivider()
 
             val secureLockEnabledState by viewModel.secureLockEnabled.collectAsStateWithLifecycle()
             ListItem(
@@ -131,16 +141,12 @@ fun SettingsScreen(
                 }
             )
 
-            HorizontalDivider()
-
             ListItem(
                 headlineContent = { Text("重建元数据") },
                 supportingContent = { Text("扫描本地文件并重建数据库记录") },
                 leadingContent = { Icon(Icons.Default.Build, contentDescription = null) },
                 modifier = Modifier.clickable { onNavigateToMetadataRebuild() }
             )
-
-            HorizontalDivider()
 
             ListItem(
                 headlineContent = { Text("应用版本") },

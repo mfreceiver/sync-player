@@ -22,12 +22,10 @@ import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.PlayCircleOutline
@@ -84,8 +82,6 @@ fun BrowserScreen(
     currentFolder: String = "",
     onNavigateToPlayer: (videoItemId: Long, videoIds: List<Long>) -> Unit,
     onNavigateToSearch: () -> Unit,
-    onNavigateToSyncSourceList: () -> Unit,
-    onNavigateToSyncRelationList: () -> Unit,
     onNavigateToPlaybackSettings: () -> Unit,
     onNavigateToSyncPreview: (relationId: Long) -> Unit,
 ) {
@@ -113,7 +109,6 @@ fun BrowserScreen(
     var showAdvancedFilter by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -124,8 +119,7 @@ fun BrowserScreen(
     }
 
     // Support switching browse modes via back button as well
-    val isDrawerOpen = drawerState.isOpen
-    val backEnabled = !isDrawerOpen && !showSortMenu && showContextMenu == null
+    val backEnabled = !showSortMenu && showContextMenu == null
             && showFolderContextMenu == null && !showDirectoryTree && !showAdvancedFilter
             && !showCreateFolderDialog
             && (folder.isNotEmpty() || browseMode == BrowserViewModel.BrowseMode.FILE)
@@ -137,90 +131,49 @@ fun BrowserScreen(
         }
     }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            ModalDrawerSheet(modifier = Modifier.fillMaxWidth(0.6f)) {
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    text = "Sync Player",
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp)
-                )
-                HorizontalDivider()
-                Spacer(Modifier.height(8.dp))
-                NavigationDrawerItem(
-                    icon = { Icon(Icons.Default.Dns, contentDescription = null) },
-                    label = { Text("数据源") },
-                    selected = false,
-                    onClick = {
-                        scope.launch {
-                            drawerState.close()
-                            onNavigateToSyncSourceList()
-                        }
-                    },
-                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
-                )
-                NavigationDrawerItem(
-                    icon = { Icon(Icons.Default.Sync, contentDescription = null) },
-                    label = { Text("同步关系") },
-                    selected = false,
-                    onClick = {
-                        scope.launch {
-                            drawerState.close()
-                            onNavigateToSyncRelationList()
-                        }
-                    },
-                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
-                )
-                NavigationDrawerItem(
-                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                    label = { Text("设置") },
-                    selected = false,
-                    onClick = {
-                        scope.launch {
-                            drawerState.close()
-                            onNavigateToPlaybackSettings()
-                        }
-                    },
-                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
-                )
-            }
-        }
-    ) {
-        Scaffold(
-            snackbarHost = { SnackbarHost(snackbarHostState) },
-            topBar = {
-                    TopAppBar(
-                        navigationIcon = {
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        topBar = {
+                TopAppBar(
+                    navigationIcon = {
+                    if (folder.isEmpty()) {
                         IconButton(onClick = {
-                            scope.launch {
-                                if (drawerState.isClosed) drawerState.open()
-                            }
+                            onNavigateToPlaybackSettings()
                         }) {
                             Icon(
-                                imageVector = Icons.Default.Menu,
-                                contentDescription = "菜单"
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "设置"
                             )
                         }
-                    },
-                    title = {
-                        val displayPath = folder.substringAfterLast('/')
-                        if (displayPath.isNotEmpty()) {
-                            Text(
-                                text = displayPath,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.clickable { showDirectoryTree = true }
-                            )
-                        } else {
+                    } else {
+                        IconButton(onClick = {
+                            showDirectoryTree = true
+                        }) {
                             Icon(
-                                imageVector = Icons.Filled.Home,
-                                contentDescription = "根目录",
-                                modifier = Modifier.clickable { showDirectoryTree = true }
+                                imageVector = Icons.Default.Home,
+                                contentDescription = "目录"
                             )
                         }
-                    },
+                    }
+                },
+                title = {
+                    val displayPath = folder.substringAfterLast('/')
+                    if (displayPath.isNotEmpty()) {
+                        Text(
+                            text = displayPath,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.clickable { showDirectoryTree = true }
+                        )
+                    } else {
+                        Text(
+                            text = "Sync Player",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.clickable { showDirectoryTree = true }
+                        )
+                    }
+                },
                     actions = {
                         IconButton(onClick = {
                             onNavigateToSearch()
@@ -665,7 +618,6 @@ fun BrowserScreen(
                                 }
                             }
                         }
-                    }
                 }
             }
         }
