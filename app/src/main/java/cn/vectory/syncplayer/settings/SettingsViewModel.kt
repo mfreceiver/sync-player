@@ -26,17 +26,13 @@ class SettingsViewModel @Inject constructor(
     private val biometricAuthManager: BiometricAuthManager
 ) : ViewModel() {
 
-    private val _longPressSpeed = MutableStateFlow(2.0f)
-    val longPressSpeed: StateFlow<Float> = _longPressSpeed.asStateFlow()
-
     // Removed defaultSortMode/defaultFilter/viewMode/gridColumns as settings are deprecated
 
     private val _volumeBalance = MutableStateFlow(false)
     val volumeBalance: StateFlow<Boolean> = _volumeBalance.asStateFlow()
 
-    enum class DoubleTapAction { TRASH, PLAY_PAUSE }
-    private val _doubleTapAction = MutableStateFlow(DoubleTapAction.TRASH)
-    val doubleTapAction: StateFlow<DoubleTapAction> = _doubleTapAction.asStateFlow()
+    private val _quickRecycle = MutableStateFlow(true)
+    val quickRecycle: StateFlow<Boolean> = _quickRecycle.asStateFlow()
 
     // SAF provider toggle state
     private val _safEnabled = MutableStateFlow(false)
@@ -52,13 +48,8 @@ class SettingsViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            _longPressSpeed.value = userPrefs.getLongPressSpeed()
             _volumeBalance.value = userPrefs.getVolumeBalance()
-            _doubleTapAction.value = try {
-                DoubleTapAction.valueOf(userPrefs.getDoubleTapAction())
-            } catch (_: Exception) {
-                DoubleTapAction.TRASH
-            }
+            _quickRecycle.value = userPrefs.getQuickRecycle()
             // Load SAF provider state
             _safEnabled.value = userPrefs.getSafProviderEnabled()
             // Load secure lock state
@@ -66,21 +57,14 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun setLongPressSpeed(speed: Float) {
-        _longPressSpeed.value = speed
-        viewModelScope.launch { userPrefs.setLongPressSpeed(speed) }
-    }
-
-    // Removed: setDefaultSortMode, setDefaultFilter, setViewMode, setGridColumns
-
     fun setVolumeBalance(enabled: Boolean) {
         _volumeBalance.value = enabled
         viewModelScope.launch { userPrefs.setVolumeBalance(enabled) }
     }
 
-    fun setDoubleTapAction(action: DoubleTapAction) {
-        _doubleTapAction.value = action
-        viewModelScope.launch { userPrefs.setDoubleTapAction(action.name) }
+    fun setQuickRecycle(enabled: Boolean) {
+        _quickRecycle.value = enabled
+        viewModelScope.launch { userPrefs.setQuickRecycle(enabled) }
     }
 
     // SAF provider toggle state

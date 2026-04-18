@@ -138,9 +138,6 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                 },
                 onNavigateToSyncPreview = { relationId ->
                     navController.navigate(Route.SyncPreview.create(relationId, "download"))
-                },
-                onNavigateToGainAnalysis = { relationId ->
-                    navController.navigate(Route.GainAnalysis.create(relationId))
                 }
             )
         }
@@ -197,7 +194,8 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             SettingsScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToMetadataRebuild = { navController.navigate(Route.MetadataRebuild.route) }
+                onNavigateToMetadataRebuild = { navController.navigate(Route.MetadataRebuild.route) },
+                onNavigateToGainAnalysis = { navController.navigate(Route.GainAnalysis.create()) }
             )
         }
 

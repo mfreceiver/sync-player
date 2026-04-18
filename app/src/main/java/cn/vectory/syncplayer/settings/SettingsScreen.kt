@@ -9,8 +9,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Lock
@@ -32,16 +32,16 @@ import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
     onNavigateBack: () -> Unit,
-    onNavigateToMetadataRebuild: () -> Unit = {}
+    onNavigateToMetadataRebuild: () -> Unit = {},
+    onNavigateToGainAnalysis: () -> Unit = {}
 ) {
-    val longPressSpeed by viewModel.longPressSpeed.collectAsStateWithLifecycle()
     val volumeBalance by viewModel.volumeBalance.collectAsStateWithLifecycle()
-    val doubleTapAction by viewModel.doubleTapAction.collectAsStateWithLifecycle()
+    val quickRecycle by viewModel.quickRecycle.collectAsStateWithLifecycle()
     val safEnabled by viewModel.safEnabled.collectAsStateWithLifecycle()
     val currentContext = LocalContext.current
     var isNavigatingBack by remember { mutableStateOf(false) }
@@ -75,44 +75,16 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             ListItem(
-                headlineContent = { Text("长按加速倍速") },
-                leadingContent = { Icon(Icons.Default.FastForward, contentDescription = null) },
-                modifier = Modifier.clickable { }
-            )
-            FlowRow(
-                modifier = Modifier.padding(start = 72.dp, end = 16.dp, bottom = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf(1.5f, 2.0f, 2.5f, 3.0f).forEach { speed ->
-                    FilterChip(
-                        selected = longPressSpeed == speed,
-                        onClick = { viewModel.setLongPressSpeed(speed) },
-                        label = { Text("${speed}x", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                headlineContent = { Text("快捷回收") },
+                supportingContent = { Text("启用时双击屏幕中部标记回收") },
+                leadingContent = { Icon(Icons.Default.Delete, contentDescription = null) },
+                trailingContent = {
+                    Switch(
+                        checked = quickRecycle,
+                        onCheckedChange = { viewModel.setQuickRecycle(it) }
                     )
                 }
-            }
-
-            HorizontalDivider()
-
-            ListItem(
-                headlineContent = { Text("双击功能") },
-                leadingContent = { Icon(Icons.Default.TouchApp, contentDescription = null) },
-                modifier = Modifier.clickable { }
             )
-            FlowRow(
-                modifier = Modifier.padding(start = 72.dp, end = 16.dp, bottom = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                SettingsViewModel.DoubleTapAction.entries.forEach { action ->
-                    FilterChip(
-                        selected = doubleTapAction == action,
-                        onClick = { viewModel.setDoubleTapAction(action) },
-                        label = { Text(doubleTapActionLabel(action), maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                    )
-                }
-            }
 
             HorizontalDivider()
 
@@ -130,8 +102,7 @@ fun SettingsScreen(
             HorizontalDivider()
 
             ListItem(
-                headlineContent = { Text("SAF 文件共享") },
-                supportingContent = { Text("允许第三方播放器访问已同步文件") },
+                headlineContent = { Text("安卓存储框架") },
                 leadingContent = { Icon(Icons.Default.FolderOpen, contentDescription = null) },
                 trailingContent = {
                     Switch(
@@ -165,6 +136,18 @@ fun SettingsScreen(
                         },
                         enabled = viewModel.canAuthenticateBio
                     )
+                }
+            )
+
+            HorizontalDivider()
+
+            ListItem(
+                headlineContent = { Text("增益分析") },
+                leadingContent = { Icon(Icons.Default.Equalizer, contentDescription = null) },
+                trailingContent = {
+                    TextButton(onClick = { onNavigateToGainAnalysis() }) {
+                        Text("查看")
+                    }
                 }
             )
 
@@ -294,10 +277,3 @@ private fun formatLogTimestamp(timestamp: Long): String {
     val sdf = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault())
     return sdf.format(java.util.Date(timestamp))
 }
-
-private fun doubleTapActionLabel(action: SettingsViewModel.DoubleTapAction): String = when (action) {
-    SettingsViewModel.DoubleTapAction.TRASH -> "回收"
-    SettingsViewModel.DoubleTapAction.PLAY_PAUSE -> "播放"
-}
-
-// Helper label for double-tap actions is kept elsewhere as it's still in use

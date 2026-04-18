@@ -29,8 +29,9 @@ sealed class Route(val route: String) {
     }
     data object Search : Route("search")
     data object Settings : Route("settings")
-    data object GainAnalysis : Route("gain_analysis/{relationId}") {
-        fun create(relationId: Long): String = "gain_analysis/$relationId"
+    data object GainAnalysis : Route("gain_analysis?relationId={relationId}") {
+        fun create(relationId: Long = 0L): String =
+            if (relationId == 0L) "gain_analysis" else "gain_analysis?relationId=$relationId"
     }
     data object MetadataRebuild : Route("metadata_rebuild")
 }

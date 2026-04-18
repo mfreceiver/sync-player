@@ -148,31 +148,31 @@ class BrowserViewModel @Inject constructor(
 
     val hasConfig: StateFlow<Boolean> = syncRelationRepository.getAllWithSourceFlow()
         .map { it.isNotEmpty() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+        .stateIn(viewModelScope, SharingStarted.Lazily, false)
 
     // Playback records will be loaded on-demand per-folder to avoid loading all into memory
     // private val playbackRecords removed in favor of per-folder queries
 
     private val folderPlaybackRecords = effectiveFolder.flatMapLatest { folder ->
         playbackRepository.getByFolderFlow(folder)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     // Task A: observe all playback records
     private val allPlaybackRecords = playbackRepository.getAllFlow()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     private val basePaths = syncRelationRepository.getAllWithSourceFlow()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     private val basePathToRelationId = basePaths.map { list ->
         list.associate { it.relation.localBasePath to it.relation.id }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyMap())
 
     val currentRelationId: StateFlow<Long?> = combine(effectiveFolder, basePathToRelationId) { folder, pathMap ->
         pathMap.entries.firstOrNull { (basePath, _) ->
             folder == basePath || folder.startsWith("$basePath/")
         }?.value
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    }.stateIn(viewModelScope, SharingStarted.Lazily, null)
 
     // Helper data wrapper for combined playback records + relations
     private data class PlaybackBundle(
@@ -198,9 +198,9 @@ class BrowserViewModel @Inject constructor(
         val starValue = _starFilterValue.value
         buildBrowseItems(folder, mode, filterVal, starMode, starValue, browseModeVal, records, allRecords, baseDirSet)
     }
-    .debounce(300)
+    .debounce(50)
     .onEach { _browseItemsFolder.value = _currentFolder.value }
-    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     private suspend fun buildBrowseItems(
         folder: String,
@@ -392,7 +392,11 @@ class BrowserViewModel @Inject constructor(
             StarFilterMode.LT -> filteredVideos.filter { it.star < starValue }
         }
 
-        val sortedFolders = folders.sortedWith(compareBy(fileNameComparator) { it.name })
+        val sortedFolders = when (mode) {
+            SortMode.FILENAME_ASC -> folders.sortedWith(compareBy(fileNameComparator) { it.name })
+            SortMode.FILENAME_DESC -> folders.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
+            else -> folders.sortedWith(compareBy(fileNameComparator) { it.name })
+        }
         val sortedNonVideos = nonVideoFiles.sortedWith(compareBy(fileNameComparator) { it.name })
         val sortedVideos = when (mode) {
             SortMode.FILENAME_ASC -> starFilteredVideos.sortedWith(compareBy(fileNameComparator) { it.name })
@@ -412,9 +416,14 @@ class BrowserViewModel @Inject constructor(
         } else {
             sortedFolders
         }
-        _hiddenByFilterCount.value = (totalBeforeFilter - filteredFolders.size - sortedNonVideos.size - sortedVideos.size).coerceAtLeast(0)
+        val finalNonVideos = when (filterVal) {
+            BrowseFilter.ALL -> sortedNonVideos
+            BrowseFilter.VIDEO_ONLY -> emptyList()
+            BrowseFilter.UNWATCHED -> emptyList()
+        }
+        _hiddenByFilterCount.value = (totalBeforeFilter - filteredFolders.size - finalNonVideos.size - sortedVideos.size).coerceAtLeast(0)
 
-        (filteredFolders + sortedNonVideos + sortedVideos).distinctBy { it.relativePath }
+        (filteredFolders + finalNonVideos + sortedVideos).distinctBy { it.relativePath }
     }
 
     fun setFolder(folder: String) {

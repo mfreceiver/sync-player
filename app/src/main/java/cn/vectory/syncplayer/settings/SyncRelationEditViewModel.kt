@@ -91,7 +91,7 @@ class SyncRelationEditViewModel @Inject constructor(
 
     private fun loadSources() {
         viewModelScope.launch {
-            _availableSources.value = syncSourceRepository.getAll()
+            _availableSources.value = syncSourceRepository.getAllWithCredentials()
         }
     }
 

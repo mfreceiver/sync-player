@@ -23,6 +23,9 @@ class SyncSourceRepository @Inject constructor(
     suspend fun getAll(): List<SyncSource> =
         syncSourceDao.getAll().map { it.toInfo() }
 
+    suspend fun getAllWithCredentials(): List<SyncSource> =
+        syncSourceDao.getAll().map { it.toDomainWithCredentials() }
+
     suspend fun getById(id: Long): SyncSource? =
         syncSourceDao.getById(id)?.toDomainWithCredentials()
 

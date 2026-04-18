@@ -72,8 +72,7 @@ fun SyncSourceEditScreen(
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                     OutlinedTextField(
                         value = name,
                         onValueChange = { viewModel.name.value = it },
@@ -201,7 +200,6 @@ fun SyncSourceEditScreen(
                         )
                     }
                 }
-            }
         }
     }
 

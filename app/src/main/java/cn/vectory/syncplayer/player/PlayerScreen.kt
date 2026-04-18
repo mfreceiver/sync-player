@@ -102,7 +102,7 @@ fun PlayerScreen(
     val allVideoIds by viewModel.allVideoIds.collectAsStateWithLifecycle()
     val currentGainDb by viewModel.currentGainDb.collectAsStateWithLifecycle()
     val playbackSpeed by viewModel.playbackSpeed.collectAsStateWithLifecycle()
-    val doubleTapAction by viewModel.doubleTapAction.collectAsStateWithLifecycle()
+    val quickRecycle by viewModel.quickRecycle.collectAsStateWithLifecycle()
 
     var showControls by remember { mutableStateOf(true) }
     var currentVideoId by remember { mutableStateOf(videoItemId) }
@@ -190,15 +190,16 @@ fun PlayerScreen(
         if (!file.exists()) return@LaunchedEffect
         val mediaItem = MediaItem.fromUri(Uri.fromFile(file))
         exoPlayer.setMediaItem(mediaItem)
-        exoPlayer.prepare()
         val record = viewModel.playbackRecord.value
         val isCompleted = record?.isCompleted == true
         if (!isCompleted) {
             val savedPos = viewModel.getSavedPosition()
             if (savedPos > 0) {
+                currentPosition = savedPos
                 exoPlayer.seekTo(savedPos)
             }
         }
+        exoPlayer.prepare()
     }
     val isFullscreen by viewModel.isFullscreen.collectAsStateWithLifecycle()
     LaunchedEffect(isFullscreen, videoItem) {
@@ -393,15 +394,12 @@ LaunchedEffect(exoPlayer) {
                     }
                 }
                 DoubleTapZone.CENTER -> {
-                    when (doubleTapAction) {
-                        PlayerViewModel.DoubleTapAction.TRASH -> {
-                            val wasTrashed = playbackRecord?.isTrashed ?: false
-                            showOverlay(PlayerOverlay.TrashAction(!wasTrashed))
-                            viewModel.toggleTrashed()
-                        }
-                        PlayerViewModel.DoubleTapAction.PLAY_PAUSE -> {
-                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                        }
+                    if (quickRecycle) {
+                        val wasTrashed = playbackRecord?.isTrashed ?: false
+                        showOverlay(PlayerOverlay.TrashAction(!wasTrashed))
+                        viewModel.toggleTrashed()
+                    } else {
+                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                     }
                 }
             }
@@ -586,13 +584,13 @@ LaunchedEffect(exoPlayer) {
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.Speed,
+                            imageVector = Icons.Filled.FastForward,
                             contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier.size(20.dp)
                         )
                         Text(
-                            text = "${currentSpeedOverlay}X",
+                            text = "加速",
                             color = Color.White,
                             style = MaterialTheme.typography.bodyMedium
                         )

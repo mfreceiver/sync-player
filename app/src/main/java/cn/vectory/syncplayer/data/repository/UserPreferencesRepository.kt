@@ -37,6 +37,7 @@ class UserPreferencesRepository @Inject constructor(
         val VOLUME_BALANCE = booleanPreferencesKey("volume_balance")
         val ANALYZE_ON_DOWNLOAD = booleanPreferencesKey("analyze_on_download")
         val DOUBLE_TAP_ACTION = stringPreferencesKey("double_tap_action")
+        val QUICK_RECYCLE = booleanPreferencesKey("quick_recycle")
         val SAF_PROVIDER_ENABLED = booleanPreferencesKey("saf_provider_enabled")
         val SECURE_LOCK_ENABLED = booleanPreferencesKey("secure_lock_enabled")
     }
@@ -85,6 +86,10 @@ class UserPreferencesRepository @Inject constructor(
         it[Keys.DOUBLE_TAP_ACTION] ?: "TRASH"
     }
 
+    val quickRecycle: Flow<Boolean> = dataStore.data.map {
+        it[Keys.QUICK_RECYCLE] ?: true
+    }
+
     val safProviderEnabled: Flow<Boolean> = dataStore.data.map {
         it[Keys.SAF_PROVIDER_ENABLED] ?: false
     }
@@ -105,6 +110,7 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun getVolumeBalance(): Boolean = volumeBalance.first()
     suspend fun getAnalyzeOnDownload(): Boolean = analyzeOnDownload.first()
     suspend fun getDoubleTapAction(): String = doubleTapAction.first()
+    suspend fun getQuickRecycle(): Boolean = quickRecycle.first()
     suspend fun getSafProviderEnabled(): Boolean = safProviderEnabled.first()
 
     suspend fun getSecureLockEnabled(): Boolean = secureLockEnabled.first()
@@ -153,6 +159,10 @@ class UserPreferencesRepository @Inject constructor(
 
     suspend fun setDoubleTapAction(action: String) {
         dataStore.edit { it[Keys.DOUBLE_TAP_ACTION] = action }
+    }
+
+    suspend fun setQuickRecycle(enabled: Boolean) {
+        dataStore.edit { it[Keys.QUICK_RECYCLE] = enabled }
     }
 
     suspend fun setSafProviderEnabled(enabled: Boolean) {

@@ -44,7 +44,6 @@ fun SyncRelationListScreen(
     onNavigateToEdit: (relationId: Long) -> Unit,
     onNavigateToCreate: () -> Unit,
     onNavigateToSyncPreview: (relationId: Long) -> Unit,
-    onNavigateToGainAnalysis: (relationId: Long) -> Unit = {},
     viewModel: SyncRelationListViewModel = hiltViewModel()
 ) {
     val relations by viewModel.relationsWithSource.collectAsStateWithLifecycle()
@@ -85,7 +84,7 @@ fun SyncRelationListScreen(
                 }
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(padding),
+                    modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(vertical = 8.dp)
                 ) {
                     items(relations, key = { it.relation.id }) { item ->
@@ -116,16 +115,16 @@ fun SyncRelationListScreen(
                                 }
                             },
                             leadingContent = {
-                                Icon(Icons.Default.Sync, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Box(
+                                    modifier = Modifier.fillMaxHeight(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.Sync, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                }
                             },
                             trailingContent = {
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    OutlinedButton(onClick = { onNavigateToSyncPreview(item.relation.id) }) {
-                                        Text("同步", style = MaterialTheme.typography.labelSmall)
-                                    }
-                                    IconButton(onClick = { onNavigateToEdit(item.relation.id) }) {
-                                        Icon(Icons.Default.Edit, contentDescription = "编辑", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
+                                IconButton(onClick = { onNavigateToEdit(item.relation.id) }) {
+                                    Icon(Icons.Default.Edit, contentDescription = "编辑", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             },
                             modifier = Modifier.clickable { onNavigateToSyncPreview(item.relation.id) }

@@ -74,8 +74,13 @@ class GainAnalysisViewModel @Inject constructor(
             _completedPaths.value = emptySet()
             _completedCount.value = 0
             try {
-                val videos = videoRepository.getBySyncRelationId(relationId)
-                    .filter { it.audioGainDb == null && isVideoFile(it.fileName) }
+                val videos = if (relationId == 0L) {
+                    videoRepository.getAll()
+                        .filter { it.audioGainDb == null && isVideoFile(it.fileName) }
+                } else {
+                    videoRepository.getBySyncRelationId(relationId)
+                        .filter { it.audioGainDb == null && isVideoFile(it.fileName) }
+                }
                 _discoveredFiles.value = videos
                 _totalCount.value = videos.size
                 if (videos.isEmpty()) {

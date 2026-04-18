@@ -45,22 +45,16 @@ class PlayerViewModel @Inject constructor(
     private val _playbackSpeed = MutableStateFlow(1.0f)
     val playbackSpeed: StateFlow<Float> = _playbackSpeed.asStateFlow()
 
-    enum class DoubleTapAction { TRASH, PLAY_PAUSE }
-    private val _doubleTapAction = MutableStateFlow(DoubleTapAction.TRASH)
-    val doubleTapAction: StateFlow<DoubleTapAction> = _doubleTapAction.asStateFlow()
+    private val _quickRecycle = MutableStateFlow(true)
+    val quickRecycle: StateFlow<Boolean> = _quickRecycle.asStateFlow()
 
     private val savedVideoIds: String? = savedStateHandle.get<String>("videoIds")
 
     init {
         loadFolderVideoIds()
         viewModelScope.launch {
-            _speedMultiplier.value = userPrefs.getLongPressSpeed()
-            _volumeBalance.value = userPrefs.getVolumeBalance()
-            _doubleTapAction.value = try {
-                DoubleTapAction.valueOf(userPrefs.getDoubleTapAction())
-            } catch (_: Exception) {
-                DoubleTapAction.TRASH
-            }
+                _volumeBalance.value = userPrefs.getVolumeBalance()
+            _quickRecycle.value = userPrefs.getQuickRecycle()
         }
     }
 

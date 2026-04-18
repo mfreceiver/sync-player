@@ -157,28 +157,6 @@ fun SyncRelationEditScreen(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { viewModel.testRemotePath() },
-                    enabled = !isTesting && selectedSourceId > 0L && remotePath.isNotBlank(),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(if (isTesting) "测试中…" else "测试远端目录")
-                }
-            }
-
-            testResult?.let {
-                Text(
-                    it,
-                    color = if (it.contains("可访问")) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedTextField(
@@ -203,14 +181,12 @@ fun SyncRelationEditScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                if (viewModel.relationId > 0L) {
-                    OutlinedButton(
-                        onClick = { showDeleteDialog = true },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("删除")
-                    }
+                OutlinedButton(
+                    onClick = { viewModel.testRemotePath() },
+                    enabled = !isTesting && selectedSourceId > 0L && remotePath.isNotBlank(),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(if (isTesting) "测试中…" else "测试远端目录")
                 }
                 Button(
                     onClick = { viewModel.save() },
@@ -222,10 +198,38 @@ fun SyncRelationEditScreen(
                 }
             }
 
+            if (viewModel.relationId > 0L) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { showDeleteDialog = true },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "删除",
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("删除")
+                }
+            }
+
+            testResult?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    it,
+                    color = if (it.contains("可访问")) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
             error?.let {
+                Spacer(Modifier.height(4.dp))
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
             saveResult?.let {
+                Spacer(Modifier.height(4.dp))
                 Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
             }
         }
