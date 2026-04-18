@@ -448,7 +448,7 @@ class BrowserViewModel @Inject constructor(
 
     suspend fun getRecursiveFolderStats(folderPath: String) = videoRepository.getRecursiveFolderStats(folderPath)
 
-    suspend fun buildDirectoryTree(): List<DirectoryNode> {
+    suspend fun buildDirectoryTree(): List<DirectoryNode> = withContext(Dispatchers.Default) {
         val allPaths = videoRepository.getAllRelativePathsList()
         val dirPaths = mutableSetOf<String>()
         for (path in allPaths) {
@@ -480,7 +480,20 @@ class BrowserViewModel @Inject constructor(
             }
         }
 
-        return rootChildren
+        return@withContext rootChildren
+    }
+
+    suspend fun loadSubFolders(folderPath: String): List<DirectoryNode> = withContext(Dispatchers.Default) {
+        val subDirs = videoRepository.getSubFoldersOnce(folderPath)
+        val basePathsSet = basePaths.value.map { it.relation.localBasePath }.toSet()
+        subDirs.sortedWith(fileNameComparator).map { name ->
+            val fullPath = if (folderPath.isEmpty()) name else "$folderPath/$name"
+            DirectoryNode(
+                name = name,
+                fullPath = fullPath,
+                isSyncBaseDir = basePathsSet.contains(fullPath)
+            )
+        }
     }
 
     fun markFolderRead(folderPath: String, read: Boolean) {

@@ -18,6 +18,9 @@ class VideoRepository @Inject constructor(
     fun getSubFolders(folderPath: String): Flow<List<String>> =
         videoItemDao.getSubFolders(folderPath)
 
+    suspend fun getSubFoldersOnce(folderPath: String): List<String> =
+        videoItemDao.getSubFoldersOnce(folderPath)
+
     suspend fun getById(id: Long): VideoItemEntity? = videoItemDao.getById(id)
 
     suspend fun getByRelativePath(relativePath: String): VideoItemEntity? =

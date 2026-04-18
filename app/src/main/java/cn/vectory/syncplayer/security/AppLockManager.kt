@@ -25,6 +25,7 @@ class AppLockManager @Inject constructor(
     val isLocked: StateFlow<Boolean> = _isLocked.asStateFlow()
 
     private var hasBeenInBackground = false
+    private var isFirstStart = true
 
     fun lock() {
         _isLocked.value = true
@@ -44,7 +45,8 @@ class AppLockManager @Inject constructor(
                 hasBeenInBackground = true
             }
             androidx.lifecycle.Lifecycle.Event.ON_START -> {
-                if (hasBeenInBackground) {
+                if (hasBeenInBackground || isFirstStart) {
+                    isFirstStart = false
                     CoroutineScope(Dispatchers.IO).launch {
                         if (userPrefs.getSecureLockEnabled()) {
                             _isLocked.value = true

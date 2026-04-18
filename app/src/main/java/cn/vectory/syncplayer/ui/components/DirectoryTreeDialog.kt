@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -32,6 +33,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,13 +42,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
+import kotlinx.coroutines.launch
 
 data class DirectoryNode(
     val name: String,
     val fullPath: String,
     val children: MutableList<DirectoryNode> = mutableListOf(),
     val isSyncBaseDir: Boolean = false,
-    var isExpanded: Boolean = false
+    var isExpanded: Boolean = false,
+    var isLoaded: Boolean = false
 )
 
 @Composable
@@ -55,6 +59,7 @@ internal fun DirectoryTreeDialog(
     currentPath: String,
     onNavigate: (String) -> Unit,
     onDismiss: () -> Unit,
+    onLoadChildren: suspend (String) -> List<DirectoryNode>,
     modifier: Modifier = Modifier
 ) {
     val expandedState = remember(directoryTree) {
@@ -64,6 +69,8 @@ internal fun DirectoryTreeDialog(
     }
 
     val selectedPath = remember { mutableStateOf(currentPath) }
+    val scope = rememberCoroutineScope()
+    val loadingPath = remember { mutableStateOf<String?>(null) }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -93,6 +100,7 @@ internal fun DirectoryTreeDialog(
                             ),
                             level = 0,
                             currentPath = selectedPath.value,
+                            isLoading = false,
                             onSelect = { selectedPath.value = it },
                             onToggleExpand = {}
                         )
@@ -106,9 +114,23 @@ internal fun DirectoryTreeDialog(
                             node = item.node,
                             level = item.level,
                             currentPath = selectedPath.value,
+                            isLoading = loadingPath.value == item.node.fullPath,
                             onSelect = { selectedPath.value = it },
                             onToggleExpand = { path ->
-                                toggleExpanded(expandedState.value, path)
+                                val node = findNode(expandedState.value, path)
+                                if (node != null && !node.isLoaded) {
+                                    loadingPath.value = path
+                                    scope.launch {
+                                        val children = onLoadChildren(path)
+                                        node.children.clear()
+                                        node.children.addAll(children)
+                                        node.isLoaded = true
+                                        node.isExpanded = true
+                                        loadingPath.value = null
+                                    }
+                                } else if (node != null) {
+                                    node.isExpanded = !node.isExpanded
+                                }
                             }
                         )
                     }
@@ -143,6 +165,7 @@ private fun DirectoryTreeNode(
     node: DirectoryNode,
     level: Int,
     currentPath: String,
+    isLoading: Boolean,
     onSelect: (String) -> Unit,
     onToggleExpand: (String) -> Unit
 ) {
@@ -215,13 +238,21 @@ private fun DirectoryTreeNode(
             modifier = Modifier.weight(1f)
         )
 
-        if (!isRoot && node.children.isNotEmpty()) {
-            Icon(
-                imageVector = if (node.isExpanded) Icons.Filled.ExpandMore else Icons.Filled.ChevronRight,
-                contentDescription = if (node.isExpanded) "折叠" else "展开",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(16.dp)
-            )
+        if (!isRoot && (node.children.isNotEmpty() || !node.isLoaded)) {
+            if (isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Icon(
+                    imageVector = if (node.isExpanded) Icons.Filled.ExpandMore else Icons.Filled.ChevronRight,
+                    contentDescription = if (node.isExpanded) "折叠" else "展开",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
         }
     }
 }
@@ -245,17 +276,12 @@ private fun flattenedNodes(roots: List<DirectoryNode>): List<FlatNode> {
     return result
 }
 
-private fun toggleExpanded(roots: List<DirectoryNode>, path: String) {
-    fun walk(nodes: List<DirectoryNode>) {
-        for (node in nodes) {
-            if (node.fullPath == path) {
-                node.isExpanded = !node.isExpanded
-                return
-            }
-            walk(node.children)
-        }
+private fun findNode(roots: List<DirectoryNode>, path: String): DirectoryNode? {
+    for (node in roots) {
+        if (node.fullPath == path) return node
+        findNode(node.children, path)?.let { return it }
     }
-    walk(roots)
+    return null
 }
 
 private fun expandAncestors(nodes: List<DirectoryNode>, targetPath: String) {

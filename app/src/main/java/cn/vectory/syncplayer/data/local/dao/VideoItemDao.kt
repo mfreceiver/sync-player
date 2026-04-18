@@ -38,6 +38,28 @@ interface VideoItemDao {
     """)
     fun getSubFolders(folderPath: String): Flow<List<String>>
 
+    @Query("""
+        SELECT DISTINCT SUBSTR(
+            CASE WHEN :folderPath = '' THEN relativePath
+            ELSE SUBSTR(relativePath, LENGTH(:folderPath) + 2)
+            END,
+            1,
+            INSTR(
+                CASE WHEN :folderPath = '' THEN relativePath
+                ELSE SUBSTR(relativePath, LENGTH(:folderPath) + 2)
+                END || '/',
+                '/'
+            ) - 1
+        )
+        FROM video_item
+        WHERE CASE
+            WHEN :folderPath = '' THEN relativePath LIKE '%/%'
+            ELSE relativePath LIKE :folderPath || '/%'
+                 AND SUBSTR(relativePath, LENGTH(:folderPath) + 2) LIKE '%/%'
+        END
+    """)
+    suspend fun getSubFoldersOnce(folderPath: String): List<String>
+
     @Query("SELECT * FROM video_item WHERE id = :id")
     suspend fun getById(id: Long): VideoItemEntity?
 

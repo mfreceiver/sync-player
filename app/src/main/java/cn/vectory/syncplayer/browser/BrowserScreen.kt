@@ -6,6 +6,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -65,7 +66,7 @@ import cn.vectory.syncplayer.ui.components.Thumbnail
 import cn.vectory.syncplayer.ui.components.VideoGridItem
 import cn.vectory.syncplayer.ui.components.gridVerticalScrollbar
 import cn.vectory.syncplayer.ui.components.verticalScrollbar
-import cn.vectory.syncplayer.ui.util.buildMetadataLine
+import cn.vectory.syncplayer.ui.util.buildMetadataLineWithoutExtension
 import cn.vectory.syncplayer.ui.util.isVideoFile
 import kotlinx.coroutines.launch
 import java.lang.Math
@@ -104,6 +105,7 @@ fun BrowserScreen(
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var showFolderContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
     var showDirectoryTree by remember { mutableStateOf(false) }
+    var showAdvancedFilter by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -324,24 +326,34 @@ fun BrowserScreen(
                                     ) { Icon(Icons.Default.PlayCircleOutline, null, modifier = Modifier.size(20.dp)) }
                                 }
                                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                                // Star filter row
                                 Text(
-                                    "星级",
+                                    "浏览",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
                                 )
                                 Row(
                                     modifier = Modifier.padding(horizontal = 12.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    StarRatingInput(
-                                        rating = starFilterValue,
-                                        onRatingChange = { viewModel.setStarFilterValue(it) },
-                                        starSize = 24.dp,
-                                        enabled = starFilterMode != BrowserViewModel.StarFilterMode.OFF
-                                    )
+                                    IconOptionChip(
+                                        selected = browseMode == BrowserViewModel.BrowseMode.DIRECTORY,
+                                        onClick = { viewModel.setBrowseMode(BrowserViewModel.BrowseMode.DIRECTORY); showSortMenu = false }
+                                    ) { Icon(Icons.Default.FolderOpen, null, modifier = Modifier.size(20.dp)) }
+                                    IconOptionChip(
+                                        selected = browseMode == BrowserViewModel.BrowseMode.FILE,
+                                        onClick = { viewModel.setBrowseMode(BrowserViewModel.BrowseMode.FILE); showSortMenu = false }
+                                    ) { Icon(Icons.Default.VideoFile, null, modifier = Modifier.size(20.dp)) }
+                                }
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                                TextButton(
+                                    onClick = {
+                                        showSortMenu = false
+                                        showAdvancedFilter = true
+                                    },
+                                    modifier = Modifier.padding(horizontal = 8.dp)
+                                ) {
+                                    Text("高级筛选", style = MaterialTheme.typography.bodySmall)
                                 }
                                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                                 Text(
@@ -621,7 +633,8 @@ fun BrowserScreen(
     }
 
     showContextMenu?.let { item ->
-        // Reworked file context menu: include path, optional star rating for videos, thumbnail, and actions
+        var localStar by remember { mutableStateOf(item.star) }
+
         Dialog(onDismissRequest = { showContextMenu = null }) {
             Card(
                 modifier = Modifier.width(320.dp),
@@ -636,9 +649,9 @@ fun BrowserScreen(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
-                    // Path in gray small text
+                    val pathOnly = item.relativePath.substringBeforeLast('/')
                     Text(
-                        text = item.relativePath,
+                        text = if (pathOnly.isEmpty()) "/" else pathOnly,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -646,24 +659,9 @@ fun BrowserScreen(
                         modifier = Modifier.padding(top = 2.dp)
                     )
 
-                    if (isVideoFile(item.name)) {
-                        Spacer(Modifier.height(8.dp))
-                        StarRatingInput(
-                            rating = item.star,
-                            onRatingChange = { rating ->
-                                if (item.videoItemId != null) {
-                                    viewModel.updateStar(item.videoItemId, rating)
-                                } else {
-                                    viewModel.updateStarByPath(item.relativePath, rating)
-                                }
-                            },
-                            starSize = 20.dp
-                        )
-                        Spacer(Modifier.height(8.dp))
-                    }
-
                     // Thumbnail for videos
                     if (isVideoFile(item.name)) {
+                        Spacer(Modifier.height(8.dp))
                         Thumbnail(
                             thumbnailPath = item.thumbnailPath,
                             isVideo = true,
@@ -672,6 +670,27 @@ fun BrowserScreen(
                                 .height(160.dp)
                                 .clip(RoundedCornerShape(8.dp))
                         )
+                    }
+
+                    if (isVideoFile(item.name)) {
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            StarRatingInput(
+                                rating = localStar,
+                                onRatingChange = { rating ->
+                                    localStar = rating
+                                    if (item.videoItemId != null) {
+                                        viewModel.updateStar(item.videoItemId, rating)
+                                    } else {
+                                        viewModel.updateStarByPath(item.relativePath, rating)
+                                    }
+                                },
+                                starSize = 20.dp
+                            )
+                        }
                     }
 
                     Spacer(Modifier.height(8.dp))
@@ -787,20 +806,65 @@ fun BrowserScreen(
         }
     }
 
+    if (showAdvancedFilter) {
+        AlertDialog(
+            onDismissRequest = { showAdvancedFilter = false },
+            title = { Text("高级筛选") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("星级筛选", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        BrowserViewModel.StarFilterMode.entries.forEach { mode ->
+                            val label = when (mode) {
+                                BrowserViewModel.StarFilterMode.OFF -> "未启用"
+                                BrowserViewModel.StarFilterMode.EQ -> "="
+                                BrowserViewModel.StarFilterMode.GT -> "＞"
+                                BrowserViewModel.StarFilterMode.LT -> "＜"
+                            }
+                            FilterChip(
+                                selected = starFilterMode == mode,
+                                onClick = { viewModel.setStarFilterMode(mode) },
+                                label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            )
+                        }
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        StarRatingInput(
+                            rating = starFilterValue,
+                            onRatingChange = { viewModel.setStarFilterValue(it) },
+                            starSize = 28.dp,
+                            enabled = starFilterMode != BrowserViewModel.StarFilterMode.OFF
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAdvancedFilter = false }) { Text("确定") }
+            }
+        )
+    }
+
     // Directory tree dialog
     if (showDirectoryTree) {
-        val directoryTree = remember { mutableStateOf<List<DirectoryNode>>(emptyList()) }
+        val directoryTree = remember { mutableStateOf<List<DirectoryNode>?>(null) }
         LaunchedEffect(Unit) {
-            directoryTree.value = viewModel.buildDirectoryTree()
+            directoryTree.value = viewModel.loadSubFolders("")
         }
-        DirectoryTreeDialog(
-            directoryTree = directoryTree.value,
-            currentPath = folder,
-            onNavigate = { path ->
-                viewModel.setFolder(path)
-            },
-            onDismiss = { showDirectoryTree = false }
-        )
+        val tree = directoryTree.value
+        if (tree != null) {
+            DirectoryTreeDialog(
+                directoryTree = tree,
+                currentPath = folder,
+                onNavigate = { path ->
+                    viewModel.setFolder(path)
+                },
+                onDismiss = { showDirectoryTree = false },
+                onLoadChildren = { path -> viewModel.loadSubFolders(path) }
+            )
+        }
     }
     
     if (showCreateFolderDialog) {
@@ -934,29 +998,29 @@ private fun FileItem(
             overflow = TextOverflow.Ellipsis
         )
 
-            val metadata = buildMetadataLine(
+            val metadataPrefix = buildMetadataLineWithoutExtension(
                 duration = item.duration,
                 width = item.width,
                 height = item.height,
                 bitrate = item.bitrate,
-                extension = item.name.substringAfterLast('.', "").lowercase(),
                 hasGainAdjusted = item.hasGainAdjusted
             )
-            if (metadata.isNotEmpty() || item.star > 0) {
+            val extension = item.name.substringAfterLast('.', "").uppercase()
+            val hasContent = metadataPrefix.isNotEmpty() || item.star > 0 || extension.isNotEmpty()
+            if (hasContent) {
+                val metaStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (item.star > 0) {
-                        StarRatingDisplay(rating = item.star, starSize = 10.dp, filled = true)
-                        Spacer(Modifier.width(4.dp))
+                    if (metadataPrefix.isNotEmpty()) {
+                        Text(text = metadataPrefix, style = metaStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    if (metadata.isNotEmpty()) {
-                        Text(
-                            text = metadata,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                    if (item.star > 0) {
+                        if (metadataPrefix.isNotEmpty()) Text(" · ", style = metaStyle)
+                        StarRatingDisplay(rating = item.star, starSize = 10.dp, filled = true)
+                    }
+                    if (extension.isNotEmpty()) {
+                        if (metadataPrefix.isNotEmpty() || item.star > 0) Text(" · ", style = metaStyle)
+                        Text(extension, style = metaStyle, maxLines = 1)
                     }
                 }
             }

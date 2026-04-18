@@ -30,8 +30,8 @@ android {
         applicationId = "cn.vectory.syncplayer"
         minSdk = 34
         targetSdk = 35
-        versionCode = 73
-        versionName = "10.0.1"
+        versionCode = 74
+        versionName = "10.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -138,4 +138,5 @@ dependencies {
 
     // Biometric authentication for app lock
     implementation(libs.biometric)
+    implementation(libs.appcompat)
 }
