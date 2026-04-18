@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.browser
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
@@ -31,7 +33,11 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SortByAlpha
-import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.Home
+import cn.vectory.syncplayer.ui.components.StarRatingInput
+import cn.vectory.syncplayer.ui.components.StarRatingDisplay
+import cn.vectory.syncplayer.ui.components.DirectoryTreeDialog
+import cn.vectory.syncplayer.ui.components.DirectoryNode
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.automirrored.filled.ViewList
@@ -48,6 +54,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveable
+import cn.vectory.syncplayer.data.local.dao.VideoItemDao
 import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.ui.components.FileStatusIcon
 import cn.vectory.syncplayer.ui.components.FolderGridItem
@@ -59,6 +68,7 @@ import cn.vectory.syncplayer.ui.components.verticalScrollbar
 import cn.vectory.syncplayer.ui.util.buildMetadataLine
 import cn.vectory.syncplayer.ui.util.isVideoFile
 import kotlinx.coroutines.launch
+import java.lang.Math
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
@@ -79,6 +89,10 @@ fun BrowserScreen(
     val hasConfig by viewModel.hasConfig.collectAsState()
     val sortMode by viewModel.sortMode.collectAsState()
     val filter by viewModel.filter.collectAsState()
+    // Additional UI state expected by the advanced sorting/filtering UI
+    val browseMode by viewModel.browseMode.collectAsState()
+    val starFilterValue by viewModel.starFilterValue.collectAsState()
+    val starFilterMode by viewModel.starFilterMode.collectAsState()
     val folder by viewModel.currentFolder.collectAsState()
     val error by viewModel.error.collectAsState()
     val currentRelationId by viewModel.currentRelationId.collectAsState()
@@ -89,6 +103,7 @@ fun BrowserScreen(
     var showSortMenu by remember { mutableStateOf(false) }
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var showFolderContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
+    var showDirectoryTree by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -101,8 +116,13 @@ fun BrowserScreen(
         }
     }
 
-    BackHandler(enabled = folder.isNotEmpty()) {
-        viewModel.navigateUp()
+    // Support switching browse modes via back button as well
+    BackHandler(enabled = folder.isNotEmpty() || browseMode == BrowserViewModel.BrowseMode.FILE) {
+        if (browseMode == BrowserViewModel.BrowseMode.FILE) {
+            viewModel.setBrowseMode(BrowserViewModel.BrowseMode.DIRECTORY)
+        } else {
+            viewModel.navigateUp()
+        }
     }
 
     ModalNavigationDrawer(
@@ -190,7 +210,14 @@ fun BrowserScreen(
                             Text(
                                 text = displayPath,
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.clickable { showDirectoryTree = true }
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Filled.Home,
+                                contentDescription = "根目录",
+                                modifier = Modifier.clickable { showDirectoryTree = true }
                             )
                         }
                     },
@@ -227,8 +254,8 @@ fun BrowserScreen(
                             IconButton(onClick = {
                                 showSortMenu = true
                             }) {
-                                    Icon(
-                                    imageVector = Icons.Default.SwapVert,
+                                Icon(
+                                    imageVector = Icons.Default.FilterList,
                                     contentDescription = "排序筛选"
                                 )
                             }
@@ -286,7 +313,7 @@ fun BrowserScreen(
                                     IconOptionChip(
                                         selected = filter == BrowserViewModel.BrowseFilter.ALL,
                                         onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.ALL); showSortMenu = false }
-                                    ) { Icon(Icons.Default.FilterList, null, modifier = Modifier.size(20.dp)) }
+                                    ) { Icon(Icons.AutoMirrored.Filled.InsertDriveFile, null, modifier = Modifier.size(20.dp)) }
                                     IconOptionChip(
                                         selected = filter == BrowserViewModel.BrowseFilter.VIDEO_ONLY,
                                         onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.VIDEO_ONLY); showSortMenu = false }
@@ -295,6 +322,26 @@ fun BrowserScreen(
                                         selected = filter == BrowserViewModel.BrowseFilter.UNWATCHED,
                                         onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.UNWATCHED); showSortMenu = false }
                                     ) { Icon(Icons.Default.PlayCircleOutline, null, modifier = Modifier.size(20.dp)) }
+                                }
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                                // Star filter row
+                                Text(
+                                    "星级",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
+                                )
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    StarRatingInput(
+                                        rating = starFilterValue,
+                                        onRatingChange = { viewModel.setStarFilterValue(it) },
+                                        starSize = 24.dp,
+                                        enabled = starFilterMode != BrowserViewModel.StarFilterMode.OFF
+                                    )
                                 }
                                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                                 Text(
@@ -378,11 +425,7 @@ fun BrowserScreen(
                                 onClick = {
                                     viewModel.setFolder(item.relativePath)
                                 },
-                                onLongClick = {
-                                    if (!item.isSyncBaseDir && !item.containsSyncBaseDir && !item.isInSyncBaseDir) {
-                                        showFolderContextMenu = item
-                                    }
-                                }
+                                onLongClick = { showFolderContextMenu = item }
                             )
                         } else {
                             VideoGridItem(
@@ -396,6 +439,7 @@ fun BrowserScreen(
                                 isCompleted = item.isCompleted,
                                 isTrashed = item.isTrashed,
                                 isVideo = isVideoFile(item.name),
+                                star = item.star,
                                 onClick = {
                                     if (isVideoFile(item.name)) {
                                         viewModel.saveScrollPosition(folder, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
@@ -496,11 +540,7 @@ fun BrowserScreen(
                                 onClick = {
                                     viewModel.setFolder(item.relativePath)
                                 },
-                                onLongClick = {
-                                    if (!item.isSyncBaseDir && !item.containsSyncBaseDir && !item.isInSyncBaseDir) {
-                                        showFolderContextMenu = item
-                                    }
-                                }
+                            onLongClick = { showFolderContextMenu = item }
                             )
                         } else {
                             FileItem(
@@ -581,12 +621,14 @@ fun BrowserScreen(
     }
 
     showContextMenu?.let { item ->
+        // Reworked file context menu: include path, optional star rating for videos, thumbnail, and actions
         Dialog(onDismissRequest = { showContextMenu = null }) {
             Card(
-                modifier = Modifier.width(280.dp),
+                modifier = Modifier.width(320.dp),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    // Title
                     Text(
                         text = item.name,
                         style = MaterialTheme.typography.titleMedium,
@@ -594,9 +636,34 @@ fun BrowserScreen(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
+                    // Path in gray small text
+                    Text(
+                        text = item.relativePath,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
 
                     if (isVideoFile(item.name)) {
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(8.dp))
+                        StarRatingInput(
+                            rating = item.star,
+                            onRatingChange = { rating ->
+                                if (item.videoItemId != null) {
+                                    viewModel.updateStar(item.videoItemId, rating)
+                                } else {
+                                    viewModel.updateStarByPath(item.relativePath, rating)
+                                }
+                            },
+                            starSize = 20.dp
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+
+                    // Thumbnail for videos
+                    if (isVideoFile(item.name)) {
                         Thumbnail(
                             thumbnailPath = item.thumbnailPath,
                             isVideo = true,
@@ -607,7 +674,7 @@ fun BrowserScreen(
                         )
                     }
 
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End
@@ -660,29 +727,82 @@ fun BrowserScreen(
     }
 
     showFolderContextMenu?.let { item ->
-        AlertDialog(
-            onDismissRequest = { showFolderContextMenu = null },
-            title = { Text(item.name) },
-            confirmButton = {
-                if (!item.isSyncBaseDir && !item.containsSyncBaseDir && !item.isInSyncBaseDir) {
-                    TextButton(
-                        onClick = {
-                            viewModel.deleteFolder(item.relativePath)
-                            showFolderContextMenu = null
+        if (viewModel.isFileInBaseDir(item.relativePath)) {
+            Dialog(onDismissRequest = { showFolderContextMenu = null }) {
+                Card(
+                    modifier = Modifier.width(280.dp),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(text = item.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(12.dp))
+                        var stats by remember { mutableStateOf<VideoItemDao.RecursiveFolderStat?>(null) }
+                        LaunchedEffect(item.relativePath) {
+                            stats = viewModel.getRecursiveFolderStats(item.relativePath)
                         }
-                    ) {
-                        Text("删除", color = MaterialTheme.colorScheme.error)
+                        if (stats != null) {
+                            Text("总文件数：${stats!!.totalFileCount}", style = MaterialTheme.typography.bodyMedium)
+                            Text("视频文件数：${stats!!.totalVideoCount}", style = MaterialTheme.typography.bodyMedium)
+                            Text("总大小：${formatFileSize(stats!!.totalSize)}", style = MaterialTheme.typography.bodyMedium)
+                        } else {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        }
+                        Spacer(Modifier.height(16.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            TextButton(onClick = {
+                                viewModel.markFolderRead(item.relativePath, true)
+                                showFolderContextMenu = null
+                            }) { Text("标记已读") }
+                            TextButton(onClick = {
+                                viewModel.markFolderRead(item.relativePath, false)
+                                showFolderContextMenu = null
+                            }) { Text("标记未读") }
+                            TextButton(onClick = { showFolderContextMenu = null }) { Text("取消") }
+                        }
                     }
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showFolderContextMenu = null }) {
-                    Text("取消")
-                }
             }
-        )
+        } else {
+            AlertDialog(
+                onDismissRequest = { showFolderContextMenu = null },
+                title = { Text(item.name) },
+                confirmButton = {
+                    if (!item.isSyncBaseDir && !item.containsSyncBaseDir && !item.isInSyncBaseDir) {
+                        TextButton(
+                            onClick = {
+                                viewModel.deleteFolder(item.relativePath)
+                                showFolderContextMenu = null
+                            }
+                        ) {
+                            Text("删除", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showFolderContextMenu = null }) {
+                        Text("取消")
+                    }
+                }
+            )
+        }
     }
 
+    // Directory tree dialog
+    if (showDirectoryTree) {
+        val directoryTree = remember { mutableStateOf<List<DirectoryNode>>(emptyList()) }
+        LaunchedEffect(Unit) {
+            directoryTree.value = viewModel.buildDirectoryTree()
+        }
+        DirectoryTreeDialog(
+            directoryTree = directoryTree.value,
+            currentPath = folder,
+            onNavigate = { path ->
+                viewModel.setFolder(path)
+            },
+            onDismiss = { showDirectoryTree = false }
+        )
+    }
+    
     if (showCreateFolderDialog) {
         var folderName by remember { mutableStateOf("") }
         AlertDialog(
@@ -724,6 +844,8 @@ fun BrowserScreen(
         }
     }
 }
+
+
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -805,12 +927,12 @@ private fun FileItem(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.Center
         ) {
-            Text(
-                text = item.name.substringBeforeLast('.'),
-                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+        Text(
+            text = item.name.substringBeforeLast('.'),
+            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
 
             val metadata = buildMetadataLine(
                 duration = item.duration,
@@ -820,15 +942,23 @@ private fun FileItem(
                 extension = item.name.substringAfterLast('.', "").lowercase(),
                 hasGainAdjusted = item.hasGainAdjusted
             )
-            if (metadata.isNotEmpty()) {
+            if (metadata.isNotEmpty() || item.star > 0) {
                 Spacer(Modifier.height(2.dp))
-                Text(
-                    text = metadata,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (item.star > 0) {
+                        StarRatingDisplay(rating = item.star, starSize = 10.dp, filled = true)
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    if (metadata.isNotEmpty()) {
+                        Text(
+                            text = metadata,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
             }
         }
 
@@ -882,4 +1012,14 @@ private fun SortOptionChip(
             )
         }
     }
+}
+
+
+private fun formatFileSize(bytes: Long): String {
+    if (bytes <= 0) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+    val exp = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt()
+    val value = bytes / Math.pow(1024.0, exp.toDouble())
+    val unit = units.getOrElse(exp) { "B" }
+    return String.format("%.1f%s", value.toDouble(), unit)
 }

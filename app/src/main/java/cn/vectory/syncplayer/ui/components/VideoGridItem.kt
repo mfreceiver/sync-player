@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.ui.components
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
@@ -14,7 +15,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Icon
@@ -64,6 +66,7 @@ internal fun VideoGridItem(
     isCompleted: Boolean,
     isTrashed: Boolean,
     isVideo: Boolean,
+    star: Int = 0,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -199,6 +202,27 @@ internal fun VideoGridItem(
                 )
             }
         }
+
+        // Optional star overlay on grid items
+        if (star > 0) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 4.dp, bottom = 6.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(3.dp))
+                    .padding(horizontal = 3.dp, vertical = 1.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                repeat(star) {
+                    Icon(
+                        imageVector = Icons.Filled.StarBorder,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(10.dp)
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -225,7 +249,7 @@ private fun GridThumbnail(
         } else {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Icon(
-                    imageVector = if (isVideo) Icons.Default.Movie else Icons.Default.InsertDriveFile,
+                    imageVector = if (isVideo) Icons.Default.Movie else Icons.AutoMirrored.Filled.InsertDriveFile,
                     contentDescription = if (isVideo) "视频" else "文件",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                     modifier = Modifier.size(32.dp)
