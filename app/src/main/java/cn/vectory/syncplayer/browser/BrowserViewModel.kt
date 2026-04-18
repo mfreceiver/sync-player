@@ -153,6 +153,10 @@ class BrowserViewModel @Inject constructor(
         playbackRepository.getByFolderFlow(folder)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Task A: observe all playback records
+    private val allPlaybackRecords = playbackRepository.getAllFlow()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     private val basePaths = syncRelationRepository.getAllWithSourceFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -166,19 +170,29 @@ class BrowserViewModel @Inject constructor(
         }?.value
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    // Helper data wrapper for combined playback records + relations
+    private data class PlaybackBundle(
+        val records: List<PlaybackRecordEntity>,
+        val allRecords: List<PlaybackRecordEntity>,
+        val relations: List<SyncRelationWithSource>,
+        val browseModeVal: BrowseMode
+    )
+
     @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
     val browseItems: StateFlow<List<BrowseItem>> = combine(
         combine(effectiveFolder, _sortMode, _filter) { folder, mode, filterVal ->
             Triple(folder, mode, filterVal)
         },
-        combine(folderPlaybackRecords, basePaths, _browseMode) { records, relations, browseModeVal ->
-            Triple(records, relations, browseModeVal)
+        // include allPlaybackRecords as an additional trigger source
+        combine(folderPlaybackRecords, allPlaybackRecords, basePaths, _browseMode) { records, allRecords, relations, browseModeVal ->
+            PlaybackBundle(records, allRecords, relations, browseModeVal)
         }
-    ) { (folder, mode, filterVal), (records, relations, browseModeVal) ->
+    ) { (folder, mode, filterVal), bundle ->
+        val (records, allRecords, relations, browseModeVal) = bundle
         val baseDirSet = relations.map { it.relation.localBasePath }.toSet()
         val starMode = _starFilterMode.value
         val starValue = _starFilterValue.value
-        buildBrowseItems(folder, mode, filterVal, starMode, starValue, browseModeVal, records, baseDirSet)
+        buildBrowseItems(folder, mode, filterVal, starMode, starValue, browseModeVal, records, allRecords, baseDirSet)
     }
     .debounce(300)
     .onEach { _browseItemsFolder.value = _currentFolder.value }
@@ -192,13 +206,14 @@ class BrowserViewModel @Inject constructor(
         starValue: Int,
         browseModeVal: BrowseMode,
         records: List<PlaybackRecordEntity>,
+        allRecords: List<PlaybackRecordEntity>,
         baseDirSet: Set<String>
     ): List<BrowseItem> = withContext(Dispatchers.IO) {
         // === FILE MODE: flat list, no folders ===
         if (browseModeVal == BrowseMode.FILE) {
             _flatTotalCount.value = videoRepository.getTotalItemCount()
             val videoEntities = videoRepository.getFlatItemsFlow().first()
-            val allRecords = playbackRepository.getAllFlow().first()
+            // use provided allRecords instead of re-reading from repo
             val recordMap = allRecords.associateBy { it.videoItemId }
 
             val allVideos = videoEntities.map { video ->
