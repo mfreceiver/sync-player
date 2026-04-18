@@ -58,13 +58,19 @@ fun AboutScreen(
         ) {
             item {
                 Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
                         Text("关于", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(12.dp))
-                        ListItem(
-                            headlineContent = { Text("应用版本") },
-                            trailingContent = { Text(BuildConfig.VERSION_NAME) }
-                        )
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                    Row(
+                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("应用版本")
+                        Text(BuildConfig.VERSION_NAME, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }

@@ -203,11 +203,12 @@ fun SettingsScreen(
             }
 
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    ListItem(
-                        headlineContent = { Text("应用版本") },
-                        trailingContent = { Text(BuildConfig.VERSION_NAME) }
-                    )
+                Row(
+                    modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("应用版本")
+                    Text(BuildConfig.VERSION_NAME, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
 
