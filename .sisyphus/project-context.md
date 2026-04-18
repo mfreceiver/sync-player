@@ -294,33 +294,54 @@ fix: favorite button, sync progress UI, seek clamp, swipe direction
 ```
 
 ### Gitea Release & APK Upload
+
+Token: Use the same token as git push (from `~/.git-credentials`).
+
 ```bash
-# Credentials (from ~/.git-credentials)
 TOKEN=$(grep 'git.vectory' ~/.git-credentials | head -1 | sed 's|https://||' | sed 's|@.*||' | cut -d: -f2)
 GITEA_API="https://git.vectory.cn:18443/api/v1"
 REPO="mfreceiver/sync-player"
-VERSION="v6.1.0"
+VERSION="v10.0.6"
 
-# Step 1: Create release (if not exists)
+# Step 1: Generate changelog from commits since last tag
+PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+if [ -n "$PREV_TAG" ]; then
+    CHANGELOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" --no-merges)
+else
+    CHANGELOG=$(git log -20 --pretty=format:"- %s" --no-merges)
+fi
+BODY="## ${VERSION}\n\n${CHANGELOG}"
+
+# Step 2: Create release with changelog (use python3 for safe JSON escaping)
 RELEASE_ID=$(curl -s "${GITEA_API}/repos/${REPO}/releases/tags/${VERSION}" \
     -H "Authorization: token $TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
 
 if [ -z "$RELEASE_ID" ]; then
+    PAYLOAD=$(python3 -c "
+import json,sys
+print(json.dumps({
+    'tag_name': '${VERSION}',
+    'target_commitish': 'master',
+    'name': '${VERSION}',
+    'body': sys.stdin.read(),
+    'draft': False,
+    'prerelease': False
+}))" <<< "$(echo -e "${BODY}")")
     RELEASE_ID=$(curl -s -X POST "${GITEA_API}/repos/${REPO}/releases" \
         -H "Authorization: token $TOKEN" \
         -H "Content-Type: application/json" \
-        -d "{\"tag_name\":\"${VERSION}\",\"target_commitish\":\"master\",\"name\":\"${VERSION}\",\"body\":\"release description\",\"draft\":false,\"prerelease\":false}" \
+        -d "$PAYLOAD" \
         | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 fi
 
-# Step 2: Upload Release APK (~12MB, R8 minified)
+# Step 3: Upload Release APK (~12MB, R8 minified)
 curl -X POST "${GITEA_API}/repos/${REPO}/releases/${RELEASE_ID}/assets?name=app-release.apk" \
     -H "Authorization: token $TOKEN" \
     -H "Content-Type: application/vnd.android.package-archive" \
     --data-binary @app/build/outputs/apk/release/app-release.apk \
     --max-time 300
 ```
-**Note**: Release APK is ~12MB (R8 minified). Use `--max-time 300`. For Chinese body text, avoid `curl -d` with inline Chinese — use Python `json.dumps()` instead.
+**Note**: Release APK is ~12MB (R8 minified). Use `--max-time 300`. Python `json.dumps()` handles Chinese text safely in the body — never use inline Chinese in `curl -d`.
 
 ### Versioning Rule
 **After every `git commit` + `git push`, increment the app version number by +1 (major version).**
