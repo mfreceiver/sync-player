@@ -116,11 +116,8 @@ internal fun VideoGridItem(
             }
 
             if (progress > 0f) {
-                val progressColor = if (isCompleted) {
-                    LocalExtendedColors.current.syncCompleted
-                } else {
-                    MaterialTheme.colorScheme.primary
-                }
+                // Always use the blue (primary) color for the progress bar
+                val progressColor = MaterialTheme.colorScheme.primary
 
                 Canvas(
                     modifier = Modifier
@@ -128,13 +125,15 @@ internal fun VideoGridItem(
                         .align(Alignment.BottomCenter)
                 ) {
                     val barHeight = 3.dp.toPx()
+                    // Track/background bar remains unchanged
                     drawRect(
                         color = Color.White.copy(alpha = 0.25f),
                         topLeft = Offset(0f, size.height - barHeight),
                         size = Size(size.width, barHeight)
                     )
+                    // Filled progress bar with semi-transparency
                     drawRect(
-                        color = progressColor,
+                        color = progressColor.copy(alpha = 0.6f),
                         topLeft = Offset(0f, size.height - barHeight),
                         size = Size(size.width * progress, barHeight)
                     )
