@@ -329,15 +329,18 @@ fun SyncPreviewScreen(
                                         imageVector = Icons.Default.CheckCircle,
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(36.dp)
+                                        modifier = Modifier.size(48.dp)
                                     )
                                     Spacer(Modifier.height(8.dp))
                                     Text(
                                         text = "已同步，无需操作",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
                                     )
+                                    Spacer(Modifier.height(16.dp))
+                                    Button(onClick = { viewModel.loadPreview() }) {
+                                        Text("重新扫描")
+                                    }
                                 }
                             }
                         }
@@ -500,7 +503,6 @@ private fun SyncActionItem(
             )
         }
     )
-    HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
 }
 
 private fun formatFileSize(bytes: Long): String {

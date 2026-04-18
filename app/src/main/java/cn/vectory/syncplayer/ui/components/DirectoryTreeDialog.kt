@@ -51,7 +51,20 @@ data class DirectoryNode(
     val isSyncBaseDir: Boolean = false,
     var isExpanded: Boolean = false,
     var isLoaded: Boolean = false
-)
+) {
+    /**
+     * Create an independent deep copy of this node tree.
+     * Used to trigger Compose recomposition when internal mutable state changes.
+     */
+    fun deepCopy(): DirectoryNode = DirectoryNode(
+        name = name,
+        fullPath = fullPath,
+        children = children.map { it.deepCopy() }.toMutableList(),
+        isSyncBaseDir = isSyncBaseDir,
+        isExpanded = isExpanded,
+        isLoaded = isLoaded
+    )
+}
 
 @Composable
 internal fun DirectoryTreeDialog(
@@ -62,8 +75,8 @@ internal fun DirectoryTreeDialog(
     onLoadChildren: suspend (String) -> List<DirectoryNode>,
     modifier: Modifier = Modifier
 ) {
-    val expandedState = remember(directoryTree) {
-        mutableStateOf(directoryTree.toMutableList().also { tree ->
+    val treeState = remember(directoryTree) {
+        mutableStateOf(directoryTree.map { it.deepCopy() }.also { tree ->
             expandAncestors(tree, currentPath)
         })
     }
@@ -107,7 +120,7 @@ internal fun DirectoryTreeDialog(
                     }
 
                     items(
-                        items = flattenedNodes(expandedState.value),
+                        items = flattenedNodes(treeState.value),
                         key = { it.node.fullPath }
                     ) { item ->
                         DirectoryTreeNode(
@@ -117,7 +130,7 @@ internal fun DirectoryTreeDialog(
                             isLoading = loadingPath.value == item.node.fullPath,
                             onSelect = { selectedPath.value = it },
                             onToggleExpand = { path ->
-                                val node = findNode(expandedState.value, path)
+                                val node = findNode(treeState.value, path)
                                 if (node != null && !node.isLoaded) {
                                     loadingPath.value = path
                                     scope.launch {
@@ -127,9 +140,11 @@ internal fun DirectoryTreeDialog(
                                         node.isLoaded = true
                                         node.isExpanded = true
                                         loadingPath.value = null
+                                        treeState.value = treeState.value.map { it.deepCopy() }
                                     }
                                 } else if (node != null) {
                                     node.isExpanded = !node.isExpanded
+                                    treeState.value = treeState.value.map { it.deepCopy() }
                                 }
                             }
                         )

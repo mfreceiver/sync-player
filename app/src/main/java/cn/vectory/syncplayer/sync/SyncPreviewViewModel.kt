@@ -76,6 +76,10 @@ class SyncPreviewViewModel @Inject constructor(
     fun setSyncMode(mode: SyncMode) {
         _syncMode.value = mode
         _syncComplete.value = false
+        _previewLoaded.value = false
+        _toDownload.value = emptyList()
+        _toDelete.value = emptyList()
+        _error.value = null
     }
 
     fun loadPreview() {
@@ -135,7 +139,6 @@ class SyncPreviewViewModel @Inject constructor(
                     (p.phase == SyncPhase.COMPLETED || p.phase == SyncPhase.FAILED || p.phase == SyncPhase.CANCELLED)
             }
             _isSyncing.value = false
-            _syncComplete.value = true
             if (result.phase == SyncPhase.COMPLETED) {
                 _toDownload.value = emptyList()
                 _toDelete.value = emptyList()
@@ -144,6 +147,7 @@ class SyncPreviewViewModel @Inject constructor(
             } else if (result.phase == SyncPhase.CANCELLED) {
                 _error.value = "同步已取消"
             }
+            _syncComplete.value = true
         }
     }
 

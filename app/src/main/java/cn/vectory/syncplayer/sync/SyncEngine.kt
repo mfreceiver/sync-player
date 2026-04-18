@@ -382,6 +382,10 @@ class SyncEngine @Inject constructor(
                     )
                     completedCount.incrementAndGet()
                     completedPathsSet.add(action.relativePath)
+                    _progress.value = _progress.value.copy(
+                        completedFiles = completedCount.get(),
+                        completedPaths = completedPathsSet.toSet()
+                    )
                 }
 
                 if (toActuallyDownload.isNotEmpty()) {

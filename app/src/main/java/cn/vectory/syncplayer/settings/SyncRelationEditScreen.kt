@@ -251,7 +251,16 @@ fun SyncRelationEditScreen(
                                 onClick = { viewModel.navigateRemoteInto(dir.name) },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("📁 ${dir.name}")
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Filled.Folder,
+                                        contentDescription = null,
+                                        tint = extendedColors.folderAmber,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(dir.name)
+                                }
                             }
                         }
                     }

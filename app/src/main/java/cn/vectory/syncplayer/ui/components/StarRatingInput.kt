@@ -12,11 +12,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-
-private val StarGold = Color(0xFFFFC107)
+import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 
 @Composable
 internal fun StarRatingInput(
@@ -27,6 +25,7 @@ internal fun StarRatingInput(
     enabled: Boolean = true
 ) {
     val contentAlpha = if (enabled) 1f else 0.38f
+    val starGold = LocalExtendedColors.current.starGold
 
     Row(modifier = modifier) {
         for (i in 0..4) {
@@ -34,7 +33,7 @@ internal fun StarRatingInput(
             Icon(
                 imageVector = if (isFilled) Icons.Filled.Star else Icons.Filled.StarBorder,
                 contentDescription = if (isFilled) "已评分" else "未评分",
-                tint = if (isFilled) StarGold else MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = if (isFilled) starGold else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .alpha(contentAlpha)
                     .then(
@@ -60,13 +59,14 @@ internal fun StarRatingDisplay(
     filled: Boolean = true
 ) {
     if (rating <= 0) return
+    val starGold = LocalExtendedColors.current.starGold
 
     Row(modifier = modifier) {
         repeat(rating) {
             Icon(
                 imageVector = if (filled) Icons.Filled.Star else Icons.Filled.StarBorder,
                 contentDescription = null,
-                tint = if (filled) StarGold else Color.White,
+                tint = if (filled) starGold else MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.size(starSize)
             )
         }

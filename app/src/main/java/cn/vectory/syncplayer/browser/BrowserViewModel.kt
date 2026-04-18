@@ -168,16 +168,16 @@ class BrowserViewModel @Inject constructor(
 
     @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
     val browseItems: StateFlow<List<BrowseItem>> = combine(
-        effectiveFolder,
-        _sortMode,
-        _filter,
-        folderPlaybackRecords,
-        basePaths
-    ) { folder, mode, filterVal, records, relations ->
+        combine(effectiveFolder, _sortMode, _filter) { folder, mode, filterVal ->
+            Triple(folder, mode, filterVal)
+        },
+        combine(folderPlaybackRecords, basePaths, _browseMode) { records, relations, browseModeVal ->
+            Triple(records, relations, browseModeVal)
+        }
+    ) { (folder, mode, filterVal), (records, relations, browseModeVal) ->
         val baseDirSet = relations.map { it.relation.localBasePath }.toSet()
         val starMode = _starFilterMode.value
         val starValue = _starFilterValue.value
-        val browseModeVal = _browseMode.value
         buildBrowseItems(folder, mode, filterVal, starMode, starValue, browseModeVal, records, baseDirSet)
     }
     .debounce(300)

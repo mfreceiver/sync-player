@@ -1,13 +1,5 @@
 package cn.vectory.syncplayer.ui.util
 
-import java.text.Collator
-import java.util.Locale
-
-private val collator: Collator = Collator.getInstance(Locale.CHINA).apply {
-    strength = Collator.PRIMARY
-    decomposition = Collator.CANONICAL_DECOMPOSITION
-}
-
 private data class SortToken(val value: String, val isNumeric: Boolean)
 
 private fun tokenizeNaturalSort(s: String): List<SortToken> {
@@ -25,6 +17,28 @@ private fun tokenizeNaturalSort(s: String): List<SortToken> {
         }
     }
     return tokens
+}
+
+private fun charCategoryPriority(c: Char): Int = when {
+    c in 'a'..'z' || c in 'A'..'Z' -> 0
+    c.code < 128 -> 1
+    else -> 2
+}
+
+private fun nonNumericCompare(a: String, b: String): Int {
+    val minLen = minOf(a.length, b.length)
+    for (i in 0 until minLen) {
+        val catA = charCategoryPriority(a[i])
+        val catB = charCategoryPriority(b[i])
+        if (catA != catB) return catA - catB
+        if (a[i] != b[i]) {
+            val aLower = a[i].lowercaseChar()
+            val bLower = b[i].lowercaseChar()
+            if (aLower != bLower) return aLower - bLower
+            return b[i] - a[i]
+        }
+    }
+    return a.length - b.length
 }
 
 internal val fileNameComparator: Comparator<String> = Comparator { a, b ->
@@ -48,7 +62,7 @@ internal val fileNameComparator: Comparator<String> = Comparator { a, b ->
             }
             tA.isNumeric && !tB.isNumeric -> -1
             !tA.isNumeric && tB.isNumeric -> 1
-            else -> collator.compare(tA.value, tB.value)
+            else -> nonNumericCompare(tA.value, tB.value)
         }
         if (cmp != 0) return@Comparator cmp
     }

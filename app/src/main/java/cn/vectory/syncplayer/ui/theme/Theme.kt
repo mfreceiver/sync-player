@@ -12,6 +12,7 @@ import androidx.compose.ui.platform.LocalContext
 
 data class ExtendedColors(
     val folderAmber: Color,
+    val starGold: Color,
     val successGreen: Color,
     val placeholderGrey: Color,
     val trashRed: Color,
@@ -25,6 +26,7 @@ data class ExtendedColors(
 val LocalExtendedColors = staticCompositionLocalOf {
     ExtendedColors(
         folderAmber = FolderAmber,
+        starGold = Color(0xFFFFC107),
         successGreen = SuccessGreen,
         placeholderGrey = PlaceholderGrey,
         trashRed = TrashRed,
@@ -130,6 +132,7 @@ fun SyncPlayerTheme(
     val extendedColors = if (darkTheme) {
         ExtendedColors(
             folderAmber = FolderAmber,
+            starGold = Color(0xFFFFC107),
             successGreen = SuccessGreen,
             placeholderGrey = PlaceholderGrey,
             trashRed = TrashRed,
@@ -142,6 +145,7 @@ fun SyncPlayerTheme(
     } else {
         ExtendedColors(
             folderAmber = FolderAmber,
+            starGold = Color(0xFFFFC107),
             successGreen = SuccessGreen,
             placeholderGrey = PlaceholderGrey,
             trashRed = TrashRed,

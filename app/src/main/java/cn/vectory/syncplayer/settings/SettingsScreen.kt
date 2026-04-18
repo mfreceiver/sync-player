@@ -151,7 +151,7 @@ fun SettingsScreen(
                     Text("应用安全锁", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "从后台切回应用时需要验证身份（指纹/面部/PIN）",
+                        "从后台切回应用时需要验证身份（指纹/面部识别）",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -177,7 +177,7 @@ fun SettingsScreen(
                     if (!viewModel.canAuthenticateBio) {
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "设备未设置生物识别或PIN码",
+                            "设备未设置生物识别信息（指纹/面部）",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error
                         )

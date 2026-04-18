@@ -326,36 +326,28 @@ fun BrowserScreen(
                                     ) { Icon(Icons.Default.PlayCircleOutline, null, modifier = Modifier.size(20.dp)) }
                                 }
                                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                                Text(
-                                    "浏览",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
-                                )
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    IconOptionChip(
-                                        selected = browseMode == BrowserViewModel.BrowseMode.DIRECTORY,
-                                        onClick = { viewModel.setBrowseMode(BrowserViewModel.BrowseMode.DIRECTORY); showSortMenu = false }
-                                    ) { Icon(Icons.Default.FolderOpen, null, modifier = Modifier.size(20.dp)) }
-                                    IconOptionChip(
-                                        selected = browseMode == BrowserViewModel.BrowseMode.FILE,
-                                        onClick = { viewModel.setBrowseMode(BrowserViewModel.BrowseMode.FILE); showSortMenu = false }
-                                    ) { Icon(Icons.Default.VideoFile, null, modifier = Modifier.size(20.dp)) }
+                                if (browseMode == BrowserViewModel.BrowseMode.FILE || folder.isEmpty()) {
+                                    Text(
+                                        "浏览",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
+                                    )
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        IconOptionChip(
+                                            selected = browseMode == BrowserViewModel.BrowseMode.DIRECTORY,
+                                            onClick = { viewModel.setBrowseMode(BrowserViewModel.BrowseMode.DIRECTORY); showSortMenu = false }
+                                        ) { Icon(Icons.Default.FolderOpen, null, modifier = Modifier.size(20.dp)) }
+                                        IconOptionChip(
+                                            selected = browseMode == BrowserViewModel.BrowseMode.FILE,
+                                            onClick = { viewModel.setBrowseMode(BrowserViewModel.BrowseMode.FILE); showSortMenu = false }
+                                        ) { Icon(Icons.Default.VideoFile, null, modifier = Modifier.size(20.dp)) }
+                                    }
+                                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                                 }
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                                TextButton(
-                                    onClick = {
-                                        showSortMenu = false
-                                        showAdvancedFilter = true
-                                    },
-                                    modifier = Modifier.padding(horizontal = 8.dp)
-                                ) {
-                                    Text("高级筛选", style = MaterialTheme.typography.bodySmall)
-                                }
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                                 Text(
                                     "视图",
                                     style = MaterialTheme.typography.labelMedium,
@@ -390,6 +382,16 @@ fun BrowserScreen(
                                             )
                                         }
                                     }
+                                }
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                                TextButton(
+                                    onClick = {
+                                        showSortMenu = false
+                                        showAdvancedFilter = true
+                                    },
+                                    modifier = Modifier.padding(horizontal = 8.dp)
+                                ) {
+                                    Text("高级筛选", style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                         }
@@ -576,10 +578,6 @@ fun BrowserScreen(
                                 onLongClick = { showContextMenu = item }
                             )
                         }
-                        HorizontalDivider(
-                            modifier = Modifier.padding(start = 72.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                        )
                     }
 
                     if (browseItems.isNotEmpty() && filter != BrowserViewModel.BrowseFilter.ALL && hiddenByFilterCount > 0) {
@@ -851,7 +849,24 @@ fun BrowserScreen(
     if (showDirectoryTree) {
         val directoryTree = remember { mutableStateOf<List<DirectoryNode>?>(null) }
         LaunchedEffect(Unit) {
-            directoryTree.value = viewModel.loadSubFolders("")
+            val rootChildren = viewModel.loadSubFolders("")
+            if (folder.isNotEmpty()) {
+                val segments = folder.split("/")
+                var currentPath = ""
+                var currentLevel = rootChildren.toMutableList()
+                for (segment in segments) {
+                    val targetPath = if (currentPath.isEmpty()) segment else "$currentPath/$segment"
+                    val targetNode = currentLevel.find { it.fullPath == targetPath }
+                    if (targetNode != null) {
+                        targetNode.isLoaded = true
+                        targetNode.isExpanded = true
+                        targetNode.children.addAll(viewModel.loadSubFolders(targetPath))
+                        currentLevel = targetNode.children
+                    }
+                    currentPath = targetPath
+                }
+            }
+            directoryTree.value = rootChildren
         }
         val tree = directoryTree.value
         if (tree != null) {
