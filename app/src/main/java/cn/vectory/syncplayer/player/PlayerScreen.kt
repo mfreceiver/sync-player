@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.*
@@ -564,7 +565,7 @@ LaunchedEffect(exoPlayer) {
 
         PlayerOverlayView(currentOverlay)
 
-        // Top-position speed overlay (long-press) - show until release
+        // Speed overlay (long-press)
         val currentSpeedOverlay = speedOverlayMultiplier
         if (currentSpeedOverlay != null) {
             Box(
@@ -579,7 +580,8 @@ LaunchedEffect(exoPlayer) {
                     tonalElevation = 0.dp
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                        modifier = Modifier
+                            .padding(top = 56.dp, start = 20.dp, end = 20.dp, bottom = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -985,8 +987,8 @@ private fun PlayerOverlayView(overlay: PlayerOverlay?) {
                     is PlayerOverlay.SpeedUp -> Icons.Filled.FastForward
                     is PlayerOverlay.Previous -> Icons.Filled.SkipPrevious
                     is PlayerOverlay.Next -> Icons.Filled.SkipNext
-                    is PlayerOverlay.NoPrevious -> Icons.Filled.SkipPrevious
-                    is PlayerOverlay.NoNext -> Icons.Filled.SkipNext
+                    is PlayerOverlay.NoPrevious -> Icons.Filled.Block
+                    is PlayerOverlay.NoNext -> Icons.Filled.Block
                     is PlayerOverlay.TrashAction -> if (overlay.isIn) Icons.Filled.Delete else Icons.Outlined.DeleteOutline
                     is PlayerOverlay.Orientation -> if (overlay.label == "FULLSCREEN") Icons.Filled.Fullscreen else Icons.Filled.ScreenRotation
                 }
