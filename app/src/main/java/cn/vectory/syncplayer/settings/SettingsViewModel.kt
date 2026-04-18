@@ -5,7 +5,7 @@ import android.content.ComponentName
 import android.content.pm.PackageManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import cn.vectory.syncplayer.browser.BrowserViewModel
+// BrowserViewModel import removed as it's no longer used in Settings screen
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
@@ -29,17 +29,7 @@ class SettingsViewModel @Inject constructor(
     private val _longPressSpeed = MutableStateFlow(2.0f)
     val longPressSpeed: StateFlow<Float> = _longPressSpeed.asStateFlow()
 
-    private val _defaultSortMode = MutableStateFlow(BrowserViewModel.SortMode.FILENAME_ASC)
-    val defaultSortMode: StateFlow<BrowserViewModel.SortMode> = _defaultSortMode.asStateFlow()
-
-    private val _defaultFilter = MutableStateFlow(BrowserViewModel.BrowseFilter.ALL)
-    val defaultFilter: StateFlow<BrowserViewModel.BrowseFilter> = _defaultFilter.asStateFlow()
-
-    private val _viewMode = MutableStateFlow(BrowserViewModel.ViewMode.LIST)
-    val viewMode: StateFlow<BrowserViewModel.ViewMode> = _viewMode.asStateFlow()
-
-    private val _gridColumns = MutableStateFlow(3)
-    val gridColumns: StateFlow<Int> = _gridColumns.asStateFlow()
+    // Removed defaultSortMode/defaultFilter/viewMode/gridColumns as settings are deprecated
 
     private val _volumeBalance = MutableStateFlow(false)
     val volumeBalance: StateFlow<Boolean> = _volumeBalance.asStateFlow()
@@ -63,22 +53,6 @@ class SettingsViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             _longPressSpeed.value = userPrefs.getLongPressSpeed()
-            _defaultSortMode.value = try {
-                BrowserViewModel.SortMode.valueOf(userPrefs.getDefaultSortMode())
-            } catch (_: Exception) {
-                BrowserViewModel.SortMode.FILENAME_ASC
-            }
-            _defaultFilter.value = try {
-                BrowserViewModel.BrowseFilter.valueOf(userPrefs.getDefaultFilter())
-            } catch (_: Exception) {
-                BrowserViewModel.BrowseFilter.ALL
-            }
-            _viewMode.value = try {
-                BrowserViewModel.ViewMode.valueOf(userPrefs.getViewMode())
-            } catch (_: Exception) {
-                BrowserViewModel.ViewMode.LIST
-            }
-            _gridColumns.value = userPrefs.getGridColumns()
             _volumeBalance.value = userPrefs.getVolumeBalance()
             _doubleTapAction.value = try {
                 DoubleTapAction.valueOf(userPrefs.getDoubleTapAction())
@@ -97,25 +71,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { userPrefs.setLongPressSpeed(speed) }
     }
 
-    fun setDefaultSortMode(mode: BrowserViewModel.SortMode) {
-        _defaultSortMode.value = mode
-        viewModelScope.launch { userPrefs.setDefaultSortMode(mode.name) }
-    }
-
-    fun setDefaultFilter(filter: BrowserViewModel.BrowseFilter) {
-        _defaultFilter.value = filter
-        viewModelScope.launch { userPrefs.setDefaultFilter(filter.name) }
-    }
-
-    fun setViewMode(mode: BrowserViewModel.ViewMode) {
-        _viewMode.value = mode
-        viewModelScope.launch { userPrefs.setViewMode(mode.name) }
-    }
-
-    fun setGridColumns(columns: Int) {
-        _gridColumns.value = columns.coerceIn(1, 5)
-        viewModelScope.launch { userPrefs.setGridColumns(columns) }
-    }
+    // Removed: setDefaultSortMode, setDefaultFilter, setViewMode, setGridColumns
 
     fun setVolumeBalance(enabled: Boolean) {
         _volumeBalance.value = enabled
