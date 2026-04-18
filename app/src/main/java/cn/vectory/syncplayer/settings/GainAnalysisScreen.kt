@@ -6,7 +6,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -190,7 +190,7 @@ fun GainAnalysisScreen(
                                 },
                                 leadingContent = {
                                     Icon(
-                                        Icons.Default.Download,
+                                        Icons.Default.Equalizer,
                                         contentDescription = "分析",
                                         tint = MaterialTheme.colorScheme.primary
                                     )

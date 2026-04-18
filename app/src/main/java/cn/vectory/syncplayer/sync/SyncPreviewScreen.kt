@@ -276,10 +276,6 @@ fun SyncPreviewScreen(
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
-                                Spacer(Modifier.height(16.dp))
-                                Button(onClick = { viewModel.loadPreview() }) {
-                                    Text("重新扫描")
-                                }
                             }
                         }
                     } else {
