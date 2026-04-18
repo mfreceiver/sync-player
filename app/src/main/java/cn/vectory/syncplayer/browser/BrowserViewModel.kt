@@ -45,7 +45,7 @@ class BrowserViewModel @Inject constructor(
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
-    enum class SortMode { FILENAME_ASC, FILENAME_DESC, DURATION_ASC, DURATION_DESC }
+    enum class SortMode { FILENAME_ASC, FILENAME_DESC, DURATION_ASC, DURATION_DESC, FILE_SIZE_ASC, FILE_SIZE_DESC }
     enum class BrowseFilter { ALL, VIDEO_ONLY, UNWATCHED }
     enum class ViewMode { LIST, GRID }
     // Star-based filtering for videos
@@ -261,10 +261,12 @@ class BrowserViewModel @Inject constructor(
             _hiddenByFilterCount.value = (allVideos.size - starFiltered.size).coerceAtLeast(0)
 
             return@withContext when (mode) {
-            SortMode.FILENAME_ASC -> starFiltered.sortedWith(compareBy(fileNameComparator) { it.name })
-            SortMode.FILENAME_DESC -> starFiltered.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
+                SortMode.FILENAME_ASC -> starFiltered.sortedWith(compareBy(fileNameComparator) { it.name })
+                SortMode.FILENAME_DESC -> starFiltered.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
                 SortMode.DURATION_ASC -> starFiltered.sortedBy { it.duration ?: 0L }
                 SortMode.DURATION_DESC -> starFiltered.sortedByDescending { it.duration ?: 0L }
+                SortMode.FILE_SIZE_ASC -> starFiltered.sortedBy { it.fileSize }
+                SortMode.FILE_SIZE_DESC -> starFiltered.sortedByDescending { it.fileSize }
             }
         }
 
@@ -318,12 +320,19 @@ class BrowserViewModel @Inject constructor(
                 afterFolder.substringBefore('/')
             }
 
+        val childThumbnailsBatch = videoRepository.getDirectChildThumbnailsBatch(folder)
+        val folderThumbnailsMap = childThumbnailsBatch.groupBy { row ->
+            val afterFolder = if (folder.isEmpty()) row.relativePath else row.relativePath.substring(folder.length + 1)
+            afterFolder.substringBefore('/')
+        }.mapValues { (_, rows) -> rows.map { it.thumbnailPath }.take(9) }
+
         val folders = allFolderNames.map { folderName ->
             val fullPath = if (folder.isEmpty()) folderName else "$folder/$folderName"
             val stats = subFolderStatsMap[folderName]
             val vidCount = stats?.size ?: 0
             val playedCount = stats?.count { it.position > 0 || it.isCompleted } ?: 0
             val trashedCount = stats?.count { it.isTrashed } ?: 0
+            val thumbs = folderThumbnailsMap[folderName].orEmpty()
             BrowseItem(
                 videoItemId = null,
                 name = folderName,
@@ -334,7 +343,8 @@ class BrowserViewModel @Inject constructor(
                 isInSyncBaseDir = baseDirSet.any { fullPath.startsWith("$it/") },
                 videoCount = vidCount,
                 playedCount = playedCount,
-                trashedCount = trashedCount
+                trashedCount = trashedCount,
+                thumbnailPaths = thumbs
             )
         }
 
@@ -385,6 +395,8 @@ class BrowserViewModel @Inject constructor(
             SortMode.FILENAME_DESC -> starFilteredVideos.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
             SortMode.DURATION_ASC -> starFilteredVideos.sortedBy { it.duration ?: 0L }
             SortMode.DURATION_DESC -> starFilteredVideos.sortedByDescending { it.duration ?: 0L }
+            SortMode.FILE_SIZE_ASC -> starFilteredVideos.sortedBy { it.fileSize }
+            SortMode.FILE_SIZE_DESC -> starFilteredVideos.sortedByDescending { it.fileSize }
         }
 
         val totalBeforeFilter = sortedFolders.size + allVideos.size

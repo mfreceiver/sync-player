@@ -2,6 +2,7 @@ package cn.vectory.syncplayer.browser
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -35,6 +36,9 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.SdCard
+import androidx.compose.material.icons.filled.FilterListOff
+import androidx.compose.material.icons.filled.Block
 import cn.vectory.syncplayer.ui.components.StarRatingInput
 import cn.vectory.syncplayer.ui.components.StarRatingDisplay
 import cn.vectory.syncplayer.ui.components.DirectoryTreeDialog
@@ -48,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -246,12 +251,24 @@ fun BrowserScreen(
                             }
                         }
                         Box {
+                            val isAdvancedFilterActive = starFilterMode != BrowserViewModel.StarFilterMode.OFF
+                            if (isAdvancedFilterActive) {
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .background(
+                                            MaterialTheme.colorScheme.secondaryContainer,
+                                            RoundedCornerShape(50)
+                                        )
+                                )
+                            }
                             IconButton(onClick = {
                                 showSortMenu = true
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.FilterList,
-                                    contentDescription = "排序筛选"
+                                    contentDescription = "排序筛选",
+                                    tint = if (isAdvancedFilterActive) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface
                                 )
                             }
                             DropdownMenu(
@@ -269,29 +286,41 @@ fun BrowserScreen(
                                     modifier = Modifier.padding(horizontal = 12.dp),
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    SortOptionChip(
-                                        selected = sortMode == BrowserViewModel.SortMode.FILENAME_ASC,
-                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_ASC); showSortMenu = false },
+                                    SortFieldChip(
+                                        selected = sortMode == BrowserViewModel.SortMode.FILENAME_ASC || sortMode == BrowserViewModel.SortMode.FILENAME_DESC,
+                                        ascending = sortMode == BrowserViewModel.SortMode.FILENAME_ASC,
                                         mainIcon = Icons.Default.SortByAlpha,
-                                        ascending = true
+                                        onClick = {
+                                            val next = when (sortMode) {
+                                                BrowserViewModel.SortMode.FILENAME_ASC -> BrowserViewModel.SortMode.FILENAME_DESC
+                                                else -> BrowserViewModel.SortMode.FILENAME_ASC
+                                            }
+                                            viewModel.setSortMode(next)
+                                        }
                                     )
-                                    SortOptionChip(
-                                        selected = sortMode == BrowserViewModel.SortMode.FILENAME_DESC,
-                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.FILENAME_DESC); showSortMenu = false },
-                                        mainIcon = Icons.Default.SortByAlpha,
-                                        ascending = false
-                                    )
-                                    SortOptionChip(
-                                        selected = sortMode == BrowserViewModel.SortMode.DURATION_ASC,
-                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_ASC); showSortMenu = false },
+                                    SortFieldChip(
+                                        selected = sortMode == BrowserViewModel.SortMode.DURATION_ASC || sortMode == BrowserViewModel.SortMode.DURATION_DESC,
+                                        ascending = sortMode == BrowserViewModel.SortMode.DURATION_ASC,
                                         mainIcon = Icons.Default.Schedule,
-                                        ascending = true
+                                        onClick = {
+                                            val next = when (sortMode) {
+                                                BrowserViewModel.SortMode.DURATION_ASC -> BrowserViewModel.SortMode.DURATION_DESC
+                                                else -> BrowserViewModel.SortMode.DURATION_ASC
+                                            }
+                                            viewModel.setSortMode(next)
+                                        }
                                     )
-                                    SortOptionChip(
-                                        selected = sortMode == BrowserViewModel.SortMode.DURATION_DESC,
-                                        onClick = { viewModel.setSortMode(BrowserViewModel.SortMode.DURATION_DESC); showSortMenu = false },
-                                        mainIcon = Icons.Default.Schedule,
-                                        ascending = false
+                                    SortFieldChip(
+                                        selected = sortMode == BrowserViewModel.SortMode.FILE_SIZE_ASC || sortMode == BrowserViewModel.SortMode.FILE_SIZE_DESC,
+                                        ascending = sortMode == BrowserViewModel.SortMode.FILE_SIZE_ASC,
+                                        mainIcon = Icons.Default.SdCard,
+                                        onClick = {
+                                            val next = when (sortMode) {
+                                                BrowserViewModel.SortMode.FILE_SIZE_ASC -> BrowserViewModel.SortMode.FILE_SIZE_DESC
+                                                else -> BrowserViewModel.SortMode.FILE_SIZE_ASC
+                                            }
+                                            viewModel.setSortMode(next)
+                                        }
                                     )
                                 }
                                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
@@ -367,31 +396,38 @@ fun BrowserScreen(
                                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
                                         listOf(1, 2, 3, 4, 5).forEach { col ->
-                                            FilterChip(
+                                            GridColumnChip(
                                                 selected = gridColumns == col,
                                                 onClick = { viewModel.setGridColumns(col) },
-                                                label = {
-                                                    Text(
-                                                        "$col",
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        textAlign = TextAlign.Center,
-                                                        modifier = Modifier.fillMaxWidth()
-                                                    )
-                                                },
-                                                modifier = Modifier.size(28.dp)
+                                                label = "$col"
                                             )
                                         }
                                     }
                                 }
                                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                                TextButton(
-                                    onClick = {
-                                        showSortMenu = false
-                                        showAdvancedFilter = true
-                                    },
-                                    modifier = Modifier.padding(horizontal = 8.dp)
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp).fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("高级筛选", style = MaterialTheme.typography.bodySmall)
+                                    TextButton(
+                                        onClick = {
+                                            showSortMenu = false
+                                            showAdvancedFilter = true
+                                        }
+                                    ) {
+                                        Text("高级筛选", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    if (starFilterMode != BrowserViewModel.StarFilterMode.OFF) {
+                                        TextButton(
+                                            onClick = {
+                                                viewModel.setStarFilterMode(BrowserViewModel.StarFilterMode.OFF)
+                                                viewModel.setStarFilterValue(0)
+                                            }
+                                        ) {
+                                            Text("清除", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -439,7 +475,12 @@ fun BrowserScreen(
                                 onClick = {
                                     viewModel.setFolder(item.relativePath)
                                 },
-                                onLongClick = { showFolderContextMenu = item }
+                                onLongClick = { showFolderContextMenu = item },
+                                thumbnailPaths = item.thumbnailPaths,
+                                gridDensity = when {
+                                    gridColumns <= 2 -> 3
+                                    else -> 2
+                                }
                             )
                         } else {
                             VideoGridItem(
@@ -816,26 +857,48 @@ fun BrowserScreen(
             title = { Text("高级筛选") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("星级筛选", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        BrowserViewModel.StarFilterMode.entries.forEach { mode ->
-                            val label = when (mode) {
-                                BrowserViewModel.StarFilterMode.OFF -> "未启用"
-                                BrowserViewModel.StarFilterMode.EQ -> "="
-                                BrowserViewModel.StarFilterMode.GT -> "＞"
-                                BrowserViewModel.StarFilterMode.LT -> "＜"
-                            }
-                            FilterChip(
-                                selected = starFilterMode == mode,
-                                onClick = { viewModel.setStarFilterMode(mode) },
-                                label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                            )
-                        }
-                    }
+                    Text("星级", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(
-                        horizontalArrangement = Arrangement.Center,
-                        modifier = Modifier.fillMaxWidth()
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
+                        val nextMode = when (starFilterMode) {
+                            BrowserViewModel.StarFilterMode.OFF -> BrowserViewModel.StarFilterMode.EQ
+                            BrowserViewModel.StarFilterMode.EQ -> BrowserViewModel.StarFilterMode.GT
+                            BrowserViewModel.StarFilterMode.GT -> BrowserViewModel.StarFilterMode.LT
+                            BrowserViewModel.StarFilterMode.LT -> BrowserViewModel.StarFilterMode.OFF
+                        }
+                        val modeIcon = when (starFilterMode) {
+                            BrowserViewModel.StarFilterMode.OFF -> Icons.Default.Block
+                            BrowserViewModel.StarFilterMode.EQ -> Icons.Default.Check
+                            BrowserViewModel.StarFilterMode.GT -> Icons.Default.ArrowUpward
+                            BrowserViewModel.StarFilterMode.LT -> Icons.Default.ArrowDownward
+                        }
+                        val modeLabel = when (starFilterMode) {
+                            BrowserViewModel.StarFilterMode.OFF -> ""
+                            BrowserViewModel.StarFilterMode.EQ -> "="
+                            BrowserViewModel.StarFilterMode.GT -> ">"
+                            BrowserViewModel.StarFilterMode.LT -> "<"
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (starFilterMode != BrowserViewModel.StarFilterMode.OFF)
+                                MaterialTheme.colorScheme.secondaryContainer
+                            else Color.Transparent,
+                            contentColor = if (starFilterMode != BrowserViewModel.StarFilterMode.OFF)
+                                MaterialTheme.colorScheme.onSecondaryContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            onClick = { viewModel.setStarFilterMode(nextMode) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                if (modeLabel.isNotEmpty()) {
+                                    Text(modeLabel, style = MaterialTheme.typography.labelMedium)
+                                } else {
+                                    Icon(modeIcon, null, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
                         StarRatingInput(
                             rating = starFilterValue,
                             onRatingChange = { viewModel.setStarFilterValue(it) },
@@ -1061,11 +1124,11 @@ private fun IconOptionChip(
 }
 
 @Composable
-private fun SortOptionChip(
+private fun SortFieldChip(
     selected: Boolean,
-    onClick: () -> Unit,
-    mainIcon: ImageVector,
     ascending: Boolean,
+    mainIcon: ImageVector,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     IconOptionChip(selected = selected, onClick = onClick, modifier = modifier) {
@@ -1074,11 +1137,13 @@ private fun SortOptionChip(
             horizontalArrangement = Arrangement.Center
         ) {
             Icon(mainIcon, null, modifier = Modifier.size(18.dp))
-            Icon(
-                if (ascending) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
-                null,
-                modifier = Modifier.size(12.dp)
-            )
+            if (selected) {
+                Icon(
+                    if (ascending) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+                    null,
+                    modifier = Modifier.size(12.dp)
+                )
+            }
         }
     }
 }
@@ -1091,4 +1156,28 @@ private fun formatFileSize(bytes: Long): String {
     val value = bytes / Math.pow(1024.0, exp.toDouble())
     val unit = units.getOrElse(exp) { "B" }
     return String.format("%.1f%s", value.toDouble(), unit)
+}
+
+@Composable
+private fun GridColumnChip(
+    selected: Boolean,
+    onClick: () -> Unit,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.size(28.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+        contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+        onClick = onClick
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
 }
