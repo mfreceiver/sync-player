@@ -1,5 +1,7 @@
 package cn.vectory.syncplayer.ui.components
 
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.*
@@ -9,12 +11,31 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 private data class ThumbInfo(val offset: Float, val size: Float)
+
+private suspend fun LazyListState.scrollToIndex(progress: Float) {
+    val total = layoutInfo.totalItemsCount
+    if (total > 0) {
+        val idx = (progress * (total - 1)).toInt().coerceIn(0, total - 1)
+        scrollToItem(idx)
+    }
+}
+
+private suspend fun LazyGridState.scrollToIndex(progress: Float) {
+    val total = layoutInfo.totalItemsCount
+    if (total > 0) {
+        val idx = (progress * (total - 1)).toInt().coerceIn(0, total - 1)
+        scrollToItem(idx)
+    }
+}
 
 @Composable
 fun Modifier.verticalScrollbar(
@@ -66,19 +87,44 @@ fun Modifier.verticalScrollbar(
         }
     }
 
-    return this.drawWithContent {
-        drawContent()
-        if (scrollbarAlpha > 0.01f && thumbInfo.size > 0f) {
-            val w = width.toPx()
-            drawRoundRect(
-                color = color,
-                topLeft = Offset(this.size.width - w - 2f, thumbInfo.offset),
-                size = Size(w, thumbInfo.size),
-                cornerRadius = CornerRadius(w / 2f),
-                alpha = scrollbarAlpha * 0.7f
-            )
+    val scope = rememberCoroutineScope()
+
+    return this
+        .pointerInput(state) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val areaLeft = size.width - 16.dp.toPx()
+                if (down.position.x >= areaLeft) {
+                    down.consume()
+                    val viewport = size.height.toFloat()
+                    val progress = (down.position.y / viewport).coerceIn(0f, 1f)
+                    scope.launch { state.scrollToIndex(progress) }
+
+                    do {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.first()
+                        change.consume()
+                        val dragProgress = (change.position.y / viewport).coerceIn(0f, 1f)
+                        if (abs(dragProgress - progress) > 0.001f) {
+                            scope.launch { state.scrollToIndex(dragProgress) }
+                        }
+                    } while (change.pressed)
+                }
+            }
         }
-    }
+        .drawWithContent {
+            drawContent()
+            if (scrollbarAlpha > 0.01f && thumbInfo.size > 0f) {
+                val w = width.toPx()
+                drawRoundRect(
+                    color = color,
+                    topLeft = Offset(this.size.width - w - 2f, thumbInfo.offset),
+                    size = Size(w, thumbInfo.size),
+                    cornerRadius = CornerRadius(w / 2f),
+                    alpha = scrollbarAlpha * 0.7f
+                )
+            }
+        }
 }
 
 @Composable
@@ -131,17 +177,42 @@ fun Modifier.gridVerticalScrollbar(
         }
     }
 
-    return this.drawWithContent {
-        drawContent()
-        if (scrollbarAlpha > 0.01f && thumbInfo.size > 0f) {
-            val w = width.toPx()
-            drawRoundRect(
-                color = color,
-                topLeft = Offset(this.size.width - w - 2f, thumbInfo.offset),
-                size = Size(w, thumbInfo.size),
-                cornerRadius = CornerRadius(w / 2f),
-                alpha = scrollbarAlpha * 0.7f
-            )
+    val scope = rememberCoroutineScope()
+
+    return this
+        .pointerInput(state) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val areaLeft = size.width - 16.dp.toPx()
+                if (down.position.x >= areaLeft) {
+                    down.consume()
+                    val viewport = size.height.toFloat()
+                    val progress = (down.position.y / viewport).coerceIn(0f, 1f)
+                    scope.launch { state.scrollToIndex(progress) }
+
+                    do {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.first()
+                        change.consume()
+                        val dragProgress = (change.position.y / viewport).coerceIn(0f, 1f)
+                        if (abs(dragProgress - progress) > 0.001f) {
+                            scope.launch { state.scrollToIndex(dragProgress) }
+                        }
+                    } while (change.pressed)
+                }
+            }
         }
-    }
+        .drawWithContent {
+            drawContent()
+            if (scrollbarAlpha > 0.01f && thumbInfo.size > 0f) {
+                val w = width.toPx()
+                drawRoundRect(
+                    color = color,
+                    topLeft = Offset(this.size.width - w - 2f, thumbInfo.offset),
+                    size = Size(w, thumbInfo.size),
+                    cornerRadius = CornerRadius(w / 2f),
+                    alpha = scrollbarAlpha * 0.7f
+                )
+            }
+        }
 }
