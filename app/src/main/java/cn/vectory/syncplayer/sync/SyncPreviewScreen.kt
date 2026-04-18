@@ -534,7 +534,9 @@ private fun SyncProgressCard(
             val overallProgress = if (totalFiles > 0) completedFiles.toFloat() / totalFiles else 0f
             LinearProgressIndicator(
                 progress = { overallProgress },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                gapSize = 0.dp,
+                drawStopIndicator = {}
             )
 
             Row(

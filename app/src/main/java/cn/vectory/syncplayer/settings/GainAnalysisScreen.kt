@@ -214,7 +214,12 @@ private fun GainAnalysisProgressCard(
     Card(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             val progress = if (totalFiles > 0) completedFiles.toFloat() / totalFiles else 0f
-            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.fillMaxWidth(),
+                gapSize = 0.dp,
+                drawStopIndicator = {}
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),

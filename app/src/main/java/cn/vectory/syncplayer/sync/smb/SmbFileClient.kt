@@ -193,7 +193,7 @@ class SmbFileClient(
                             path = relPath,
                             name = child.name,
                             isDirectory = true,
-                            size = child.contentLength.toLong(),
+                            size = child.length(),
                             lastModified = child.lastModified
                         )
                     )
@@ -230,7 +230,7 @@ class SmbFileClient(
                             path = relPath,
                             name = child.name,
                             isDirectory = false,
-                            size = child.contentLength.toLong(),
+                            size = child.length(),
                             lastModified = child.lastModified
                         )
                     )
@@ -264,7 +264,7 @@ class SmbFileClient(
             }
             val smbFile = SmbFile(smbUrl, ctx)
             if (!smbFile.exists()) throw Exception("远程文件不存在: $remotePath")
-            val totalSize = smbFile.contentLength.toLong()
+            val totalSize = smbFile.length()
             localFile.parentFile?.mkdirs()
             val buffer = ByteArray(64 * 1024)
             var transferred = 0L
