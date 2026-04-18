@@ -323,8 +323,7 @@ class SyncEngine @Inject constructor(
         val activeDownloadsMutex = Mutex()
         val activeDownloadsMap = mutableMapOf<String, ActiveDownload>()
         val completedPathsSet = mutableSetOf<String>()
-        val metadataMutex = Mutex()
-        val metadataQueue = mutableListOf<VideoItemEntity>()
+
 
         val localRoot = getLocalSyncRoot(relation)
         cleanupTempFiles(localRoot)
@@ -371,7 +370,7 @@ class SyncEngine @Inject constructor(
 
                     val saved = videoRepository.getByRelativePathAndRelationId(localRelPath, relationId)
                     if (saved != null && (saved.duration == null || saved.thumbnailPath == null)) {
-                        metadataMutex.withLock { metadataQueue.add(saved) }
+                        videoMetadataExtractor.extractAndSave(saved)
                     }
 
                     syncLogRepository.log(
@@ -462,7 +461,7 @@ class SyncEngine @Inject constructor(
                                         videoRepository.upsert(entity)
                                         val savedEntity = videoRepository.getByRelativePath(localRelPath)
                                         if (savedEntity != null) {
-                                            metadataMutex.withLock { metadataQueue.add(savedEntity) }
+                                            videoMetadataExtractor.extractAndSave(savedEntity)
                                         }
                                         syncLogRepository.log(
                                             action = "DOWNLOAD",
@@ -490,23 +489,6 @@ class SyncEngine @Inject constructor(
                                     }
                                 } finally {
                                     semaphore.release()
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // Parallel metadata extraction using a semaphore to bound concurrency
-                if (metadataQueue.isNotEmpty()) {
-                    val metadataSemaphore = Semaphore(maxConcurrency.coerceAtMost(3))
-                    coroutineScope {
-                        for (entity in metadataQueue) {
-                            metadataSemaphore.acquire()
-                            launch(Dispatchers.IO) {
-                                try {
-                                    videoMetadataExtractor.extractAndSave(entity)
-                                } finally {
-                                    metadataSemaphore.release()
                                 }
                             }
                         }
