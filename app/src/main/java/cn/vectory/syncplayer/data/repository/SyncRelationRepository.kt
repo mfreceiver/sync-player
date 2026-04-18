@@ -33,6 +33,20 @@ class SyncRelationRepository @Inject constructor(
         }
     }
 
+    suspend fun getAllWithSource(): List<SyncRelationWithSource> {
+        val relations = syncRelationDao.getAll()
+        val sources = syncSourceDao.getAll()
+        val sourceMap = sources.associateBy { it.id }
+        return relations.map { entity ->
+            val source = sourceMap[entity.syncSourceId]
+            SyncRelationWithSource(
+                relation = entity.toDomain(),
+                sourceName = source?.name ?: "未知",
+                sourceProtocol = source?.protocol?.let { SyncProtocol.valueOf(it) } ?: SyncProtocol.SMB
+            )
+        }
+    }
+
     fun getAllFlow(): Flow<List<SyncRelation>> =
         syncRelationDao.getAllFlow().map { list -> list.map { it.toDomain() } }
 
