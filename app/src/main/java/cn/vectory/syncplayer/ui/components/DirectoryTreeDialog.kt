@@ -37,7 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -202,17 +202,16 @@ private fun DirectoryTreeRow(
     val extendedColors = LocalExtendedColors.current
 
     val backgroundColor = if (isSelected) {
-        MaterialTheme.colorScheme.secondaryContainer
+        MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
     } else {
-        MaterialTheme.colorScheme.surface
+        Color.Transparent
     }
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(backgroundColor)
+            .background(backgroundColor, RoundedCornerShape(8.dp))
             .combinedClickable {
                 onSelect()
                 if (!isRoot) onToggleExpand()
