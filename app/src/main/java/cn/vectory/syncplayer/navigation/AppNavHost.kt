@@ -1,5 +1,7 @@
 package cn.vectory.syncplayer.navigation
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.runtime.Composable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -35,7 +37,11 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
 
     NavHost(
         navController = navController,
-        startDestination = Route.Browser.route
+        startDestination = Route.Browser.route,
+        enterTransition = { EnterTransition.None },
+        exitTransition = { ExitTransition.None },
+        popEnterTransition = { EnterTransition.None },
+        popExitTransition = { ExitTransition.None }
     ) {
         composable(
             route = Route.Browser.route,
