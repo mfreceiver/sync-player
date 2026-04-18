@@ -9,6 +9,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Article
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -67,165 +74,161 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("长按加速倍速", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(12.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(1.5f, 2.0f, 2.5f, 3.0f).forEach { speed ->
-                            FilterChip(
-                                selected = longPressSpeed == speed,
-                                onClick = { viewModel.setLongPressSpeed(speed) },
-                                label = { Text("${speed}x", maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                            )
-                        }
-                    }
+            ListItem(
+                headlineContent = { Text("长按加速倍速") },
+                leadingContent = { Icon(Icons.Default.FastForward, contentDescription = null) },
+                modifier = Modifier.clickable { }
+            )
+            FlowRow(
+                modifier = Modifier.padding(start = 72.dp, end = 16.dp, bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(1.5f, 2.0f, 2.5f, 3.0f).forEach { speed ->
+                    FilterChip(
+                        selected = longPressSpeed == speed,
+                        onClick = { viewModel.setLongPressSpeed(speed) },
+                        label = { Text("${speed}x", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    )
                 }
             }
 
-            // Removed: 默认排序 Card (Sort settings)
+            HorizontalDivider()
 
-            // Removed: 默认筛选 Card (Filter settings)
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("双击功能", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(12.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SettingsViewModel.DoubleTapAction.entries.forEach { action ->
-                            FilterChip(
-                                selected = doubleTapAction == action,
-                                onClick = { viewModel.setDoubleTapAction(action) },
-                                label = { Text(doubleTapActionLabel(action), maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                            )
-                        }
-                    }
+            ListItem(
+                headlineContent = { Text("双击功能") },
+                leadingContent = { Icon(Icons.Default.TouchApp, contentDescription = null) },
+                modifier = Modifier.clickable { }
+            )
+            FlowRow(
+                modifier = Modifier.padding(start = 72.dp, end = 16.dp, bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SettingsViewModel.DoubleTapAction.entries.forEach { action ->
+                    FilterChip(
+                        selected = doubleTapAction == action,
+                        onClick = { viewModel.setDoubleTapAction(action) },
+                        label = { Text(doubleTapActionLabel(action), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    )
                 }
             }
 
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp).fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("音量均衡", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            HorizontalDivider()
+
+            ListItem(
+                headlineContent = { Text("音量均衡") },
+                leadingContent = { Icon(Icons.Default.VolumeUp, contentDescription = null) },
+                trailingContent = {
                     Switch(
                         checked = volumeBalance,
                         onCheckedChange = { viewModel.setVolumeBalance(it) }
                     )
                 }
-            }
+            )
 
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp).fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("SAF 文件共享", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            HorizontalDivider()
+
+            ListItem(
+                headlineContent = { Text("SAF 文件共享") },
+                supportingContent = { Text("允许第三方播放器访问已同步文件") },
+                leadingContent = { Icon(Icons.Default.FolderOpen, contentDescription = null) },
+                trailingContent = {
                     Switch(
                         checked = safEnabled,
                         onCheckedChange = { viewModel.setSafEnabled(it) }
                     )
                 }
-            }
+            )
 
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                    val secureLockEnabledState by viewModel.secureLockEnabled.collectAsStateWithLifecycle()
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("应用安全锁", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                        Switch(
-                            checked = secureLockEnabledState,
-                            onCheckedChange = { checked ->
-                                val activity = currentContext as? FragmentActivity
-                                if (activity != null) {
-                                    viewModel.authenticateAndToggle(activity, checked)
-                                }
-                            },
-                            enabled = viewModel.canAuthenticateBio
-                        )
-                    }
+            HorizontalDivider()
+
+            val secureLockEnabledState by viewModel.secureLockEnabled.collectAsStateWithLifecycle()
+            ListItem(
+                headlineContent = { Text("应用安全锁") },
+                supportingContent = {
                     if (!viewModel.canAuthenticateBio) {
-                        Text(
-                            "设备未设置生物识别信息（指纹/面部）",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
+                        Text("设备未设置生物识别信息", color = MaterialTheme.colorScheme.error)
+                    } else {
+                        Text("指纹/面部识别验证")
                     }
+                },
+                leadingContent = { Icon(Icons.Default.Lock, contentDescription = null) },
+                trailingContent = {
+                    Switch(
+                        checked = secureLockEnabledState,
+                        onCheckedChange = { checked ->
+                            val activity = currentContext as? FragmentActivity
+                            if (activity != null) {
+                                viewModel.authenticateAndToggle(activity, checked)
+                            }
+                        },
+                        enabled = viewModel.canAuthenticateBio
+                    )
                 }
-            }
+            )
 
-            // Removed: 默认视图 Card (View mode and grid customization)
+            HorizontalDivider()
 
-            Card(modifier = Modifier.fillMaxWidth()) {
-                ListItem(
-                    headlineContent = { Text("重建元数据") },
-                    supportingContent = { Text("扫描本地文件并重建数据库记录") },
-                    leadingContent = { Icon(Icons.Default.Build, contentDescription = null) },
-                    modifier = Modifier.clickable { onNavigateToMetadataRebuild() }
-                )
-            }
+            ListItem(
+                headlineContent = { Text("重建元数据") },
+                supportingContent = { Text("扫描本地文件并重建数据库记录") },
+                leadingContent = { Icon(Icons.Default.Build, contentDescription = null) },
+                modifier = Modifier.clickable { onNavigateToMetadataRebuild() }
+            )
 
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("应用版本")
+            HorizontalDivider()
+
+            ListItem(
+                headlineContent = { Text("应用版本") },
+                leadingContent = { Icon(Icons.Default.Info, contentDescription = null) },
+                trailingContent = {
                     Text(BuildConfig.VERSION_NAME, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            }
+            )
+
+            HorizontalDivider()
 
             val syncLogs by viewModel.syncLogs.collectAsStateWithLifecycle()
             var logViewerExpanded by remember { mutableStateOf(false) }
 
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("同步日志", style = MaterialTheme.typography.titleMedium)
-                        TextButton(onClick = { logViewerExpanded = !logViewerExpanded }) {
-                            Text(if (logViewerExpanded) "收起" else "查看日志")
+            ListItem(
+                headlineContent = { Text("同步日志") },
+                leadingContent = { Icon(Icons.Default.Article, contentDescription = null) },
+                trailingContent = {
+                    TextButton(onClick = { logViewerExpanded = !logViewerExpanded }) {
+                        Text(if (logViewerExpanded) "收起" else "查看日志")
+                    }
+                }
+            )
+
+            if (logViewerExpanded) {
+                Column(modifier = Modifier.padding(start = 72.dp, end = 16.dp, bottom = 12.dp)) {
+                    if (syncLogs.isEmpty()) {
+                        Text(
+                            "暂无日志记录",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 300.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            items(syncLogs, key = { it.id }) { log ->
+                                LogEntryItem(log = log)
+                            }
                         }
                     }
 
-                    if (logViewerExpanded) {
-                        Spacer(Modifier.height(12.dp))
-
-                        if (syncLogs.isEmpty()) {
-                            Text(
-                                "暂无日志记录",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        } else {
-                            LazyColumn(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = 300.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                items(syncLogs, key = { it.id }) { log ->
-                                    LogEntryItem(log = log)
-                                }
-                            }
-                        }
-
-                        Spacer(Modifier.height(12.dp))
-                        OutlinedButton(
-                            onClick = viewModel::clearLogs,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("清除日志")
-                        }
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = viewModel::clearLogs,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("清除日志")
                     }
                 }
             }
