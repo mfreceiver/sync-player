@@ -487,6 +487,16 @@ fun PlayerScreen(
         }
     }
 
+    var showSeekBarOverlay by remember { mutableStateOf(false) }
+    LaunchedEffect(isGestureSeeking, isHighSpeedSeeking, showControls) {
+        if ((isGestureSeeking || isHighSpeedSeeking) && !showControls) {
+            showSeekBarOverlay = true
+        } else if (!isGestureSeeking && !isHighSpeedSeeking) {
+            delay(100L)
+            showSeekBarOverlay = false
+        }
+    }
+
     BackHandler { doExit() }
     Box(
         modifier = Modifier
@@ -567,11 +577,10 @@ fun PlayerScreen(
                     .fillMaxWidth()
                     .navigationBarsPadding()
             ) {
-                val shouldShowProgressSeek = isHighSpeedSeeking
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(if (shouldShowProgressSeek) 96.dp else 48.dp)
+                        .height(48.dp)
                         .pointerInput(currentDuration) {
                             awaitPointerEventScope {
                                 while (true) {
@@ -755,52 +764,76 @@ fun PlayerScreen(
                 }
             }
 
-            if (isSeekingActive && seekPreviewBitmap != null) {
-                val bitmap = seekPreviewBitmap!!
-                val density = LocalDensity.current
-                val previewWidthDp = 180.dp
-                val previewWidthPx = with(density) { previewWidthDp.toPx() }
-                val bitmapRatio = bitmap.height.toFloat() / bitmap.width.toFloat()
-                val previewHeightDp = with(density) { (previewWidthPx * bitmapRatio).toDp() }.coerceAtMost(100.dp)
+        }
 
-                val maxOffsetPx = (bottomAreaWidth.toFloat() - previewWidthPx).coerceAtLeast(0f)
-                val offsetPx = (seekDisplayProgress * bottomAreaWidth.toFloat() - previewWidthPx / 2f)
-                    .coerceIn(0f, maxOffsetPx)
-                val offsetDp = with(density) { offsetPx.toDp() }
-                val bottomOffsetDp = 120.dp
-
+        if (showSeekBarOverlay && !showControls) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 48.dp)
+            ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = bottomOffsetDp, start = offsetDp)
+                        .height(2.dp)
+                        .background(Color.White.copy(alpha = 0.5f))
                 ) {
                     Box(
                         modifier = Modifier
-                            .width(previewWidthDp)
-                            .height(previewHeightDp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.Black.copy(alpha = 0.7f))
+                            .fillMaxHeight()
+                            .fillMaxWidth(seekDisplayProgress)
+                            .background(LocalExtendedColors.current.playerProgressFill)
+                    )
+                }
+            }
+        }
+
+        if (isSeekingActive && seekPreviewBitmap != null) {
+            val bitmap = seekPreviewBitmap!!
+            val density = LocalDensity.current
+            val previewWidthDp = 180.dp
+            val previewWidthPx = with(density) { previewWidthDp.toPx() }
+            val bitmapRatio = bitmap.height.toFloat() / bitmap.width.toFloat()
+            val previewHeightDp = with(density) { (previewWidthPx * bitmapRatio).toDp() }.coerceAtMost(100.dp)
+
+            val maxOffsetPx = (bottomAreaWidth.toFloat() - previewWidthPx).coerceAtLeast(0f)
+            val offsetPx = (seekDisplayProgress * bottomAreaWidth.toFloat() - previewWidthPx / 2f)
+                .coerceIn(0f, maxOffsetPx)
+            val offsetDp = with(density) { offsetPx.toDp() }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 108.dp, start = offsetDp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(previewWidthDp)
+                        .height(previewHeightDp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.Black.copy(alpha = 0.7f))
+                ) {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.BottomCenter)
+                            .background(Color.Black.copy(alpha = 0.6f))
+                            .padding(vertical = 2.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize()
+                        Text(
+                            text = formatDuration(seekPreviewPosition),
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelSmall
                         )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .align(Alignment.BottomCenter)
-                                .background(Color.Black.copy(alpha = 0.6f))
-                                .padding(vertical = 2.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = formatDuration(seekPreviewPosition),
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
                     }
                 }
             }

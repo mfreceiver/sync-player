@@ -18,7 +18,6 @@ class GesturePlayerView @JvmOverloads constructor(
     private companion object {
         const val VERTICAL_GESTURE_THRESHOLD = 20f
         const val HORIZONTAL_GESTURE_THRESHOLD = 30f
-        const val SEEK_SENSITIVITY = 100f
     }
 
     private val playerView = PlayerView(context).apply {
@@ -103,7 +102,8 @@ class GesturePlayerView @JvmOverloads constructor(
             }
 
             if (isSeeking) {
-                seekOffsetMs = (dxFromStart * SEEK_SENSITIVITY).toLong()
+                val sensitivity = if (videoDuration < 600_000L) 100f else 300f
+                seekOffsetMs = (dxFromStart * sensitivity).toLong()
                 val targetMs = (currentPosition + seekOffsetMs)
                     .coerceIn(0, videoDuration.coerceAtLeast(0))
                 gestureListener?.onSeekOverlay(targetMs, videoDuration)
