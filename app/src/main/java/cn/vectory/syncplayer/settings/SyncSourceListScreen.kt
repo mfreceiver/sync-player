@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -83,18 +84,10 @@ fun SyncSourceListScreen(
             ) {
                 items(sources, key = { it.id }) { source ->
                     Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(source.name, style = MaterialTheme.typography.titleMedium)
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "${source.protocol.name} · ${source.host}:${source.port}",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Spacer(Modifier.height(12.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End
-                            ) {
+                        ListItem(
+                            headlineContent = { Text(source.name) },
+                            supportingContent = { Text("${source.protocol.name} · ${source.host}:${source.port}") },
+                            trailingContent = {
                                 IconButton(onClick = { onNavigateToEdit(source.id) }) {
                                     Icon(
                                         imageVector = Icons.Default.Edit,
@@ -102,8 +95,9 @@ fun SyncSourceListScreen(
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                            }
-                        }
+                            },
+                            modifier = Modifier.clickable { onNavigateToEdit(source.id) }
+                        )
                     }
                 }
             }

@@ -78,6 +78,9 @@ class GainAnalysisViewModel @Inject constructor(
                     .filter { it.audioGainDb == null && isVideoFile(it.fileName) }
                 _discoveredFiles.value = videos
                 _totalCount.value = videos.size
+                if (videos.isEmpty()) {
+                    _isComplete.value = true
+                }
             } catch (e: Exception) {
                 _error.value = "发现文件失败: ${e.message}"
             } finally {
@@ -113,6 +116,8 @@ class GainAnalysisViewModel @Inject constructor(
                             val result = audioGainAnalyzer.analyze(video.localAbsolutePath)
                             if (result != null) {
                                 videoRepository.upsert(video.copy(audioGainDb = result.gainDb))
+                            } else {
+                                videoRepository.upsert(video.copy(audioGainDb = 0f))
                             }
 
                             activeMutex.lock()

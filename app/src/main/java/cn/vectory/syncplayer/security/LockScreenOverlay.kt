@@ -41,11 +41,11 @@ fun LockScreenOverlay(
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
             .navigationBarsPadding(),
-        contentAlignment = Alignment.Center
+        contentAlignment = Alignment.TopCenter
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            modifier = Modifier.padding(top = 120.dp)
         ) {
             Icon(
                 imageVector = Icons.Default.Lock,
@@ -77,7 +77,7 @@ fun LockScreenOverlay(
                         )
                     }
                 ) {
-                    Text("重试验证")
+                    Text("验证")
                 }
             }
         }

@@ -168,6 +168,12 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             SyncPreviewScreen(
                 viewModel = viewModel,
                 onBack = { navController.popBackStack() },
+                onNavigateToRelation = { relationId, initialTab ->
+                    navController.navigate(Route.SyncPreview.create(relationId, initialTab)) {
+                        popUpTo(Route.SyncRelationList.route) { inclusive = false }
+                        launchSingleTop = true
+                    }
+                }
             )
         }
 

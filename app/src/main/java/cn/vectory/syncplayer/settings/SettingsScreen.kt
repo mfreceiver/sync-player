@@ -104,74 +104,45 @@ fun SettingsScreen(
             }
 
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("音量均衡", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "启用后播放时自动调节音量，使不同视频音量趋于一致。需先分析音量增益数据",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp).fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("音量均衡", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = volumeBalance,
+                        onCheckedChange = { viewModel.setVolumeBalance(it) }
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("启用", style = MaterialTheme.typography.bodyMedium)
-                        Switch(
-                            checked = volumeBalance,
-                            onCheckedChange = { viewModel.setVolumeBalance(it) }
-                        )
-                    }
                 }
             }
 
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("SAF 文件共享", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "允许第三方播放器通过系统文件选择器访问已同步的视频文件",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp).fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("SAF 文件共享", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = safEnabled,
+                        onCheckedChange = { viewModel.setSafEnabled(it) }
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("启用", style = MaterialTheme.typography.bodyMedium)
-                        Switch(
-                            checked = safEnabled,
-                            onCheckedChange = { viewModel.setSafEnabled(it) }
-                        )
-                    }
                 }
             }
 
-            // App lock card
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("应用安全锁", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "从后台切回应用时需要验证身份（指纹/面部识别）",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(12.dp))
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                     val secureLockEnabledState by viewModel.secureLockEnabled.collectAsStateWithLifecycle()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("启用", style = MaterialTheme.typography.bodyMedium)
+                        Text("应用安全锁", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                         Switch(
                             checked = secureLockEnabledState,
-                        onCheckedChange = { checked ->
+                            onCheckedChange = { checked ->
                                 val activity = currentContext as? FragmentActivity
                                 if (activity != null) {
                                     viewModel.authenticateAndToggle(activity, checked)
@@ -181,7 +152,6 @@ fun SettingsScreen(
                         )
                     }
                     if (!viewModel.canAuthenticateBio) {
-                        Spacer(Modifier.height(4.dp))
                         Text(
                             "设备未设置生物识别信息（指纹/面部）",
                             style = MaterialTheme.typography.bodySmall,

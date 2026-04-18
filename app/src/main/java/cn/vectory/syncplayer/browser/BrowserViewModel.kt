@@ -374,11 +374,14 @@ class BrowserViewModel @Inject constructor(
 
         val allVideos = videos + diskOnlyItems
 
+        val nonVideoFiles = allVideos.filter { !isVideoFile(it.name) }
+        val videoFiles = allVideos.filter { isVideoFile(it.name) }
+
         val filteredVideos = when (filterVal) {
-            BrowseFilter.ALL -> allVideos
-            BrowseFilter.VIDEO_ONLY -> allVideos.filter { isVideoFile(it.name) }
-            BrowseFilter.UNWATCHED -> allVideos.filter {
-                isVideoFile(it.name) && it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
+            BrowseFilter.ALL -> videoFiles
+            BrowseFilter.VIDEO_ONLY -> videoFiles
+            BrowseFilter.UNWATCHED -> videoFiles.filter {
+                it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
             }
         }
 
@@ -390,6 +393,7 @@ class BrowserViewModel @Inject constructor(
         }
 
         val sortedFolders = folders.sortedWith(compareBy(fileNameComparator) { it.name })
+        val sortedNonVideos = nonVideoFiles.sortedWith(compareBy(fileNameComparator) { it.name })
         val sortedVideos = when (mode) {
             SortMode.FILENAME_ASC -> starFilteredVideos.sortedWith(compareBy(fileNameComparator) { it.name })
             SortMode.FILENAME_DESC -> starFilteredVideos.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
@@ -408,9 +412,9 @@ class BrowserViewModel @Inject constructor(
         } else {
             sortedFolders
         }
-        _hiddenByFilterCount.value = (totalBeforeFilter - filteredFolders.size - sortedVideos.size).coerceAtLeast(0)
+        _hiddenByFilterCount.value = (totalBeforeFilter - filteredFolders.size - sortedNonVideos.size - sortedVideos.size).coerceAtLeast(0)
 
-        (filteredFolders + sortedVideos).distinctBy { it.relativePath }
+        (filteredFolders + sortedNonVideos + sortedVideos).distinctBy { it.relativePath }
     }
 
     fun setFolder(folder: String) {

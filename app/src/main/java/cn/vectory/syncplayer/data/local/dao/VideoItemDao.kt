@@ -203,7 +203,8 @@ interface VideoItemDao {
         AND CASE
             WHEN :parentFolder = '' THEN relativePath LIKE '%/%' AND relativePath NOT LIKE '%/%/%'
             ELSE relativePath LIKE :parentFolder || '/%'
-                 AND SUBSTR(relativePath, LENGTH(:parentFolder) + 2) NOT LIKE '%/%'
+                 AND SUBSTR(relativePath, LENGTH(:parentFolder) + 2) LIKE '%/%'
+                 AND SUBSTR(relativePath, LENGTH(:parentFolder) + 2) NOT LIKE '%/%/%'
         END
         ORDER BY relativePath
     """)

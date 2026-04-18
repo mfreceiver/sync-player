@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cn.vectory.syncplayer.data.model.SyncRelation
 import cn.vectory.syncplayer.data.model.SyncAction
 import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProgress
@@ -24,7 +25,13 @@ class SyncPreviewViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
-    private val relationId: Long = savedStateHandle.get<Long>("relationId") ?: 0L
+    val relationId: Long = savedStateHandle.get<Long>("relationId") ?: 0L
+
+    private val _allRelations = MutableStateFlow<List<SyncRelation>>(emptyList())
+    val allRelations = _allRelations.asStateFlow()
+
+    private val _currentRelationName = MutableStateFlow("")
+    val currentRelationName = _currentRelationName.asStateFlow()
 
     private val _toDownload = MutableStateFlow<List<SyncAction>>(emptyList())
     val toDownload = _toDownload.asStateFlow()
@@ -70,6 +77,13 @@ class SyncPreviewViewModel @Inject constructor(
             _isSyncing.value = true
             _previewLoaded.value = true
             observeSyncCompletion()
+        }
+        viewModelScope.launch {
+            _allRelations.value = syncRelationRepository.getAllWithSource().map { it.relation }
+        }
+        viewModelScope.launch {
+            val relation = syncRelationRepository.getById(relationId)
+            _currentRelationName.value = relation?.name ?: ""
         }
     }
 

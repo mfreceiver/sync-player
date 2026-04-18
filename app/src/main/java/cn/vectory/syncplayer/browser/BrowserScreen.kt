@@ -258,7 +258,7 @@ fun BrowserScreen(
                                         .matchParentSize()
                                         .background(
                                             MaterialTheme.colorScheme.secondaryContainer,
-                                            RoundedCornerShape(50)
+                                            RoundedCornerShape(8.dp)
                                         )
                                 )
                             }
@@ -899,12 +899,14 @@ fun BrowserScreen(
                                 }
                             }
                         }
-                        StarRatingInput(
-                            rating = starFilterValue,
-                            onRatingChange = { viewModel.setStarFilterValue(it) },
-                            starSize = 28.dp,
-                            enabled = starFilterMode != BrowserViewModel.StarFilterMode.OFF
-                        )
+                        if (starFilterMode != BrowserViewModel.StarFilterMode.OFF) {
+                            StarRatingInput(
+                                rating = starFilterValue,
+                                onRatingChange = { viewModel.setStarFilterValue(it) },
+                                starSize = 28.dp,
+                                enabled = true
+                            )
+                        }
                     }
                 }
             },

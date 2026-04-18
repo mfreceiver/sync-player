@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.sync
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,7 +23,8 @@ import cn.vectory.syncplayer.data.model.SyncAction
 @Composable
 fun SyncPreviewScreen(
     viewModel: SyncPreviewViewModel = hiltViewModel(),
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigateToRelation: (relationId: Long, initialTab: String) -> Unit = { _, _ -> }
 ) {
     val toDownload by viewModel.toDownload.collectAsState()
     val toDelete by viewModel.toDelete.collectAsState()
@@ -34,13 +36,51 @@ fun SyncPreviewScreen(
     val previewLoaded by viewModel.previewLoaded.collectAsState()
     val syncComplete by viewModel.syncComplete.collectAsState()
     val progress by viewModel.progress.collectAsState()
+    val allRelations by viewModel.allRelations.collectAsState()
+    val currentRelationName by viewModel.currentRelationName.collectAsState()
     var isNavigatingBack by remember { mutableStateOf(false) }
+    var showRelationDropdown by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             Column {
                 TopAppBar(
-                    title = { Text("同步预览") },
+                    title = {
+                        Box {
+                            Row(
+                                modifier = Modifier.clickable { showRelationDropdown = !showRelationDropdown },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(currentRelationName.ifEmpty { "同步预览" })
+                                Icon(
+                                    Icons.Default.ArrowDropDown,
+                                    contentDescription = "切换同步关系",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showRelationDropdown,
+                                onDismissRequest = { showRelationDropdown = false }
+                            ) {
+                                allRelations.forEach { relation ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                relation.name,
+                                                fontWeight = if (relation.id == viewModel.relationId) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        },
+                                        onClick = {
+                                            showRelationDropdown = false
+                                            if (relation.id != viewModel.relationId) {
+                                                onNavigateToRelation(relation.id, syncMode.name.lowercase())
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    },
                     navigationIcon = {
                         IconButton(
                             onClick = {
