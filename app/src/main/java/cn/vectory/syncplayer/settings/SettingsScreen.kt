@@ -9,7 +9,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Info
@@ -94,7 +94,7 @@ fun SettingsScreen(
             ListItem(
                 headlineContent = { Text("音量均衡") },
                 supportingContent = { Text("点击进行增益分析") },
-                leadingContent = { Icon(Icons.Default.VolumeUp, contentDescription = null) },
+                leadingContent = { Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null) },
                 trailingContent = {
                     Switch(
                         checked = volumeBalance,
