@@ -464,6 +464,7 @@ fun PlayerScreen(
     var showSettingsPopup by remember { mutableStateOf(false) }
     var bottomAreaWidth by remember { mutableIntStateOf(0) }
     var bottomControlHeight by remember { mutableIntStateOf(0) }
+    var progressBarHeightPx by remember { mutableIntStateOf(0) }
 
     val previewExtractor = remember { SeekPreviewExtractor() }
     var seekPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -630,6 +631,7 @@ fun PlayerScreen(
                                 ) else Modifier
                             )
                             .padding(horizontal = 8.dp, vertical = 4.dp)
+                            .onSizeChanged { progressBarHeightPx = it.height }
                     ) {
                         Row(
                             modifier = Modifier
@@ -759,11 +761,11 @@ fun PlayerScreen(
 
         }
 
-        if (!showControls) {
+        if (!showControls && !isSeekingActive) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(2.dp)
+                    .height(1.dp)
                     .align(Alignment.BottomCenter)
                     .background(Color.White.copy(alpha = 0.3f))
             ) {
@@ -802,7 +804,7 @@ fun PlayerScreen(
                 .coerceIn(0f, maxOffsetPx)
             val offsetDp = with(density) { offsetPx.toDp() }
 
-            val bottomOffsetDp = with(density) { bottomControlHeight.toDp() } + 8.dp
+            val bottomOffsetDp = with(density) { progressBarHeightPx.toDp() }
 
             Box(
                 modifier = Modifier
