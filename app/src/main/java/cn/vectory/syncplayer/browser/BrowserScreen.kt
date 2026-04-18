@@ -119,7 +119,12 @@ fun BrowserScreen(
     }
 
     // Support switching browse modes via back button as well
-    BackHandler(enabled = folder.isNotEmpty() || browseMode == BrowserViewModel.BrowseMode.FILE) {
+    val isDrawerOpen = drawerState.isOpen
+    val backEnabled = !isDrawerOpen && !showSortMenu && showContextMenu == null
+            && showFolderContextMenu == null && !showDirectoryTree && !showAdvancedFilter
+            && !showCreateFolderDialog
+            && (folder.isNotEmpty() || browseMode == BrowserViewModel.BrowseMode.FILE)
+    BackHandler(enabled = backEnabled) {
         if (browseMode == BrowserViewModel.BrowseMode.FILE) {
             viewModel.setBrowseMode(BrowserViewModel.BrowseMode.DIRECTORY)
         } else {
@@ -657,15 +662,21 @@ fun BrowserScreen(
                         modifier = Modifier.padding(top = 2.dp)
                     )
 
-                    // Thumbnail for videos
+                    // Thumbnail for videos - respect original aspect ratio
                     if (isVideoFile(item.name)) {
+                        val aspectRatio = if (item.width != null && item.height != null && item.width > 0 && item.height > 0) {
+                            item.width.toFloat() / item.height.toFloat()
+                        } else {
+                            16f / 9f
+                        }
                         Spacer(Modifier.height(8.dp))
                         Thumbnail(
                             thumbnailPath = item.thumbnailPath,
                             isVideo = true,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(160.dp)
+                                .aspectRatio(aspectRatio)
+                                .heightIn(max = 200.dp)
                                 .clip(RoundedCornerShape(8.dp))
                         )
                     }
