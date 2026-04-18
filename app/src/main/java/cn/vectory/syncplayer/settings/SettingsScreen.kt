@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -34,9 +35,7 @@ fun SettingsScreen(
     onNavigateToSyncSourceList: () -> Unit = {},
     onNavigateToSyncRelationList: () -> Unit = {}
 ) {
-    val volumeBalance by viewModel.volumeBalance.collectAsStateWithLifecycle()
-    val quickRecycle by viewModel.quickRecycle.collectAsStateWithLifecycle()
-    val safEnabled by viewModel.safEnabled.collectAsStateWithLifecycle()
+    val settingsState by viewModel.settingsState.collectAsStateWithLifecycle()
     val currentContext = LocalContext.current
     var isNavigatingBack by remember { mutableStateOf(false) }
 
@@ -60,6 +59,18 @@ fun SettingsScreen(
             )
         }
     ) { padding ->
+        if (settingsState == null) {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
+            return@Scaffold
+        }
+
+        val state = settingsState!!
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -85,7 +96,7 @@ fun SettingsScreen(
                 leadingContent = { Icon(Icons.Default.Delete, contentDescription = null) },
                 trailingContent = {
                     Switch(
-                        checked = quickRecycle,
+                        checked = state.quickRecycle,
                         onCheckedChange = { viewModel.setQuickRecycle(it) }
                     )
                 }
@@ -97,7 +108,7 @@ fun SettingsScreen(
                 leadingContent = { Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null) },
                 trailingContent = {
                     Switch(
-                        checked = volumeBalance,
+                        checked = state.volumeBalance,
                         onCheckedChange = { viewModel.setVolumeBalance(it) }
                     )
                 },
@@ -109,13 +120,12 @@ fun SettingsScreen(
                 leadingContent = { Icon(Icons.Default.FolderOpen, contentDescription = null) },
                 trailingContent = {
                     Switch(
-                        checked = safEnabled,
+                        checked = state.safEnabled,
                         onCheckedChange = { viewModel.setSafEnabled(it) }
                     )
                 }
             )
 
-            val secureLockEnabledState by viewModel.secureLockEnabled.collectAsStateWithLifecycle()
             ListItem(
                 headlineContent = { Text("应用安全锁") },
                 supportingContent = {
@@ -128,7 +138,7 @@ fun SettingsScreen(
                 leadingContent = { Icon(Icons.Default.Lock, contentDescription = null) },
                 trailingContent = {
                     Switch(
-                        checked = secureLockEnabledState,
+                        checked = state.secureLockEnabled,
                         onCheckedChange = { checked ->
                             val activity = currentContext as? FragmentActivity
                             if (activity != null) {

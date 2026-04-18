@@ -103,7 +103,6 @@ fun BrowserScreen(
 
     var showContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
     var showSortMenu by remember { mutableStateOf(false) }
-    var showCreateFolderDialog by remember { mutableStateOf(false) }
     var showFolderContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
     var showDirectoryTree by remember { mutableStateOf(false) }
     var showAdvancedFilter by remember { mutableStateOf(false) }
@@ -121,7 +120,6 @@ fun BrowserScreen(
     // Support switching browse modes via back button as well
     val backEnabled = !showSortMenu && showContextMenu == null
             && showFolderContextMenu == null && !showDirectoryTree && !showAdvancedFilter
-            && !showCreateFolderDialog
             && (folder.isNotEmpty() || browseMode == BrowserViewModel.BrowseMode.FILE)
     BackHandler(enabled = backEnabled) {
         if (browseMode == BrowserViewModel.BrowseMode.FILE) {
@@ -175,14 +173,6 @@ fun BrowserScreen(
                     }
                 },
                     actions = {
-                        IconButton(onClick = {
-                            onNavigateToSearch()
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = "搜索"
-                            )
-                        }
                         if (currentRelationId != null) {
                             IconButton(onClick = {
                                 onNavigateToSyncPreview(currentRelationId!!)
@@ -193,15 +183,13 @@ fun BrowserScreen(
                                 )
                             }
                         }
-                        if (currentRelationId == null) {
-                            IconButton(onClick = {
-                                showCreateFolderDialog = true
-                            }) {
-                                Icon(
-                                    imageVector = Icons.Default.CreateNewFolder,
-                                    contentDescription = "新建文件夹"
-                                )
-                            }
+                        IconButton(onClick = {
+                            onNavigateToSearch()
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = "搜索"
+                            )
                         }
                         Box {
                             val isAdvancedFilterActive = starFilterMode != BrowserViewModel.StarFilterMode.OFF
@@ -887,40 +875,6 @@ fun BrowserScreen(
                 onLoadChildren = { path -> viewModel.loadSubFolders(path) }
             )
         }
-    }
-    
-    if (showCreateFolderDialog) {
-        var folderName by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { showCreateFolderDialog = false },
-            title = { Text("新建文件夹") },
-            text = {
-                OutlinedTextField(
-                    value = folderName,
-                    onValueChange = { folderName = it },
-                    label = { Text("文件夹名称") },
-                    singleLine = true
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        if (folderName.isNotBlank()) {
-                            viewModel.createFolder(folder, folderName.trim())
-                            showCreateFolderDialog = false
-                        }
-                    },
-                    enabled = folderName.isNotBlank()
-                ) {
-                    Text("创建")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCreateFolderDialog = false }) {
-                    Text("取消")
-                }
-            }
-        )
     }
 
     error?.let {
