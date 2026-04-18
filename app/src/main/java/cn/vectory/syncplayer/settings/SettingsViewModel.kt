@@ -28,48 +28,33 @@ class SettingsViewModel @Inject constructor(
 
     // Removed defaultSortMode/defaultFilter/viewMode/gridColumns as settings are deprecated
 
-    private val _volumeBalance = MutableStateFlow(false)
-    val volumeBalance: StateFlow<Boolean> = _volumeBalance.asStateFlow()
+    val volumeBalance: StateFlow<Boolean> = userPrefs.volumeBalance
+        .stateIn(viewModelScope, SharingStarted.Lazily, false)
 
-    private val _quickRecycle = MutableStateFlow(true)
-    val quickRecycle: StateFlow<Boolean> = _quickRecycle.asStateFlow()
+    val quickRecycle: StateFlow<Boolean> = userPrefs.quickRecycle
+        .stateIn(viewModelScope, SharingStarted.Lazily, true)
 
-    // SAF provider toggle state
-    private val _safEnabled = MutableStateFlow(false)
-    val safEnabled: StateFlow<Boolean> = _safEnabled.asStateFlow()
+    val safEnabled: StateFlow<Boolean> = userPrefs.safProviderEnabled
+        .stateIn(viewModelScope, SharingStarted.Lazily, false)
 
-    // Secure lock toggle state
-    private val _secureLockEnabled = MutableStateFlow(false)
-    val secureLockEnabled: StateFlow<Boolean> = _secureLockEnabled.asStateFlow()
+    val secureLockEnabled: StateFlow<Boolean> = userPrefs.secureLockEnabled
+        .stateIn(viewModelScope, SharingStarted.Lazily, false)
+
     val canAuthenticateBio: Boolean = biometricAuthManager.canAuthenticate()
 
     val syncLogs: StateFlow<List<SyncLogEntity>> = syncLogRepository.getRecentFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    init {
-        viewModelScope.launch {
-            _volumeBalance.value = userPrefs.getVolumeBalance()
-            _quickRecycle.value = userPrefs.getQuickRecycle()
-            // Load SAF provider state
-            _safEnabled.value = userPrefs.getSafProviderEnabled()
-            // Load secure lock state
-            _secureLockEnabled.value = userPrefs.getSecureLockEnabled()
-        }
-    }
-
     fun setVolumeBalance(enabled: Boolean) {
-        _volumeBalance.value = enabled
         viewModelScope.launch { userPrefs.setVolumeBalance(enabled) }
     }
 
     fun setQuickRecycle(enabled: Boolean) {
-        _quickRecycle.value = enabled
         viewModelScope.launch { userPrefs.setQuickRecycle(enabled) }
     }
 
     // SAF provider toggle state
     fun setSafEnabled(enabled: Boolean) {
-        _safEnabled.value = enabled
         val componentName = ComponentName(context, SyncDocumentsProvider::class.java)
         val newState = if (enabled) {
             PackageManager.COMPONENT_ENABLED_STATE_ENABLED
@@ -86,7 +71,6 @@ class SettingsViewModel @Inject constructor(
 
     // Secure lock related actions
     fun setSecureLockEnabled(enabled: Boolean) {
-        _secureLockEnabled.value = enabled
         viewModelScope.launch { userPrefs.setSecureLockEnabled(enabled) }
     }
 
