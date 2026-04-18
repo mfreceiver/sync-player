@@ -6,6 +6,7 @@
 - **ANDROID_HOME**: `/home/mar/android-sdk` (build-tools 35.0.x, platform android-35)
 - **Android Studio**: `/home/mar/android-studio`
 - **Project root**: `/home/mar/sync-player`
+- **Gradle**: 8.11.1
 - **No Kotlin LSP installed** — use Gradle build for type/syntax verification
 
 All Gradle commands require `JAVA_HOME=/home/mar/android-studio/jbr`. ANDROID_HOME is optional if already in env.
@@ -32,21 +33,128 @@ Always run a build after code changes to verify compilation — there is no LSP 
 **Package**: `cn.vectory.syncplayer`
 **Repo**: `https://git.vectory.cn:18443/mfreceiver/sync-player.git` (branch: `master`)
 **Target**: Android 14+ (minSdk 34, targetSdk 35), personal use, sideloaded
+**Current version**: see `versionName` in `app/build.gradle.kts`
 
 ### Tech Stack
-Kotlin 2.1.0 | Jetpack Compose + Material 3 (BOM 2025.02.00) | MVVM + Repository | Hilt 2.54 | Room 2.7.0 (schema v6) | Media3/ExoPlayer 1.6.0 | jcifs-ng (SMB) | SSHJ (SFTP) | Coroutines + Flow
+
+| Category | Library | Version |
+|---|---|---|
+| Language | Kotlin | 2.1.0 |
+| UI | Jetpack Compose + Material 3 | BOM 2025.02.00 |
+| Architecture | MVVM + Repository, Hilt DI | Hilt 2.54 |
+| Database | Room | 2.7.0 (schema v12) |
+| Player | Media3 / ExoPlayer | 1.6.0 |
+| SMB | jcifs-ng | 2.1.10 |
+| SFTP | SSHJ | 0.39.0 |
+| Crypto | BouncyCastle (MD4 for NTLM) | 1.80 |
+| Security | androidx.security.crypto | 1.1.0-alpha06 |
+| Biometric | androidx.biometric | 1.1.0 |
+| Images | Coil Compose | 2.7.0 |
+| Async | Coroutines + Flow | 1.10.1 |
+| Preferences | DataStore Preferences | 1.1.4 |
+| KSP | Kotlin Symbol Processing | 2.1.0-1.0.29 |
 
 ### Key Directories
+
 ```
 app/src/main/java/cn/vectory/syncplayer/
-├── MainActivity.kt          # Single Activity
-├── player/                  # ExoPlayer + gesture controls + UI overlays
-├── browser/                 # Video file browser (grid/list, thumbnails)
-├── sync/                    # Sync engine (SMB/SFTP), foreground service
-├── settings/                # Settings screens (sync sources, playback)
-├── data/                    # Room DB, DAOs, repositories, models
-├── navigation/              # Route sealed class + NavHost
-└── ui/theme/                # Material 3 theme + extended colors
+├── MainActivity.kt              # Single Activity — Compose host, app lock overlay, navigation
+├── SyncPlayerApp.kt             # Application — Hilt, AppLockManager registration, BouncyCastle provider
+│
+├── audio/                       # Audio analysis
+│   └── AudioGainAnalyzer.kt        # RMS/peak dB analysis via MediaExtractor+MediaCodec
+│
+├── browser/                     # File browser
+│   ├── BrowserViewModel.kt         # Folder navigation, sort/filter, grid/list modes, thumbnails
+│   ├── BrowserScreen.kt            # Main browse UI — grid/list, directory tree, item actions
+│   ├── SearchViewModel.kt          # Search state across videos and folders
+│   └── SearchScreen.kt             # Search results UI
+│
+├── data/                        # Data layer
+│   ├── local/
+│   │   ├── AppDatabase.kt          # Room DB (6 entities, schema v12, migrations 9→12)
+│   │   ├── dao/                    # VideoItemDao, PlaybackRecordDao, SyncSourceDao,
+│   │   │                           # SyncRelationDao, SyncLogDao, PendingSyncActionDao
+│   │   └── entity/                 # VideoItemEntity, PlaybackRecordEntity, SyncSourceEntity,
+│   │                                # SyncRelationEntity, SyncLogEntity, PendingSyncActionEntity
+│   ├── model/                      # Domain models: BrowseItem, RemoteFile, SyncAction,
+│   │                                # SyncProgress, SyncProtocol, SyncSource, SyncRelation,
+│   │                                # SyncRelationWithSource, OrientationPreference
+│   └── repository/                 # VideoRepository, PlaybackRepository, SyncSourceRepository,
+│                                    # SyncRelationRepository, SyncLogRepository, UserPreferencesRepository
+│
+├── di/                          # Hilt DI modules
+│   ├── DatabaseModule.kt           # Room DB, all DAOs, MasterKey, EncryptedSharedPreferences, migrations
+│   └── SyncModule.kt               # SMB/SFTP client providers
+│
+├── navigation/                  # Navigation
+│   ├── AppNavHost.kt               # Central NavHost wiring all routes/screens
+│   ├── Route.kt                    # Route sealed class
+│   ├── NavigationHelper.kt         # Hilt-injected navigation helper
+│   └── VideoQueue.kt               # Shared video queue for player navigation
+│
+├── player/                      # Video player
+│   ├── GesturePlayerView.kt        # ExoPlayer view with gesture controls (swipe seek/volume/brightness,
+│   │                                # long-press speed, double-tap actions)
+│   ├── PlayerViewModel.kt          # Player state, progress save/restore, playback speed
+│   └── PlayerScreen.kt             # Player UI — top bar, bottom toolbar, overlays
+│
+├── provider/                    # SAF content provider
+│   └── SyncDocumentsProvider.kt    # DocumentsProvider exposing synced videos to third-party apps
+│
+├── security/                    # App lock & biometric auth
+│   ├── AppLockManager.kt           # Process lifecycle observer — auto-lock on background/foreground
+│   ├── BiometricAuthManager.kt     # BiometricPrompt facade for unlock
+│   └── LockScreenOverlay.kt        # Full-screen lock UI with retry button
+│
+├── settings/                    # Settings screens
+│   ├── SettingsScreen.kt           # Main settings UI
+│   ├── SettingsViewModel.kt        # Settings state (speed, volume, double-tap, SAF, secure lock)
+│   ├── SyncSourceListScreen.kt     # Sync data source list
+│   ├── SyncSourceEditScreen.kt     # Create/edit SMB/SFTP source + connection test
+│   ├── SyncSourceEditViewModel.kt
+│   ├── SyncRelationListScreen.kt   # Sync relation list
+│   ├── SyncRelationEditScreen.kt   # Create/edit sync relation (source + path mapping)
+│   ├── SyncRelationEditViewModel.kt
+│   ├── MetadataRebuildScreen.kt    # Metadata rebuild UI
+│   ├── MetadataRebuildViewModel.kt
+│   ├── GainAnalysisScreen.kt       # Audio gain analysis per sync relation
+│   ├── GainAnalysisViewModel.kt
+│   └── AboutScreen.kt              # About page
+│
+├── storage/                     # Path management
+│   └── StoragePaths.kt             # Centralized paths for user data, thumbnails, debug logs
+│
+├── sync/                        # Sync engine
+│   ├── SyncService.kt              # Foreground service (dataSync type), orchestrates sync tasks
+│   ├── SyncEngine.kt               # Core engine — mirror sync, download/delete, progress tracking
+│   ├── RemoteFileClient.kt         # Remote file client abstraction
+│   ├── smb/SmbFileClient.kt        # SMB implementation (jcifs-ng)
+│   ├── sftp/SftpFileClient.kt      # SFTP implementation (SSHJ)
+│   ├── VideoMetadataExtractor.kt   # Duration/width/height/bitrate extraction + thumbnail generation
+│   ├── SyncNotificationHelper.kt   # Foreground notification with progress updates
+│   ├── SyncPreviewScreen.kt        # Dry-run preview UI
+│   ├── SyncPreviewViewModel.kt     # Preview state management
+│   ├── NetworkUtils.kt             # Network availability check
+│   └── ErrorMessageMapper.kt       # User-friendly error message mapping
+│
+└── ui/                          # Shared UI components & theme
+    ├── components/
+    │   ├── VideoGridItem.kt        # Grid tile for video entries
+    │   ├── FolderGridItem.kt       # Grid tile for folder entries
+    │   ├── FolderIcon.kt           # Folder icon with sync-base indicator
+    │   ├── Thumbnail.kt            # Thumbnail rendering (Coil + video frames)
+    │   ├── FileStatusIcon.kt       # Playback status overlay (completed/trashed)
+    │   ├── ProgressRing.kt         # Ring progress indicator
+    │   ├── StarRatingInput.kt      # Star rating widget
+    │   ├── DirectoryTreeDialog.kt  # Directory tree picker dialog
+    │   └── VerticalScrollbar.kt    # Custom scrollbar for LazyColumn
+    ├── theme/
+    │   ├── Theme.kt                # Material 3 theme, dynamic color, extended colors
+    │   └── Color.kt                # Color palette definitions
+    └── util/
+        ├── FormatUtils.kt          # Duration/file-size formatters, sorting helpers
+        └── VideoUtils.kt           # Video-related UI utilities
 ```
 
 ## Conventions
@@ -61,9 +169,14 @@ app/src/main/java/cn/vectory/syncplayer/
   - Playback speed (1x/1.5x/2x): persists across videos, resets on exit
   - System status bar always hidden in player
   - `progressAlwaysVisible`: shows top bar in immersive mode without bottom toolbar
-- **Sync**: mirror sync (remote → local), dry-run first, foreground service
+- **Sync**: mirror sync (remote → local), multi-source (SyncSource + SyncRelation), dry-run first, foreground service (`dataSync` type)
+- **Security**: app lock via biometric (BIOMETRIC_WEAK), auto-locks on background transition, EncryptedSharedPreferences for credentials
+- **SAF**: optional DocumentsProvider (`SyncDocumentsProvider`) to expose synced files to other apps
+- **Audio**: gain analysis (RMS/peak dB) per sync relation, used for volume normalization hints
 - **Versioning**: bump versionCode + versionName in `app/build.gradle.kts` after every commit+push
 - **Commit style**: `feat:` / `fix:` prefix
 - **Release**: tag + push tag + Gitea API create release + upload APK
 - **Icon library**: `material-icons-extended` — use Material Icons, never emoji
 - **UI text**: user-facing strings in Chinese, code/variables in English
+- **Database**: Room with schema migrations, version tracked in `DatabaseModule.kt`, schemas exported to `app/schemas/`
+- **Storage**: all synced files in app private storage (`context.getExternalFilesDir`), paths managed by `StoragePaths`
