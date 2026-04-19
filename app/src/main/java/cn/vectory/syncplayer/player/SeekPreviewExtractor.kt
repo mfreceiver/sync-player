@@ -11,7 +11,7 @@ class SeekPreviewExtractor {
     private companion object {
         const val CACHE_MAX_SIZE = 20
         const val MAX_WIDTH = 180
-        const val POSITION_ROUNDING_MS = 5000L
+        const val POSITION_ROUNDING_MS = 1000L
     }
 
     private data class CacheKey(
@@ -37,7 +37,7 @@ class SeekPreviewExtractor {
             retriever.setDataSource(filePath)
             val raw = retriever.getFrameAtTime(
                 roundedPosition * 1000,
-                MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                MediaMetadataRetriever.OPTION_CLOSEST,
             ) ?: return null
 
             val scaled = scaleBitmap(raw)

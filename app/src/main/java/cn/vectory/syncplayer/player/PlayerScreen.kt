@@ -72,9 +72,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
@@ -665,7 +667,16 @@ fun PlayerScreen(
                                 }
                             }
 
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "${formatDuration(currentPosition)} / ${formatDuration(currentDuration)}",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.widthIn(min = 80.dp),
+                                textAlign = TextAlign.Center,
+                                fontSize = 11.sp,
+                            )
+
+                            Spacer(modifier = Modifier.width(4.dp))
 
                             Box {
                                 IconButton(
