@@ -260,7 +260,7 @@ class PlayerViewModel @Inject constructor(
     fun onGestureSeekChanged(positionMs: Long, durationMs: Long) {
         if (durationMs > 0) {
             val pos = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-            _uiState.update { it.copy(gestureSeekPosition = pos) }
+            _uiState.update { it.copy(isGestureSeeking = true, gestureSeekPosition = pos) }
         }
     }
 

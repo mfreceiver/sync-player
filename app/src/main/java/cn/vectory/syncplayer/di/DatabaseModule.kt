@@ -33,7 +33,7 @@ object DatabaseModule {
             AppDatabase::class.java,
             "sync-player.db"
         )
-            .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+            .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
             .build()
     }
 
@@ -128,6 +128,63 @@ object DatabaseModule {
         override fun migrate(db: SupportSQLiteDatabase) {
             db.execSQL("ALTER TABLE video_item ADD COLUMN parentPath TEXT NOT NULL DEFAULT ''")
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_video_item_parentPath` ON `video_item` (`parentPath`)")
+            db.execSQL("""
+                WITH RECURSIVE
+                last_slash(id, remaining, last_pos) AS (
+                    SELECT id, relativePath, 0
+                    FROM video_item
+                    WHERE relativePath LIKE '%/%'
+                    UNION ALL
+                    SELECT id,
+                           SUBSTR(remaining, INSTR(remaining, '/') + 1),
+                           last_pos + INSTR(remaining, '/')
+                    FROM last_slash
+                    WHERE INSTR(remaining, '/') > 0
+                ),
+                computed_parent AS (
+                    SELECT ls.id,
+                           SUBSTR(vi.relativePath, 1, ls.last_pos - 1) as parentPath
+                    FROM last_slash ls
+                    JOIN video_item vi ON vi.id = ls.id
+                    WHERE INSTR(ls.remaining, '/') = 0
+                )
+                UPDATE video_item SET parentPath = COALESCE(
+                    (SELECT cp.parentPath FROM computed_parent cp WHERE cp.id = video_item.id),
+                    parentPath
+                )
+                WHERE parentPath = ''
+            """)
+        }
+    }
+
+    private val MIGRATION_14_15 = object : Migration(14, 15) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("""
+                WITH RECURSIVE
+                last_slash(id, remaining, last_pos) AS (
+                    SELECT id, relativePath, 0
+                    FROM video_item
+                    WHERE relativePath LIKE '%/%'
+                    UNION ALL
+                    SELECT id,
+                           SUBSTR(remaining, INSTR(remaining, '/') + 1),
+                           last_pos + INSTR(remaining, '/')
+                    FROM last_slash
+                    WHERE INSTR(remaining, '/') > 0
+                ),
+                computed_parent AS (
+                    SELECT ls.id,
+                           SUBSTR(vi.relativePath, 1, ls.last_pos - 1) as parentPath
+                    FROM last_slash ls
+                    JOIN video_item vi ON vi.id = ls.id
+                    WHERE INSTR(ls.remaining, '/') = 0
+                )
+                UPDATE video_item SET parentPath = COALESCE(
+                    (SELECT cp.parentPath FROM computed_parent cp WHERE cp.id = video_item.id),
+                    parentPath
+                )
+                WHERE parentPath = ''
+            """)
         }
     }
 }

@@ -171,7 +171,7 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                 onBack = { navController.popBackStack() },
                 onNavigateToRelation = { relationId, initialTab ->
                     navController.navigate(Route.SyncPreview.create(relationId, initialTab)) {
-                        popUpTo(Route.SyncRelationList.route) { inclusive = false }
+                        popUpTo(Route.SyncPreview.route) { inclusive = true }
                         launchSingleTop = true
                     }
                 }
