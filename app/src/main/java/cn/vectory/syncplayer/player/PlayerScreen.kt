@@ -392,11 +392,10 @@ fun PlayerScreen(
                 lastExtractedPosMs = posMs
                 if (bitmap != null && isActive) {
                     val latestMs = readSeekPosMs(uiState, duration)
-                    if (latestMs == posMs) {
+                    if (abs(latestMs - posMs) < 500L) {
                         seekPreviewBitmap = bitmap
                     }
                 }
-                // No delay — immediately catch up to latest position
             } else {
                 delay(50)
             }
