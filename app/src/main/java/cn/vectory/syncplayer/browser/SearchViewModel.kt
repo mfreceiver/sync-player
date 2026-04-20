@@ -55,7 +55,7 @@ class SearchViewModel @Inject constructor(
         },
         allFolderPaths,
         playbackRecords
-    ) { query, scope, fileResults, folders, records ->
+    ) { query: String, scope: SearchScope, fileResults: List<cn.vectory.syncplayer.data.local.entity.VideoItemEntity>, folders: List<String>, records: List<cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity> ->
         if (query.isBlank()) return@combine emptyList<BrowseItem>()
         val recordMap = records.associateBy { it.videoItemId }
         buildSearchResults(query, scope, fileResults, folders, recordMap)

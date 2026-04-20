@@ -59,6 +59,9 @@ class VideoRepository @Inject constructor(
     fun getAllRelativePaths(): Flow<List<String>> =
         videoItemDao.getAllRelativePaths()
 
+    fun getAllParentPaths(): Flow<List<String>> =
+        videoItemDao.getAllParentPaths()
+
     suspend fun getChildVideoStats(folderPath: String): List<ChildVideoStat> =
         videoItemDao.getChildVideoStats(folderPath)
 

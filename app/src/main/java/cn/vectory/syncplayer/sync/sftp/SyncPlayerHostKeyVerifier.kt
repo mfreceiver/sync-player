@@ -42,6 +42,10 @@ class SyncPlayerHostKeyVerifier(context: Context) : HostKeyVerifier {
         }
     }
 
+    override fun findExistingAlgorithms(hostname: String, port: Int): List<String> {
+        return emptyList()
+    }
+
     private fun saveProps() {
         try {
             hostsFile.outputStream().use { props.store(it, "SyncPlayer SFTP Known Hosts") }

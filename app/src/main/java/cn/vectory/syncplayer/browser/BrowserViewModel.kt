@@ -16,6 +16,7 @@ import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.data.model.SyncRelationWithSource
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.VideoMetadataExtractor
+import cn.vectory.syncplayer.ui.util.extractParentPath
 import cn.vectory.syncplayer.ui.util.getMimeType
 import cn.vectory.syncplayer.ui.util.isVideoFile
 import cn.vectory.syncplayer.ui.util.fileNameComparator
