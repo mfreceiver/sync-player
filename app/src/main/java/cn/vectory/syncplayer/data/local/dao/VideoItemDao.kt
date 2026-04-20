@@ -6,56 +6,47 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface VideoItemDao {
-    @Query("""
-        SELECT * FROM video_item
-        WHERE CASE
-            WHEN :folderPath = '' THEN relativePath NOT LIKE '%/%'
-            ELSE relativePath LIKE :folderPath || '/%'
-                 AND SUBSTR(relativePath, LENGTH(:folderPath) + 2) NOT LIKE '%/%'
-        END
-    """)
+    @Query("SELECT * FROM video_item WHERE parentPath = :folderPath")
     fun getItemsInFolder(folderPath: String): Flow<List<VideoItemEntity>>
 
     @Query("""
         SELECT DISTINCT SUBSTR(
-            CASE WHEN :folderPath = '' THEN relativePath
-            ELSE SUBSTR(relativePath, LENGTH(:folderPath) + 2)
+            CASE WHEN :folderPath = '' THEN parentPath
+            ELSE SUBSTR(parentPath, LENGTH(:folderPath) + 2)
             END,
             1,
             INSTR(
-                CASE WHEN :folderPath = '' THEN relativePath
-                ELSE SUBSTR(relativePath, LENGTH(:folderPath) + 2)
+                CASE WHEN :folderPath = '' THEN parentPath
+                ELSE SUBSTR(parentPath, LENGTH(:folderPath) + 2)
                 END || '/',
                 '/'
             ) - 1
         )
         FROM video_item
         WHERE CASE
-            WHEN :folderPath = '' THEN relativePath LIKE '%/%'
-            ELSE relativePath LIKE :folderPath || '/%'
-                 AND SUBSTR(relativePath, LENGTH(:folderPath) + 2) LIKE '%/%'
+            WHEN :folderPath = '' THEN parentPath != ''
+            ELSE parentPath LIKE :folderPath || '/%'
         END
     """)
     fun getSubFolders(folderPath: String): Flow<List<String>>
 
     @Query("""
         SELECT DISTINCT SUBSTR(
-            CASE WHEN :folderPath = '' THEN relativePath
-            ELSE SUBSTR(relativePath, LENGTH(:folderPath) + 2)
+            CASE WHEN :folderPath = '' THEN parentPath
+            ELSE SUBSTR(parentPath, LENGTH(:folderPath) + 2)
             END,
             1,
             INSTR(
-                CASE WHEN :folderPath = '' THEN relativePath
-                ELSE SUBSTR(relativePath, LENGTH(:folderPath) + 2)
+                CASE WHEN :folderPath = '' THEN parentPath
+                ELSE SUBSTR(parentPath, LENGTH(:folderPath) + 2)
                 END || '/',
                 '/'
             ) - 1
         )
         FROM video_item
         WHERE CASE
-            WHEN :folderPath = '' THEN relativePath LIKE '%/%'
-            ELSE relativePath LIKE :folderPath || '/%'
-                 AND SUBSTR(relativePath, LENGTH(:folderPath) + 2) LIKE '%/%'
+            WHEN :folderPath = '' THEN parentPath != ''
+            ELSE parentPath LIKE :folderPath || '/%'
         END
     """)
     suspend fun getSubFoldersOnce(folderPath: String): List<String>
@@ -104,6 +95,9 @@ interface VideoItemDao {
 
     @Query("SELECT DISTINCT relativePath FROM video_item")
     fun getAllRelativePaths(): Flow<List<String>>
+
+    @Query("SELECT DISTINCT parentPath FROM video_item")
+    fun getAllParentPaths(): Flow<List<String>>
 
     // Recursive folder statistics for requirement 1 (all files under a folder path)
     data class RecursiveFolderStat(
@@ -160,11 +154,11 @@ interface VideoItemDao {
         LEFT JOIN playback_record pr ON pr.videoItemId = vi.id
         WHERE CASE
             WHEN :folderPath = '' THEN
-                LENGTH(vi.relativePath) - LENGTH(REPLACE(vi.relativePath, '/', '')) = 1
+                vi.parentPath != '' AND vi.parentPath NOT LIKE '%/%'
             ELSE
-                vi.relativePath LIKE :folderPath || '/%'
-                AND LENGTH(SUBSTR(vi.relativePath, LENGTH(:folderPath) + 2))
-                    - LENGTH(REPLACE(SUBSTR(vi.relativePath, LENGTH(:folderPath) + 2), '/', '')) = 1
+                vi.parentPath LIKE :folderPath || '/%'
+                AND LENGTH(SUBSTR(vi.parentPath, LENGTH(:folderPath) + 2))
+                    - LENGTH(REPLACE(SUBSTR(vi.parentPath, LENGTH(:folderPath) + 2), '/', '')) = 0
         END
     """)
     suspend fun getChildVideoStats(folderPath: String): List<ChildVideoStat>
@@ -182,11 +176,7 @@ interface VideoItemDao {
     @Query("""
         SELECT thumbnailPath FROM video_item
         WHERE thumbnailPath IS NOT NULL
-        AND CASE
-            WHEN :folderPath = '' THEN relativePath NOT LIKE '%/%'
-            ELSE relativePath LIKE :folderPath || '/%'
-                 AND SUBSTR(relativePath, LENGTH(:folderPath) + 2) NOT LIKE '%/%'
-        END
+        AND parentPath = :folderPath
         ORDER BY fileName ASC
         LIMIT :limit
     """)
@@ -201,10 +191,10 @@ interface VideoItemDao {
         SELECT relativePath, thumbnailPath FROM video_item
         WHERE thumbnailPath IS NOT NULL
         AND CASE
-            WHEN :parentFolder = '' THEN relativePath LIKE '%/%' AND relativePath NOT LIKE '%/%/%'
-            ELSE relativePath LIKE :parentFolder || '/%'
-                 AND SUBSTR(relativePath, LENGTH(:parentFolder) + 2) LIKE '%/%'
-                 AND SUBSTR(relativePath, LENGTH(:parentFolder) + 2) NOT LIKE '%/%/%'
+            WHEN :parentFolder = '' THEN parentPath != '' AND parentPath NOT LIKE '%/%'
+            ELSE parentPath LIKE :parentFolder || '/%'
+                 AND LENGTH(SUBSTR(parentPath, LENGTH(:parentFolder) + 2))
+                    - LENGTH(REPLACE(SUBSTR(parentPath, LENGTH(:parentFolder) + 2), '/', '')) = 0
         END
         ORDER BY relativePath
     """)

@@ -29,15 +29,16 @@ class SearchViewModel @Inject constructor(
     private val playbackRecords = playbackRepository.getAllFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    private val allFolderPaths = videoRepository.getAllRelativePaths()
-        .map { paths ->
+    private val allFolderPaths = videoRepository.getAllParentPaths()
+        .map { parentPaths ->
             val folderSet = mutableSetOf<String>()
-            for (path in paths) {
-                val segments = path.split("/")
-                if (segments.size > 1) {
-                    for (i in 0 until segments.size - 1) {
-                        folderSet.add(segments.subList(0, i + 1).joinToString("/"))
-                    }
+            for (parentPath in parentPaths) {
+                if (parentPath.isEmpty()) continue
+                val segments = parentPath.split("/")
+                var current = ""
+                for (segment in segments) {
+                    current = if (current.isEmpty()) segment else "$current/$segment"
+                    folderSet.add(current)
                 }
             }
             folderSet.toList()
@@ -46,7 +47,7 @@ class SearchViewModel @Inject constructor(
 
     @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
     val searchResults: StateFlow<List<BrowseItem>> = combine(
-        _query.debounce(150),
+        _query.debounce(300),
         _searchScope,
         _query.flatMapLatest { q ->
             if (q.isBlank()) flowOf(emptyList())
@@ -56,7 +57,8 @@ class SearchViewModel @Inject constructor(
         playbackRecords
     ) { query, scope, fileResults, folders, records ->
         if (query.isBlank()) return@combine emptyList<BrowseItem>()
-        buildSearchResults(query, scope, fileResults, folders, records)
+        val recordMap = records.associateBy { it.videoItemId }
+        buildSearchResults(query, scope, fileResults, folders, recordMap)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private fun buildSearchResults(
@@ -64,7 +66,7 @@ class SearchViewModel @Inject constructor(
         scope: SearchScope,
         fileResults: List<cn.vectory.syncplayer.data.local.entity.VideoItemEntity>,
         folders: List<String>,
-        records: List<cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity>
+        recordMap: Map<Long, cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity>
     ): List<BrowseItem> {
         val result = mutableListOf<BrowseItem>()
 
@@ -86,7 +88,7 @@ class SearchViewModel @Inject constructor(
 
         if (scope != SearchScope.FOLDERS_ONLY) {
             val matchingFiles = fileResults.map { video ->
-                val record = records.find { it.videoItemId == video.id }
+                val record = recordMap[video.id]
                 BrowseItem(
                     videoItemId = video.id,
                     name = video.fileName,

@@ -18,6 +18,7 @@ import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.storage.StoragePaths
+import cn.vectory.syncplayer.ui.util.extractParentPath
 import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -373,6 +374,7 @@ class SyncEngine @Inject constructor(
                     } else {
                         val entity = VideoItemEntity(
                             relativePath = localRelPath,
+                            parentPath = extractParentPath(localRelPath),
                             fileName = action.relativePath.substringAfterLast("/"),
                             localAbsolutePath = finalFile.absolutePath,
                             fileSize = action.fileSize,
@@ -480,6 +482,7 @@ class SyncEngine @Inject constructor(
                                         totalBytesTransferred.addAndGet(action.fileSize)
                                         val entity = VideoItemEntity(
                                             relativePath = localRelPath,
+                                            parentPath = extractParentPath(localRelPath),
                                             fileName = action.relativePath.substringAfterLast("/"),
                                             localAbsolutePath = finalFile.absolutePath,
                                             fileSize = action.fileSize,

@@ -9,6 +9,11 @@ internal fun isVideoFile(fileName: String): Boolean {
     return ext in VIDEO_EXTENSIONS
 }
 
+internal fun extractParentPath(relativePath: String): String {
+    val lastSlash = relativePath.lastIndexOf('/')
+    return if (lastSlash >= 0) relativePath.substring(0, lastSlash) else ""
+}
+
 internal fun getMimeType(fileName: String): String {
     val ext = fileName.substringAfterLast('.', "").lowercase()
     return when (ext) {

@@ -8,13 +8,15 @@ import androidx.room.PrimaryKey
     tableName = "video_item",
     indices = [
         Index(value = ["relativePath", "syncRelationId"], unique = true),
-        Index(value = ["syncRelationId"])
+        Index(value = ["syncRelationId"]),
+        Index(value = ["parentPath"])
     ]
 )
 data class VideoItemEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val syncRelationId: Long = 0,
     val relativePath: String,
+    val parentPath: String = "",
     val fileName: String,
     val localAbsolutePath: String,
     val fileSize: Long,

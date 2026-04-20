@@ -203,7 +203,7 @@ class BrowserViewModel @Inject constructor(
         val starValue = _starFilterValue.value
         buildBrowseItems(folder, mode, filterVal, starMode, starValue, browseModeVal, records, allRecords, baseDirSet)
     }
-    .debounce(50)
+    .debounce(300)
     .onEach { _browseItemsFolder.value = _currentFolder.value }
     .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
@@ -649,6 +649,7 @@ class BrowserViewModel @Inject constructor(
 
         val entity = VideoItemEntity(
             relativePath = item.relativePath,
+            parentPath = extractParentPath(item.relativePath),
             fileName = item.name,
             localAbsolutePath = file.absolutePath,
             fileSize = file.length(),

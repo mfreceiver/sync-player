@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.util.LruCache
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToLong
 
 class SeekPreviewExtractor {
@@ -26,19 +28,19 @@ class SeekPreviewExtractor {
     private fun roundPosition(positionMs: Long): Long =
         (positionMs / POSITION_ROUNDING_MS) * POSITION_ROUNDING_MS
 
-    suspend fun extractFrameAtPosition(filePath: String, positionMs: Long): Bitmap? {
+    suspend fun extractFrameAtPosition(filePath: String, positionMs: Long): Bitmap? = withContext(Dispatchers.IO) {
         val roundedPosition = roundPosition(positionMs)
         val key = CacheKey(filePath, roundedPosition)
 
-        cache.get(key)?.let { return it }
+        cache.get(key)?.let { return@withContext it }
 
         val retriever = MediaMetadataRetriever()
-        return try {
+        try {
             retriever.setDataSource(filePath)
             val raw = retriever.getFrameAtTime(
                 roundedPosition * 1000,
                 MediaMetadataRetriever.OPTION_CLOSEST,
-            ) ?: return null
+            ) ?: return@withContext null
 
             val scaled = scaleBitmap(raw)
             if (scaled !== raw) raw.recycle()

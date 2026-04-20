@@ -13,7 +13,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.sftp.SFTPClient
-import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import net.schmizz.sshj.userauth.UserAuthException
 import java.io.File
 import java.io.FileOutputStream
@@ -43,7 +42,7 @@ class SftpFileClient(
         checkNetworkAvailable(context)
         try {
             val client = SSHClient()
-            client.addHostKeyVerifier(PromiscuousVerifier())
+            client.addHostKeyVerifier(SyncPlayerHostKeyVerifier(context))
             val timeoutMs = 5000
             client.setConnectTimeout(timeoutMs)
             client.setTimeout(timeoutMs)
