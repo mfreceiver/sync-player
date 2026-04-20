@@ -75,6 +75,7 @@ fun PlayerScreen(
     val context = LocalContext.current
     val activity = context as? android.app.Activity ?: return
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val currentPosition by viewModel.currentPosition.collectAsStateWithLifecycle()
 
     var originalBrightness by remember { mutableFloatStateOf(-1f) }
     var initialVolume by remember { mutableIntStateOf(0) }
@@ -342,7 +343,7 @@ fun PlayerScreen(
     val seekDisplayProgress = when {
         uiState.isUserSeeking -> uiState.userSeekPosition
         uiState.isGestureSeeking -> uiState.gestureSeekPosition
-        uiState.duration > 0 -> (uiState.currentPosition.toFloat() / uiState.duration.toFloat()).coerceIn(0f, 1f)
+        uiState.duration > 0 -> (currentPosition.toFloat() / uiState.duration.toFloat()).coerceIn(0f, 1f)
         else -> 0f
     }
 
@@ -459,7 +460,9 @@ fun PlayerScreen(
                         PlaybackControlRow(
                             viewModel = viewModel,
                             exoPlayer = exoPlayer,
-                            uiState = uiState,
+                            isPlaying = uiState.isPlaying,
+                            isFullscreen = uiState.isFullscreen,
+                            playbackSpeed = uiState.playbackSpeed,
                             showSettingsPopup = showSettingsPopup,
                             onToggleSettings = { showSettingsPopup = !showSettingsPopup },
                             onDismissSettings = { showSettingsPopup = false }
@@ -472,157 +475,6 @@ fun PlayerScreen(
         if (!uiState.showControls && !isSeekingActive) {
             MinimizedProgressBar(viewModel, uiState.duration)
         }
-...
-@Composable
-private fun PlaybackControlRow(
-    viewModel: PlayerViewModel,
-    exoPlayer: ExoPlayer,
-    uiState: PlayerUiState,
-    showSettingsPopup: Boolean,
-    onToggleSettings: () -> Unit,
-    onDismissSettings: () -> Unit
-) {
-    val currentPosition by viewModel.currentPosition.collectAsStateWithLifecycle()
-    
-    val seekDisplayProgress = when {
-        uiState.isUserSeeking -> uiState.userSeekPosition
-        uiState.isGestureSeeking -> uiState.gestureSeekPosition
-        uiState.duration > 0 -> (currentPosition.toFloat() / uiState.duration.toFloat()).coerceIn(0f, 1f)
-        else -> 0f
-    }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(48.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        IconButton(
-            onClick = {
-                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-            },
-            modifier = Modifier.size(48.dp)
-        ) {
-            Icon(
-                imageVector = if (uiState.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                contentDescription = if (uiState.isPlaying) "Pause" else "Play",
-                tint = Color.White,
-                modifier = Modifier.size(32.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.width(8.dp))
-
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .height(20.dp)
-                .pointerInput(uiState.duration) {
-                    awaitPointerEventScope {
-                        while (true) {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            viewModel.onUserSeekStarted()
-                            var lastP = (down.position.x / size.width).coerceIn(0f, 1f)
-                            viewModel.onUserSeekChanged(lastP)
-                            down.consume()
-
-                            do {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.first()
-                                change.consume()
-                                lastP = (change.position.x / size.width).coerceIn(0f, 1f)
-                                viewModel.onUserSeekChanged(lastP)
-                            } while (change.pressed)
-
-                            viewModel.onUserSeekFinished(lastP)
-                            exoPlayer.seekTo((lastP * uiState.duration).toLong())
-                        }
-                    }
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.3f))
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(seekDisplayProgress)
-                        .background(LocalExtendedColors.current.playerProgressFill)
-                )
-            }
-        }
-
-        Text(
-            text = "${formatDuration(currentPosition)} / ${formatDuration(uiState.duration)}",
-            color = Color.White,
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.widthIn(min = 80.dp),
-            textAlign = TextAlign.Center,
-            fontSize = 11.sp,
-        )
-
-        Spacer(modifier = Modifier.width(4.dp))
-
-        Box {
-            IconButton(
-                onClick = onToggleSettings,
-                modifier = Modifier.size(48.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Settings,
-                    contentDescription = "Settings",
-                    tint = Color.White,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-            if (showSettingsPopup) {
-                SettingsPopup(
-                    isFullscreen = uiState.isFullscreen,
-                    playbackSpeed = uiState.playbackSpeed,
-                    onDirectionChange = { fullscreen ->
-                        viewModel.setFullscreen(fullscreen)
-                        viewModel.showOverlay(
-                            PlayerOverlay.Orientation(if (fullscreen) "FULLSCREEN" else "ROTATION")
-                        )
-                        onDismissSettings()
-                    },
-                    onSpeedChange = { speed ->
-                        viewModel.setPlaybackSpeed(speed)
-                        onDismissSettings()
-                    },
-                    onDismiss = onDismissSettings
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun MinimizedProgressBar(viewModel: PlayerViewModel, duration: Long) {
-    val currentPosition by viewModel.currentPosition.collectAsStateWithLifecycle()
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .background(Color.White.copy(alpha = 0.3f))
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(
-                    if (duration > 0)
-                        (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
-                    else 0f
-                )
-                .background(LocalExtendedColors.current.playerProgressFill)
-        )
-    }
-}
 
         if (isSeekingActive && seekPreviewBitmap != null) {
             val bitmap = seekPreviewBitmap!!
@@ -714,6 +566,177 @@ private fun MinimizedProgressBar(viewModel: PlayerViewModel, duration: Long) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PlaybackControlRow(
+    viewModel: PlayerViewModel,
+    exoPlayer: ExoPlayer,
+    isPlaying: Boolean,
+    isFullscreen: Boolean,
+    playbackSpeed: Float,
+    showSettingsPopup: Boolean,
+    onToggleSettings: () -> Unit,
+    onDismissSettings: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(
+            onClick = {
+                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+            },
+            modifier = Modifier.size(48.dp)
+        ) {
+            Icon(
+                imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = if (isPlaying) "Pause" else "Play",
+                tint = Color.White,
+                modifier = Modifier.size(32.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.width(8.dp))
+
+        SeekProgressBarWithTime(
+            viewModel = viewModel,
+            exoPlayer = exoPlayer
+        )
+
+        Spacer(modifier = Modifier.width(4.dp))
+
+        Box {
+            IconButton(
+                onClick = onToggleSettings,
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Settings,
+                    contentDescription = "Settings",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+            if (showSettingsPopup) {
+                SettingsPopup(
+                    isFullscreen = isFullscreen,
+                    playbackSpeed = playbackSpeed,
+                    onDirectionChange = { fullscreen ->
+                        viewModel.setFullscreen(fullscreen)
+                        viewModel.showOverlay(
+                            PlayerOverlay.Orientation(if (fullscreen) "FULLSCREEN" else "ROTATION")
+                        )
+                        onDismissSettings()
+                    },
+                    onSpeedChange = { speed ->
+                        viewModel.setPlaybackSpeed(speed)
+                        onDismissSettings()
+                    },
+                    onDismiss = onDismissSettings
+                )
+            }
+        }
+    }
+}
+
+/**
+ * High-frequency progress bar + time text.
+ * Subscribes to [PlayerViewModel.currentPosition] independently so that
+ * 200 ms polling only recomposes this narrow scope — not the surrounding
+ * play/pause and settings buttons.
+ */
+@Composable
+private fun RowScope.SeekProgressBarWithTime(
+    viewModel: PlayerViewModel,
+    exoPlayer: ExoPlayer
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val currentPosition by viewModel.currentPosition.collectAsStateWithLifecycle()
+
+    val seekDisplayProgress = when {
+        uiState.isUserSeeking -> uiState.userSeekPosition
+        uiState.isGestureSeeking -> uiState.gestureSeekPosition
+        uiState.duration > 0 -> (currentPosition.toFloat() / uiState.duration.toFloat()).coerceIn(0f, 1f)
+        else -> 0f
+    }
+
+    Box(
+        modifier = Modifier
+            .weight(1f)
+            .height(20.dp)
+            .pointerInput(uiState.duration) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        viewModel.onUserSeekStarted()
+                        var lastP = (down.position.x / size.width).coerceIn(0f, 1f)
+                        viewModel.onUserSeekChanged(lastP)
+                        down.consume()
+
+                        do {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.first()
+                            change.consume()
+                            lastP = (change.position.x / size.width).coerceIn(0f, 1f)
+                            viewModel.onUserSeekChanged(lastP)
+                        } while (change.pressed)
+
+                        viewModel.onUserSeekFinished(lastP)
+                        exoPlayer.seekTo((lastP * uiState.duration).toLong())
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(Color.White.copy(alpha = 0.3f))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(seekDisplayProgress)
+                    .background(LocalExtendedColors.current.playerProgressFill)
+            )
+        }
+    }
+
+    Text(
+        text = "${formatDuration(currentPosition)} / ${formatDuration(uiState.duration)}",
+        color = Color.White,
+        style = MaterialTheme.typography.labelSmall,
+        modifier = Modifier.widthIn(min = 80.dp),
+        textAlign = TextAlign.Center,
+        fontSize = 11.sp,
+    )
+}
+
+@Composable
+private fun MinimizedProgressBar(viewModel: PlayerViewModel, duration: Long) {
+    val currentPosition by viewModel.currentPosition.collectAsStateWithLifecycle()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(Color.White.copy(alpha = 0.3f))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(
+                    if (duration > 0)
+                        (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+                    else 0f
+                )
+                .background(LocalExtendedColors.current.playerProgressFill)
+        )
     }
 }
 

@@ -73,7 +73,7 @@ app/src/main/java/cn/vectory/syncplayer/
 │
 ├── data/                        # Data layer
 │   ├── local/
-│   │   ├── AppDatabase.kt          # Room DB (6 entities, schema v12, migrations 9→12)
+│   │   ├── AppDatabase.kt          # Room DB (6 entities, schema v14, migrations 9→14)
 │   │   ├── dao/                    # VideoItemDao, PlaybackRecordDao, SyncSourceDao,
 │   │   │                           # SyncRelationDao, SyncLogDao, PendingSyncActionDao
 │   │   └── entity/                 # VideoItemEntity, PlaybackRecordEntity, SyncSourceEntity,
@@ -97,8 +97,11 @@ app/src/main/java/cn/vectory/syncplayer/
 ├── player/                      # Video player
 │   ├── GesturePlayerView.kt        # ExoPlayer view with gesture controls (swipe seek/volume/brightness,
 │   │                                # long-press speed, double-tap actions)
-│   ├── PlayerViewModel.kt          # Player state, progress save/restore, playback speed
-│   └── PlayerScreen.kt             # Player UI — top bar, bottom toolbar, overlays
+│   ├── PlayerViewModel.kt          # MVI state: unified PlayerUiState + separate currentPosition StateFlow
+│   ├── PlayerScreen.kt             # Player UI — top bar, bottom toolbar, overlays
+│   │                                #   PlaybackControlRow: play/pause + settings (low-frequency recompose)
+│   │                                #   SeekProgressBarWithTime: progress bar + time (200ms polling, isolated)
+│   └── SeekPreviewExtractor.kt     # Seek frame extraction with LRU cache, runs on Dispatchers.IO
 │
 ├── provider/                    # SAF content provider
 │   └── SyncDocumentsProvider.kt    # DocumentsProvider exposing synced videos to third-party apps
@@ -132,6 +135,7 @@ app/src/main/java/cn/vectory/syncplayer/
 │   ├── RemoteFileClient.kt         # Remote file client abstraction
 │   ├── smb/SmbFileClient.kt        # SMB implementation (jcifs-ng)
 │   ├── sftp/SftpFileClient.kt      # SFTP implementation (SSHJ)
+│   ├── sftp/SyncPlayerHostKeyVerifier.kt  # TOFU host key verifier (known_hosts.properties)
 │   ├── VideoMetadataExtractor.kt   # Duration/width/height/bitrate extraction + thumbnail generation
 │   ├── SyncNotificationHelper.kt   # Foreground notification with progress updates
 │   ├── SyncPreviewScreen.kt        # Dry-run preview UI
@@ -164,6 +168,7 @@ app/src/main/java/cn/vectory/syncplayer/
   - General: MVVM + Repository, Hilt DI.
   - Player: **MVI pattern** with unified `PlayerUiState`.
   - **State Splitting**: High-frequency updates (e.g., playback position) MUST be kept in a separate `StateFlow` from the main `UiState` to prevent full-screen recomposition.
+  - **Recomposition Isolation**: Composables that subscribe to high-frequency state (e.g., progress bar) MUST be extracted into independent functions so that polling-driven recomposition does not propagate to sibling UI (buttons, icons). Low-frequency state (isPlaying, isFullscreen) MUST be passed as primitive parameters, not via StateFlow subscription inside child composables.
 - **Testing**:
   - Unit tests located in `app/src/test`.
   - Framework: JUnit 4 + MockK + Coroutines Test + Turbine (for Flow verification).
