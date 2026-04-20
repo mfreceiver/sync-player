@@ -51,6 +51,7 @@ import cn.vectory.syncplayer.player.GesturePlayerView.DoubleTapZone
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import cn.vectory.syncplayer.ui.util.formatDuration
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.pow
@@ -206,13 +207,20 @@ fun PlayerScreen(
             while (true) {
                 val playerPos = exoPlayer.currentPosition.coerceAtLeast(0)
                 val playerDur = exoPlayer.duration.coerceAtLeast(0)
-                
+
                 if (uiState.seekTarget >= 0) {
                     if (abs(playerPos - uiState.seekTarget) < 500) {
                         viewModel.clearSeekTarget()
                     }
                 }
-                
+
+                // Don't update gestureView.currentPosition during gesture seek —
+                // it would cause the seek target to drift since GesturePlayerView
+                // uses currentPosition as the base for offset calculation.
+                if (!uiState.isGestureSeeking) {
+                    gestureView.currentPosition = playerPos
+                }
+                gestureView.videoDuration = playerDur
                 viewModel.updatePlaybackProgress(playerPos, playerDur)
                 delay(200L)
             }
@@ -337,6 +345,7 @@ fun PlayerScreen(
     val previewExtractor = remember { SeekPreviewExtractor() }
     var seekPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var seekPreviewPosition by remember { mutableLongStateOf(0L) }
+    var lastExtractedPosMs by remember { mutableLongStateOf(-1L) }
 
     val isSeekingActive = uiState.isUserSeeking || uiState.isGestureSeeking
 
@@ -347,19 +356,36 @@ fun PlayerScreen(
         else -> 0f
     }
 
-    LaunchedEffect(isSeekingActive, seekDisplayProgress, uiState.duration) {
-        if (isSeekingActive && uiState.duration > 0) {
-            val posMs = (seekDisplayProgress * uiState.duration).toLong()
-            seekPreviewPosition = posMs
-            val filePath = uiState.videoItem?.localAbsolutePath ?: return@LaunchedEffect
-            seekPreviewBitmap = previewExtractor.extractFrameAtPosition(filePath, posMs)
-        }
-    }
-
-    LaunchedEffect(!isSeekingActive) {
+    LaunchedEffect(isSeekingActive) {
         if (!isSeekingActive) {
+            previewExtractor.endSession()
             delay(100L)
             seekPreviewBitmap = null
+            return@LaunchedEffect
+        }
+        val filePath = uiState.videoItem?.localAbsolutePath ?: return@LaunchedEffect
+        previewExtractor.beginSession(filePath)
+        while (isActive) {
+            val progress = when {
+                uiState.isUserSeeking -> uiState.userSeekPosition
+                uiState.isGestureSeeking -> uiState.gestureSeekPosition
+                else -> break
+            }
+            val duration = uiState.duration
+            if (duration <= 0) {
+                delay(50)
+                continue
+            }
+            val posMs = (progress * duration).toLong()
+            seekPreviewPosition = posMs
+            if (posMs != lastExtractedPosMs) {
+                val bitmap = previewExtractor.extractFrameAtPosition(filePath, posMs)
+                if (bitmap != null && isActive) {
+                    seekPreviewBitmap = bitmap
+                }
+                lastExtractedPosMs = posMs
+            }
+            delay(50)
         }
     }
 

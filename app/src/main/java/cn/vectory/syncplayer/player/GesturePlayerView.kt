@@ -32,6 +32,7 @@ class GesturePlayerView @JvmOverloads constructor(
     private var isLongPressing = false
     private var isSeeking = false
     private var seekOffsetMs = 0L
+    private var seekBasePositionMs = 0L
     private var touchStartX = 0f
     private var touchStartY = 0f
     private var isInLeftHalf = false
@@ -98,13 +99,14 @@ class GesturePlayerView @JvmOverloads constructor(
                 } else if (absDxFromStart > absDyFromStart && absDxFromStart > HORIZONTAL_GESTURE_THRESHOLD) {
                     isSeeking = true
                     seekOffsetMs = 0L
+                    seekBasePositionMs = currentPosition
                 }
             }
 
             if (isSeeking) {
                 val sensitivity = if (videoDuration < 600_000L) 100f else 300f
                 seekOffsetMs = (dxFromStart * sensitivity).toLong()
-                val targetMs = (currentPosition + seekOffsetMs)
+                val targetMs = (seekBasePositionMs + seekOffsetMs)
                     .coerceIn(0, videoDuration.coerceAtLeast(0))
                 gestureListener?.onSeekOverlay(targetMs, videoDuration)
                 return true
