@@ -56,15 +56,6 @@ import java.io.File
 import kotlin.math.abs
 import kotlin.math.pow
 
-private fun readSeekPosMs(uiState: PlayerUiState, duration: Long): Long {
-    val progress = when {
-        uiState.isUserSeeking -> uiState.userSeekPosition
-        uiState.isGestureSeeking -> uiState.gestureSeekPosition
-        else -> 0f
-    }
-    return (progress * duration).toLong()
-}
-
 private fun Modifier.verticalGradientBackground(colors: List<Color>, height: Dp): Modifier =
     this.then(
         Modifier.drawBehind {
@@ -391,10 +382,7 @@ fun PlayerScreen(
                 val bitmap = previewExtractor.extractFrameAtPosition(filePath, posMs)
                 lastExtractedPosMs = posMs
                 if (bitmap != null && isActive) {
-                    val latestMs = readSeekPosMs(uiState, duration)
-                    if (abs(latestMs - posMs) < 500L) {
-                        seekPreviewBitmap = bitmap
-                    }
+                    seekPreviewBitmap = bitmap
                 }
             } else {
                 delay(50)
