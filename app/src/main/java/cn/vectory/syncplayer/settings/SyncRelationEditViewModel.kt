@@ -30,7 +30,6 @@ class SyncRelationEditViewModel @Inject constructor(
     private val smbFileClient: SmbFileClient,
     private val sftpFileClient: SftpFileClient,
     private val storagePaths: StoragePaths,
-    @ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 

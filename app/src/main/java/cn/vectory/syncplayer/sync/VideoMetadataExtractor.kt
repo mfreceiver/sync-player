@@ -12,6 +12,7 @@ import java.io.File
 import java.io.FileOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.concurrent.LinkedBlockingQueue
 
 @Singleton
 class VideoMetadataExtractor @Inject constructor(
@@ -20,6 +21,23 @@ class VideoMetadataExtractor @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     private companion object { const val TAG = "VideoMetadataExtractor" }
+
+    private val retrieverPool = LinkedBlockingQueue<MediaMetadataRetriever>(4)
+
+    private fun acquireRetriever(): MediaMetadataRetriever {
+        return retrieverPool.poll() ?: MediaMetadataRetriever()
+    }
+
+    private fun releaseRetriever(retriever: MediaMetadataRetriever) {
+        try {
+            retriever.reset()
+            if (!retrieverPool.offer(retriever)) {
+                retriever.release()
+            }
+        } catch (_: Exception) {
+            try { retriever.release() } catch (_: Exception) {}
+        }
+    }
 
     private val thumbnailDir: File
         get() = storagePaths.thumbnailsDir
@@ -30,7 +48,7 @@ class VideoMetadataExtractor @Inject constructor(
             return videoItem
         }
 
-        val retriever = MediaMetadataRetriever()
+        val retriever = acquireRetriever()
         try {
             retriever.setDataSource(file.absolutePath)
 
@@ -69,7 +87,7 @@ class VideoMetadataExtractor @Inject constructor(
             Log.w(TAG, "Failed to extract metadata for ${videoItem.fileName}", e)
             return videoItem
         } finally {
-            try { retriever.release() } catch (e: Exception) { Log.w(TAG, "Failed to release retriever", e) }
+            releaseRetriever(retriever)
         }
     }
 

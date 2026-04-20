@@ -8,62 +8,19 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Block
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.ScreenRotation
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -93,25 +50,10 @@ import androidx.media3.exoplayer.ExoPlayer
 import cn.vectory.syncplayer.player.GesturePlayerView.DoubleTapZone
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import cn.vectory.syncplayer.ui.util.formatDuration
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.pow
-
-private sealed class PlayerOverlay {
-    data class Seek(val positionMs: Long, val durationMs: Long) : PlayerOverlay()
-    data class Volume(val percent: Int) : PlayerOverlay()
-    data class Brightness(val percent: Int) : PlayerOverlay()
-    data class SpeedUp(val multiplier: Float) : PlayerOverlay()
-    data object Previous : PlayerOverlay()
-    data object Next : PlayerOverlay()
-    data object NoPrevious : PlayerOverlay()
-    data object NoNext : PlayerOverlay()
-    data class TrashAction(val isIn: Boolean) : PlayerOverlay()
-    data class Orientation(val label: String) : PlayerOverlay()
-}
 
 private fun Modifier.verticalGradientBackground(colors: List<Color>, height: Dp): Modifier =
     this.then(
@@ -132,44 +74,11 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? android.app.Activity ?: return
-    val coroutineScope = rememberCoroutineScope()
-    val videoItem by viewModel.videoItem.collectAsStateWithLifecycle()
-    val playbackRecord by viewModel.playbackRecord.collectAsStateWithLifecycle()
-    val speedMultiplier by viewModel.speedMultiplier.collectAsStateWithLifecycle()
-    val allVideoIds by viewModel.allVideoIds.collectAsStateWithLifecycle()
-    val currentGainDb by viewModel.currentGainDb.collectAsStateWithLifecycle()
-    val playbackSpeed by viewModel.playbackSpeed.collectAsStateWithLifecycle()
-    val quickRecycle by viewModel.quickRecycle.collectAsStateWithLifecycle()
-
-    var showControls by remember { mutableStateOf(false) }
-    var currentVideoId by remember { mutableStateOf(videoItemId) }
-    var isPlaying by remember { mutableStateOf(true) }
-    var isLongPressing by remember { mutableStateOf(false) }
-
-    var currentPosition by remember { mutableLongStateOf(0L) }
-    var currentDuration by remember { mutableLongStateOf(0L) }
-
-    var currentOverlay by remember { mutableStateOf<PlayerOverlay?>(null) }
-    val overlayHideJob = remember { mutableStateOf<Job?>(null) }
-
-    var isGestureSeeking by remember { mutableStateOf(false) }
-    var gestureSeekPosition by remember { mutableFloatStateOf(0f) }
-    var seekTarget by remember { mutableLongStateOf(-1L) }
-    var isUserSeeking by remember { mutableStateOf(false) }
-    var userSeekPosition by remember { mutableFloatStateOf(0f) }
-
-    var speedOverlayMultiplier by remember { mutableStateOf<Float?>(null) }
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     var originalBrightness by remember { mutableFloatStateOf(-1f) }
-
-    fun showOverlay(overlay: PlayerOverlay) {
-        currentOverlay = overlay
-        overlayHideJob.value?.cancel()
-        overlayHideJob.value = coroutineScope.launch {
-            delay(750L)
-            currentOverlay = null
-        }
-    }
+    var initialVolume by remember { mutableIntStateOf(0) }
+    var isExiting by remember { mutableStateOf(false) }
 
     val window = activity.window
     val exoPlayer = remember {
@@ -182,6 +91,7 @@ fun PlayerScreen(
             getPlayerView().player = exoPlayer
         }
     }
+
     DisposableEffect(Unit) {
         val currentBrightness = window.attributes.screenBrightness
         if (currentBrightness >= 0) {
@@ -212,91 +122,99 @@ fun PlayerScreen(
         insetsController.hide(WindowInsetsCompat.Type.systemBars())
     }
 
-    LaunchedEffect(speedMultiplier) {
-        gestureView.speedMultiplier = speedMultiplier
-    }
-
     LaunchedEffect(Unit) {
         viewModel.loadVideo(videoItemId)
-        currentVideoId = videoItemId
     }
 
-    LaunchedEffect(videoItem) {
-        val item = videoItem ?: return@LaunchedEffect
+    LaunchedEffect(uiState.videoItem) {
+        val item = uiState.videoItem ?: return@LaunchedEffect
         val filePath = item.localAbsolutePath
         val file = File(filePath)
         if (!file.exists()) return@LaunchedEffect
         val mediaItem = MediaItem.fromUri(Uri.fromFile(file))
         exoPlayer.setMediaItem(mediaItem)
-        val record = viewModel.playbackRecord.value
-        val isCompleted = record?.isCompleted == true
-        if (!isCompleted) {
-            val savedPos = viewModel.getSavedPosition()
-            if (savedPos > 0) {
-                currentPosition = savedPos
-                exoPlayer.seekTo(savedPos)
-            }
+        val savedPos = viewModel.getSavedPosition()
+        if (savedPos > 0) {
+            exoPlayer.seekTo(savedPos)
         }
         exoPlayer.prepare()
     }
-    val isFullscreen by viewModel.isFullscreen.collectAsStateWithLifecycle()
-    LaunchedEffect(isFullscreen, videoItem) {
-        val item = videoItem
+
+    LaunchedEffect(uiState.isFullscreen, uiState.videoItem) {
+        val item = uiState.videoItem
         activity.requestedOrientation = if (item != null) {
             viewModel.resolveOrientation(item.width, item.height)
         } else {
-            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
-    LaunchedEffect(currentGainDb) {
-        val linear = 10f.pow(currentGainDb / 20f)
+
+    LaunchedEffect(uiState.currentGainDb) {
+        val linear = 10f.pow(uiState.currentGainDb / 20f)
         exoPlayer.volume = linear.coerceIn(0f, 2f)
     }
 
+    LaunchedEffect(uiState.playbackSpeed, uiState.isLongPressing) {
+        if (!uiState.isLongPressing) {
+            exoPlayer.playbackParameters = PlaybackParameters(uiState.playbackSpeed)
+        }
+    }
+
     val playerListener = remember {
-        object : androidx.media3.common.Player.Listener {
+        object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
+                val playerPos = exoPlayer.currentPosition.coerceAtLeast(0)
                 val playerDur = exoPlayer.duration.coerceAtLeast(0)
-                if (currentDuration != playerDur) {
-                    currentDuration = playerDur
+                viewModel.updatePlaybackProgress(playerPos, playerDur)
+
+                if (playbackState == Player.STATE_ENDED) {
+                    val nextId = viewModel.getNextVideoId()
+                    if (nextId != null) {
+                        viewModel.updateAutoSwitchTime()
+                        viewModel.loadVideo(nextId)
+                    } else {
+                        if (!isExiting) {
+                            isExiting = true
+                            onExit()
+                        }
+                    }
                 }
-                gestureView.videoDuration = playerDur
             }
 
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                gestureView.videoDuration = exoPlayer.duration.coerceAtLeast(0)
+            override fun onIsPlayingChanged(playing: Boolean) {
+                viewModel.setPlaying(playing)
+            }
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int
+            ) {
+                viewModel.updatePlaybackProgress(newPosition.positionMs, exoPlayer.duration.coerceAtLeast(0))
             }
         }
     }
+
     DisposableEffect(exoPlayer) {
         exoPlayer.addListener(playerListener)
         onDispose { exoPlayer.removeListener(playerListener) }
     }
-    LaunchedEffect(exoPlayer) {
-        while (true) {
-            if (exoPlayer.isPlaying) {
+
+    LaunchedEffect(uiState.isPlaying) {
+        if (uiState.isPlaying) {
+            while (true) {
                 val playerPos = exoPlayer.currentPosition.coerceAtLeast(0)
                 val playerDur = exoPlayer.duration.coerceAtLeast(0)
-                gestureView.videoDuration = playerDur
-                gestureView.currentPosition = playerPos
-                if (currentDuration != playerDur) {
-                    currentDuration = playerDur
-                }
-                if (seekTarget >= 0) {
-                    if (abs(playerPos - seekTarget) < 500) {
-                        seekTarget = -1L
-                        currentPosition = playerPos
+                
+                if (uiState.seekTarget >= 0) {
+                    if (abs(playerPos - uiState.seekTarget) < 500) {
+                        viewModel.clearSeekTarget()
                     }
-                } else if (currentPosition != playerPos) {
-                    currentPosition = playerPos
                 }
+                
+                viewModel.updatePlaybackProgress(playerPos, playerDur)
+                delay(200L)
             }
-            delay(200L)
-        }
-    }
-    LaunchedEffect(playbackSpeed) {
-        if (!isLongPressing) {
-            exoPlayer.playbackParameters = PlaybackParameters(playbackSpeed)
         }
     }
 
@@ -304,23 +222,16 @@ fun PlayerScreen(
     if (lifecycleOwner != null) {
         DisposableEffect(lifecycleOwner.lifecycle) {
             val observer = LifecycleEventObserver { _, event ->
-                when (event) {
-                    Lifecycle.Event.ON_STOP -> {
-                        if (exoPlayer.isPlaying) {
-                            exoPlayer.pause()
-                        }
+                if (event == Lifecycle.Event.ON_STOP) {
+                    if (exoPlayer.isPlaying) {
+                        exoPlayer.pause()
                     }
-                    else -> {}
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
     }
-
-    var initialVolume by remember { mutableIntStateOf(0) }
-    var lastAutoSwitchTime by remember { mutableLongStateOf(0L) }
-    var isExiting by remember { mutableStateOf(false) }
 
     fun doExit() {
         if (isExiting) return
@@ -331,60 +242,23 @@ fun PlayerScreen(
         onExit()
     }
 
-    fun switchToVideo(newId: Long) {
-        viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
-        seekTarget = -1L
-        isUserSeeking = false
-        isGestureSeeking = false
-        gestureSeekPosition = 0f
-        userSeekPosition = 0f
-        currentPosition = 0L
-        currentDuration = 0L
-        currentVideoId = newId
-        exoPlayer.playWhenReady = true
-        viewModel.loadVideo(newId)
-        showControls = true
-    }
-
-    DisposableEffect(exoPlayer) {
-        val listener = object : Player.Listener {
-            override fun onIsPlayingChanged(playing: Boolean) {
-                isPlaying = playing
-            }
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED) {
-                    seekTarget = -1L
-                    val nextId = viewModel.getNextVideoId()
-                    if (nextId != null) {
-                        lastAutoSwitchTime = System.currentTimeMillis()
-                        switchToVideo(nextId)
-                    } else {
-                        doExit()
-                    }
-                }
-            }
-        }
-        exoPlayer.addListener(listener)
-        onDispose { exoPlayer.removeListener(listener) }
-    }
-
     gestureView.setOnSingleTapCallback {
-        showControls = !showControls
+        viewModel.toggleControls()
     }
+
     gestureView.gestureListener = object : GesturePlayerView.GestureListener {
         override fun onSpeedUpChanged(speedUp: Boolean) {
-            isLongPressing = speedUp
+            viewModel.setLongPressing(speedUp)
             if (speedUp) {
-                exoPlayer.playbackParameters = PlaybackParameters(speedMultiplier)
+                val multiplier = 2.0f // Or from prefs
+                exoPlayer.playbackParameters = PlaybackParameters(multiplier)
             } else {
-                exoPlayer.playbackParameters = PlaybackParameters(playbackSpeed)
+                exoPlayer.playbackParameters = PlaybackParameters(uiState.playbackSpeed)
             }
         }
         override fun onSeekTo(offsetMs: Long) {
             val newPos = (exoPlayer.currentPosition + offsetMs).coerceIn(0, exoPlayer.duration.coerceAtLeast(0))
-            seekTarget = newPos
-            currentPosition = newPos
-            isGestureSeeking = false
+            viewModel.onGestureSeekFinished(offsetMs)
             exoPlayer.seekTo(newPos)
         }
         override fun onVolumeGestureStart() {
@@ -397,7 +271,7 @@ fun PlayerScreen(
             val newVolume = (initialVolume + (totalDelta * maxVolume).toInt()).coerceIn(0, maxVolume)
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVolume, 0)
             val percent = (newVolume * 100 / maxVolume).coerceIn(0, 100)
-            showOverlay(PlayerOverlay.Volume(percent))
+            viewModel.showOverlay(PlayerOverlay.Volume(percent))
         }
         override fun onBrightnessChanged(delta: Float) {
             val attrs = window.attributes
@@ -406,37 +280,37 @@ fun PlayerScreen(
             attrs.screenBrightness = newBrightness
             window.attributes = attrs
             val percent = (newBrightness * 100).toInt()
-            showOverlay(PlayerOverlay.Brightness(percent))
+            viewModel.showOverlay(PlayerOverlay.Brightness(percent))
         }
         override fun onDoubleTap(zone: DoubleTapZone) {
             when (zone) {
                 DoubleTapZone.PREVIOUS -> {
                     val prevId = viewModel.getPrevVideoId()
                     if (prevId != null) {
-                        showOverlay(PlayerOverlay.Previous)
-                        switchToVideo(prevId)
+                        viewModel.showOverlay(PlayerOverlay.Previous)
+                        viewModel.loadVideo(prevId)
                     } else {
-                        showOverlay(PlayerOverlay.NoPrevious)
+                        viewModel.showOverlay(PlayerOverlay.NoPrevious)
                     }
                 }
                 DoubleTapZone.NEXT -> {
                     val now = System.currentTimeMillis()
-                    if (now - lastAutoSwitchTime < 500L) return
+                    if (now - uiState.lastAutoSwitchTime < 500L) return
                     val nextId = viewModel.getNextVideoId()
                     if (nextId != null) {
-                        showOverlay(PlayerOverlay.Next)
-                        switchToVideo(nextId)
+                        viewModel.showOverlay(PlayerOverlay.Next)
+                        viewModel.loadVideo(nextId)
                     } else {
-                        showOverlay(PlayerOverlay.NoNext)
+                        viewModel.showOverlay(PlayerOverlay.NoNext)
                     }
                 }
                 DoubleTapZone.CENTER_TOP -> {
                     if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                 }
                 DoubleTapZone.CENTER_BOTTOM -> {
-                    if (quickRecycle) {
-                        val wasTrashed = playbackRecord?.isTrashed ?: false
-                        showOverlay(PlayerOverlay.TrashAction(!wasTrashed))
+                    if (uiState.quickRecycle) {
+                        val wasTrashed = uiState.playbackRecord?.isTrashed ?: false
+                        viewModel.showOverlay(PlayerOverlay.TrashAction(!wasTrashed))
                         viewModel.toggleTrashed()
                     } else {
                         if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
@@ -445,44 +319,38 @@ fun PlayerScreen(
             }
         }
         override fun onSeekOverlay(positionMs: Long, durationMs: Long) {
-            if (durationMs > 0) {
-                isGestureSeeking = true
-                gestureSeekPosition = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-            }
+            viewModel.onGestureSeekChanged(positionMs, durationMs)
         }
         override fun onLongPressSpeedOverlay(multiplier: Float) {
-            speedOverlayMultiplier = multiplier
+            viewModel.setSpeedOverlay(multiplier)
         }
         override fun onHideOverlay() {
-            overlayHideJob.value?.cancel()
-            currentOverlay = null
-            speedOverlayMultiplier = null
+            viewModel.hideOverlay()
         }
     }
 
     var showSettingsPopup by remember { mutableStateOf(false) }
     var bottomAreaWidth by remember { mutableIntStateOf(0) }
-    var bottomControlHeight by remember { mutableIntStateOf(0) }
     var progressBarHeightPx by remember { mutableIntStateOf(0) }
 
     val previewExtractor = remember { SeekPreviewExtractor() }
     var seekPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var seekPreviewPosition by remember { mutableLongStateOf(0L) }
 
-    val isSeekingActive = isUserSeeking || isGestureSeeking
+    val isSeekingActive = uiState.isUserSeeking || uiState.isGestureSeeking
 
     val seekDisplayProgress = when {
-        isUserSeeking -> userSeekPosition
-        isGestureSeeking -> gestureSeekPosition
-        currentDuration > 0 -> (currentPosition.toFloat() / currentDuration.toFloat()).coerceIn(0f, 1f)
+        uiState.isUserSeeking -> uiState.userSeekPosition
+        uiState.isGestureSeeking -> uiState.gestureSeekPosition
+        uiState.duration > 0 -> (uiState.currentPosition.toFloat() / uiState.duration.toFloat()).coerceIn(0f, 1f)
         else -> 0f
     }
 
-    LaunchedEffect(isSeekingActive, seekDisplayProgress, currentDuration) {
-        if (isSeekingActive && currentDuration > 0) {
-            val posMs = (seekDisplayProgress * currentDuration).toLong()
+    LaunchedEffect(isSeekingActive, seekDisplayProgress, uiState.duration) {
+        if (isSeekingActive && uiState.duration > 0) {
+            val posMs = (seekDisplayProgress * uiState.duration).toLong()
             seekPreviewPosition = posMs
-            val filePath = videoItem?.localAbsolutePath ?: return@LaunchedEffect
+            val filePath = uiState.videoItem?.localAbsolutePath ?: return@LaunchedEffect
             seekPreviewBitmap = previewExtractor.extractFrameAtPosition(filePath, posMs)
         }
     }
@@ -495,6 +363,7 @@ fun PlayerScreen(
     }
 
     BackHandler { doExit() }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -505,7 +374,7 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        val controlsVisible = !isFullscreen && showControls
+        val controlsVisible = !uiState.isFullscreen && uiState.showControls
 
         if (controlsVisible) {
             Box(
@@ -527,17 +396,17 @@ fun PlayerScreen(
                 ) {
                     IconButton(
                         onClick = { doExit() },
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(48.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Close,
                             contentDescription = "Exit",
                             tint = Color.White,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                     Text(
-                        text = videoItem?.fileName?.substringBeforeLast(".") ?: "",
+                        text = uiState.videoItem?.fileName?.substringBeforeLast(".") ?: "",
                         color = Color.White,
                         style = MaterialTheme.typography.labelMedium,
                         maxLines = 1,
@@ -546,16 +415,16 @@ fun PlayerScreen(
                             .weight(1f)
                             .padding(horizontal = 4.dp)
                     )
-                    val isTrashed = playbackRecord?.isTrashed == true
+                    val isTrashed = uiState.playbackRecord?.isTrashed == true
                     IconButton(
                         onClick = { viewModel.toggleTrashed() },
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(48.dp)
                     ) {
                         Icon(
                             imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
                             contentDescription = if (isTrashed) "Restore" else "Trash",
                             tint = Color.White,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                 }
@@ -568,7 +437,6 @@ fun PlayerScreen(
                 .align(Alignment.BottomCenter)
                 .onSizeChanged {
                     bottomAreaWidth = it.width
-                    bottomControlHeight = it.height
                 }
         ) {
             Column(
@@ -588,159 +456,173 @@ fun PlayerScreen(
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                             .onSizeChanged { progressBarHeightPx = it.height }
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(40.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(
-                                onClick = {
-                                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                                },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                    contentDescription = if (isPlaying) "Pause" else "Play",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(8.dp))
-
-                            val currentOnChange by rememberUpdatedState { pos: Float ->
-                                isUserSeeking = true
-                                userSeekPosition = pos
-                            }
-                            val dragState = remember { mutableFloatStateOf(0f) }
-                            val currentOnFinished by rememberUpdatedState {
-                                val target = (dragState.floatValue * currentDuration).toLong()
-                                seekTarget = target
-                                currentPosition = target
-                                exoPlayer.seekTo(target)
-                                isUserSeeking = false
-                            }
-
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(20.dp)
-                                    .pointerInput(Unit) {
-                                        awaitPointerEventScope {
-                                            while (true) {
-                                                val down = awaitFirstDown(requireUnconsumed = false)
-                                                val p = (down.position.x / size.width).coerceIn(0f, 1f)
-                                                dragState.floatValue = p
-                                                currentOnChange(p)
-                                                down.consume()
-
-                                                do {
-                                                    val event = awaitPointerEvent()
-                                                    val change = event.changes.first()
-                                                    change.consume()
-                                                    val cp = (change.position.x / size.width).coerceIn(0f, 1f)
-                                                    dragState.floatValue = cp
-                                                    currentOnChange(cp)
-                                                } while (change.pressed)
-
-                                                currentOnFinished()
-                                            }
-                                        }
-                                    },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(4.dp)
-                                        .clip(RoundedCornerShape(2.dp))
-                                        .background(Color.White)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxHeight()
-                                            .fillMaxWidth(seekDisplayProgress)
-                                            .background(LocalExtendedColors.current.playerProgressFill)
-                                    )
-                                }
-                            }
-
-                            Text(
-                                text = "${formatDuration(currentPosition)} / ${formatDuration(currentDuration)}",
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelSmall,
-                                modifier = Modifier.widthIn(min = 80.dp),
-                                textAlign = TextAlign.Center,
-                                fontSize = 11.sp,
-                            )
-
-                            Spacer(modifier = Modifier.width(4.dp))
-
-                            Box {
-                                IconButton(
-                                    onClick = { showSettingsPopup = !showSettingsPopup },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Settings,
-                                        contentDescription = "Settings",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                                if (showSettingsPopup) {
-                                    SettingsPopup(
-                                        isFullscreen = isFullscreen,
-                                        playbackSpeed = playbackSpeed,
-                                        onDirectionChange = { fullscreen ->
-                                            if (fullscreen) {
-                                                if (!isFullscreen) viewModel.toggleFullscreen()
-                                            } else {
-                                                if (isFullscreen) viewModel.toggleFullscreen()
-                                            }
-                                            showOverlay(
-                                                PlayerOverlay.Orientation(if (fullscreen) "FULLSCREEN" else "ROTATION")
-                                            )
-                                            showSettingsPopup = false
-                                        },
-                                        onSpeedChange = { speed ->
-                                            viewModel.setPlaybackSpeed(speed)
-                                            exoPlayer.playbackParameters = PlaybackParameters(speed)
-                                            showSettingsPopup = false
-                                        },
-                                        onDismiss = { showSettingsPopup = false }
-                                    )
-                                }
-                            }
-                        }
+                        PlaybackControlRow(
+                            viewModel = viewModel,
+                            exoPlayer = exoPlayer,
+                            uiState = uiState,
+                            showSettingsPopup = showSettingsPopup,
+                            onToggleSettings = { showSettingsPopup = !showSettingsPopup },
+                            onDismissSettings = { showSettingsPopup = false }
+                        )
                     }
                 }
             }
-
         }
 
-        if (!showControls && !isSeekingActive) {
+        if (!uiState.showControls && !isSeekingActive) {
+            MinimizedProgressBar(viewModel, uiState.duration)
+        }
+...
+@Composable
+private fun PlaybackControlRow(
+    viewModel: PlayerViewModel,
+    exoPlayer: ExoPlayer,
+    uiState: PlayerUiState,
+    showSettingsPopup: Boolean,
+    onToggleSettings: () -> Unit,
+    onDismissSettings: () -> Unit
+) {
+    val currentPosition by viewModel.currentPosition.collectAsStateWithLifecycle()
+    
+    val seekDisplayProgress = when {
+        uiState.isUserSeeking -> uiState.userSeekPosition
+        uiState.isGestureSeeking -> uiState.gestureSeekPosition
+        uiState.duration > 0 -> (currentPosition.toFloat() / uiState.duration.toFloat()).coerceIn(0f, 1f)
+        else -> 0f
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(
+            onClick = {
+                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+            },
+            modifier = Modifier.size(48.dp)
+        ) {
+            Icon(
+                imageVector = if (uiState.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = if (uiState.isPlaying) "Pause" else "Play",
+                tint = Color.White,
+                modifier = Modifier.size(32.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.width(8.dp))
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(20.dp)
+                .pointerInput(uiState.duration) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            viewModel.onUserSeekStarted()
+                            var lastP = (down.position.x / size.width).coerceIn(0f, 1f)
+                            viewModel.onUserSeekChanged(lastP)
+                            down.consume()
+
+                            do {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.first()
+                                change.consume()
+                                lastP = (change.position.x / size.width).coerceIn(0f, 1f)
+                                viewModel.onUserSeekChanged(lastP)
+                            } while (change.pressed)
+
+                            viewModel.onUserSeekFinished(lastP)
+                            exoPlayer.seekTo((lastP * uiState.duration).toLong())
+                        }
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(1.dp)
-                    .align(Alignment.BottomCenter)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
                     .background(Color.White.copy(alpha = 0.3f))
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .fillMaxWidth(
-                            if (currentDuration > 0)
-                                (currentPosition.toFloat() / currentDuration.toFloat()).coerceIn(0f, 1f)
-                            else 0f
-                        )
+                        .fillMaxWidth(seekDisplayProgress)
                         .background(LocalExtendedColors.current.playerProgressFill)
                 )
             }
         }
+
+        Text(
+            text = "${formatDuration(currentPosition)} / ${formatDuration(uiState.duration)}",
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.widthIn(min = 80.dp),
+            textAlign = TextAlign.Center,
+            fontSize = 11.sp,
+        )
+
+        Spacer(modifier = Modifier.width(4.dp))
+
+        Box {
+            IconButton(
+                onClick = onToggleSettings,
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Settings,
+                    contentDescription = "Settings",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+            if (showSettingsPopup) {
+                SettingsPopup(
+                    isFullscreen = uiState.isFullscreen,
+                    playbackSpeed = uiState.playbackSpeed,
+                    onDirectionChange = { fullscreen ->
+                        viewModel.setFullscreen(fullscreen)
+                        viewModel.showOverlay(
+                            PlayerOverlay.Orientation(if (fullscreen) "FULLSCREEN" else "ROTATION")
+                        )
+                        onDismissSettings()
+                    },
+                    onSpeedChange = { speed ->
+                        viewModel.setPlaybackSpeed(speed)
+                        onDismissSettings()
+                    },
+                    onDismiss = onDismissSettings
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MinimizedProgressBar(viewModel: PlayerViewModel, duration: Long) {
+    val currentPosition by viewModel.currentPosition.collectAsStateWithLifecycle()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(Color.White.copy(alpha = 0.3f))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(
+                    if (duration > 0)
+                        (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+                    else 0f
+                )
+                .background(LocalExtendedColors.current.playerProgressFill)
+        )
+    }
+}
 
         if (isSeekingActive && seekPreviewBitmap != null) {
             val bitmap = seekPreviewBitmap!!
@@ -789,7 +671,7 @@ fun PlayerScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "${formatDuration(seekPreviewPosition)} / ${formatDuration(currentDuration)}",
+                            text = "${formatDuration(seekPreviewPosition)} / ${formatDuration(uiState.duration)}",
                             color = Color.White,
                             style = MaterialTheme.typography.labelSmall
                         )
@@ -798,10 +680,9 @@ fun PlayerScreen(
             }
         }
 
-        PlayerOverlayView(currentOverlay)
+        PlayerOverlayView(uiState.currentOverlay)
 
-        val currentSpeedOverlay = speedOverlayMultiplier
-        if (currentSpeedOverlay != null) {
+        if (uiState.speedOverlayMultiplier != null) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()

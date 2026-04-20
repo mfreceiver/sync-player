@@ -17,8 +17,9 @@ class SyncService : Service() {
 
     @Inject lateinit var syncEngine: SyncEngine
 
-    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var syncJob: Job? = null
+    private var collectorJob: Job? = null
 
     private val _syncProgress = MutableStateFlow(SyncProgress())
     val syncProgress = _syncProgress.asStateFlow()
@@ -30,6 +31,13 @@ class SyncService : Service() {
             SyncNotificationHelper.NOTIFICATION_ID,
             SyncNotificationHelper.createOngoingNotification(this, SyncProgress())
         )
+        
+        collectorJob = serviceScope.launch {
+            syncEngine.progress.collect { progress ->
+                _syncProgress.value = progress
+                SyncNotificationHelper.updateNotification(this@SyncService, progress)
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -44,9 +52,8 @@ class SyncService : Service() {
             return START_REDELIVER_INTENT
         }
 
-        syncJob?.cancel()
         syncJob = serviceScope.launch {
-            val task = syncEngine.consumePendingTask(relationId)
+            val task = withContext(Dispatchers.IO) { syncEngine.consumePendingTask(relationId) }
             if (task != null) {
                 _syncProgress.value = SyncProgress(
                     isRunning = true,
@@ -66,7 +73,7 @@ class SyncService : Service() {
                     task.localBasePath
                 )
             } else {
-                val (toDownload, toDelete) = syncEngine.dryRun(relationId)
+                val (toDownload, toDelete) = withContext(Dispatchers.IO) { syncEngine.dryRun(relationId) }
                 _syncProgress.value = SyncProgress(
                     isRunning = true,
                     phase = SyncPhase.DOWNLOADING,
@@ -76,22 +83,11 @@ class SyncService : Service() {
                 syncEngine.executeSync(relationId, toDownload, toDelete)
             }
 
-            _syncProgress.value = syncEngine.progress.value
-            SyncNotificationHelper.updateNotification(this@SyncService, _syncProgress.value)
-
             val finalProgress = syncEngine.progress.value
-            // If sync completed, allow a brief UX pause before stopping foreground
             if (!finalProgress.isRunning) {
                 delay(1500)
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
-            }
-        }
-
-        serviceScope.launch {
-            syncEngine.progress.collect { progress ->
-                _syncProgress.value = progress
-                SyncNotificationHelper.updateNotification(this@SyncService, progress)
             }
         }
 
