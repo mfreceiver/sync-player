@@ -41,11 +41,12 @@ Always run a build after code changes to verify compilation — there is no LSP 
 |---|---|---|
 | Language | Kotlin | 2.1.0 |
 | UI | Jetpack Compose + Material 3 | BOM 2025.02.00 |
-| Architecture | MVVM + Repository, Hilt DI | Hilt 2.54 |
-| Database | Room | 2.7.0 (schema v12) |
+| Architecture | MVI (Player) / MVVM + Repository, Hilt DI | Hilt 2.54 |
+| Database | Room | 2.7.0 (schema v14) |
 | Player | Media3 / ExoPlayer | 1.6.0 |
 | SMB | jcifs-ng | 2.1.10 |
-| SFTP | SSHJ | 0.39.0 |
+| SFTP | SSHJ (with custom TOFU Verifier) | 0.39.0 |
+| Testing | JUnit 4, MockK, Coroutines Test, Turbine | - |
 | Crypto | BouncyCastle (MD4 for NTLM) | 1.80 |
 | Security | androidx.security.crypto | 1.1.0-alpha06 |
 | Biometric | androidx.biometric | 1.1.0 |
@@ -159,7 +160,14 @@ app/src/main/java/cn/vectory/syncplayer/
 
 ## Conventions
 
-- **Architecture**: MVVM + Repository, Hilt DI, StateFlow for ViewModel → UI
+- **Architecture**: 
+  - General: MVVM + Repository, Hilt DI.
+  - Player: **MVI pattern** with unified `PlayerUiState`.
+  - **State Splitting**: High-frequency updates (e.g., playback position) MUST be kept in a separate `StateFlow` from the main `UiState` to prevent full-screen recomposition.
+- **Testing**:
+  - Unit tests located in `app/src/test`.
+  - Framework: JUnit 4 + MockK + Coroutines Test + Turbine (for Flow verification).
+  - Aim for high coverage on core logic like `SyncEngine` and `VideoUtils`.
 - **Single Activity**: all screens are `@Composable`, navigated via Navigation Compose
 - **Player**: Media3 ExoPlayer, gesture controls (swipe seek/volume/brightness, long-press speed, double-tap actions)
   - Top bar: filename row (exit/trash) + thumbless progress bar with inline time
@@ -170,13 +178,16 @@ app/src/main/java/cn/vectory/syncplayer/
   - System status bar always hidden in player
   - `progressAlwaysVisible`: shows top bar in immersive mode without bottom toolbar
 - **Sync**: mirror sync (remote → local), multi-source (SyncSource + SyncRelation), dry-run first, foreground service (`dataSync` type)
-- **Security**: app lock via biometric (BIOMETRIC_WEAK), auto-locks on background transition, EncryptedSharedPreferences for credentials
+- **Security**: 
+  - App lock via biometric (BIOMETRIC_WEAK), auto-locks on background transition.
+  - SSH: **TOFU (Trust On First Use)** pattern for host key verification.
+  - Credentials: EncryptedSharedPreferences.
 - **SAF**: optional DocumentsProvider (`SyncDocumentsProvider`) to expose synced files to other apps
 - **Audio**: gain analysis (RMS/peak dB) per sync relation, used for volume normalization hints
+- **Database**: 
+  - Room with schema migrations, version tracked in `DatabaseModule.kt`, schemas exported to `app/schemas/`.
+  - **Optimization**: Use `parentPath` indexed column for high-speed folder browsing instead of `LIKE` substrings.
+- **Performance**:
+  - **Debounce**: Use at least 300ms debounce for heavy UI merging flows (e.g., file browsing).
+  - **I/O Safety**: All blocking I/O (Retriever, File operations) MUST run in `Dispatchers.IO`.
 - **Versioning**: bump versionCode + versionName in `app/build.gradle.kts` after every commit+push
-- **Commit style**: `feat:` / `fix:` prefix
-- **Release**: tag + push tag + Gitea API create release + upload APK
-- **Icon library**: `material-icons-extended` — use Material Icons, never emoji
-- **UI text**: user-facing strings in Chinese, code/variables in English
-- **Database**: Room with schema migrations, version tracked in `DatabaseModule.kt`, schemas exported to `app/schemas/`
-- **Storage**: all synced files in app private storage (`context.getExternalFilesDir`), paths managed by `StoragePaths`
