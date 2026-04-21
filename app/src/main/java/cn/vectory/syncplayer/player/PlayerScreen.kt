@@ -378,14 +378,29 @@ fun PlayerScreen(
             }
             val posMs = (progress * duration).toLong()
             seekPreviewPosition = posMs
-            if (posMs != lastExtractedPosMs) {
+
+            if (posMs == lastExtractedPosMs) {
+                delay(50)
+                continue
+            }
+
+            val cached = previewExtractor.getCachedFrame(filePath, posMs)
+            if (cached != null) {
+                seekPreviewBitmap = cached
+                lastExtractedPosMs = posMs
+            } else {
                 val bitmap = previewExtractor.extractFrameAtPosition(filePath, posMs)
                 lastExtractedPosMs = posMs
                 if (bitmap != null && isActive) {
-                    seekPreviewBitmap = bitmap
+                    val curMs = when {
+                        uiState.isUserSeeking -> uiState.userSeekPosition
+                        uiState.isGestureSeeking -> uiState.gestureSeekPosition
+                        else -> 0f
+                    }.let { (it * duration).toLong() }
+                    if (curMs == posMs) {
+                        seekPreviewBitmap = bitmap
+                    }
                 }
-            } else {
-                delay(50)
             }
         }
     }

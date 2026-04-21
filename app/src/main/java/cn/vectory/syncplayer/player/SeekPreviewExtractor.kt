@@ -71,6 +71,12 @@ class SeekPreviewExtractor {
         prefetchJob = null
     }
 
+    fun getCachedFrame(filePath: String, positionMs: Long): Bitmap? {
+        val roundedPosition = roundPosition(positionMs)
+        val key = CacheKey(filePath, roundedPosition)
+        return cache.get(key)
+    }
+
     private fun roundPosition(positionMs: Long): Long =
         (positionMs / POSITION_ROUNDING_MS) * POSITION_ROUNDING_MS
 
