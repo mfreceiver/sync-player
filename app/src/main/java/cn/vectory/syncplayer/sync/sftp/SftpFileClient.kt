@@ -41,7 +41,7 @@ class SftpFileClient(
     override suspend fun connect(source: SyncSource, remotePath: String): Unit = withContext(Dispatchers.IO) {
         checkNetworkAvailable(context)
         try {
-            val client = SSHClient()
+            val client = SSHClient(net.schmizz.sshj.DefaultSecurityProviderConfig())
             client.addHostKeyVerifier(SyncPlayerHostKeyVerifier(context))
             val timeoutMs = 5000
             client.setConnectTimeout(timeoutMs)
