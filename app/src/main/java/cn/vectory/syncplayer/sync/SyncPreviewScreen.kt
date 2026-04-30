@@ -328,7 +328,8 @@ fun SyncPreviewScreen(
                                 totalBytes = progress.totalBytes,
                                 activeDownloads = progress.activeDownloads,
                                 currentFileName = progress.currentFileName,
-                                currentFileProgress = progress.currentFileProgress
+                                currentFileProgress = progress.currentFileProgress,
+                                speedBytesPerSec = progress.speedBytesPerSec
                             )
                         }
                         val remainingToDownload by remember {
@@ -563,7 +564,8 @@ private fun SyncProgressCard(
     totalBytes: Long,
     activeDownloads: List<ActiveDownload>,
     currentFileName: String,
-    currentFileProgress: Float
+    currentFileProgress: Float,
+    speedBytesPerSec: Long = 0
 ) {
     Card(
         modifier = Modifier
@@ -619,11 +621,24 @@ private fun SyncProgressCard(
 
             if (activeDownloads.size > 1) {
                 HorizontalDivider()
-                Text(
-                    text = "正在下载 ${activeDownloads.size} 个文件",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "正在下载 ${activeDownloads.size} 个文件",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    if (speedBytesPerSec > 0) {
+                        Text(
+                            text = "${formatSpeed(speedBytesPerSec)}/s",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
                 activeDownloads.forEach { download ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -672,6 +687,13 @@ private fun SyncProgressCard(
                         modifier = Modifier.weight(1f),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (speedBytesPerSec > 0) {
+                        Text(
+                            text = "${formatSpeed(speedBytesPerSec)}/s",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     if (currentFileProgress > 0) {
                         Text(
                             text = "%.0f%%".format(currentFileProgress * 100),
@@ -683,4 +705,11 @@ private fun SyncProgressCard(
             }
         }
     }
+}
+
+private fun formatSpeed(bytesPerSec: Long): String = when {
+    bytesPerSec >= 1024L * 1024 * 1024 -> "%.1fGB".format(bytesPerSec / (1024.0 * 1024 * 1024))
+    bytesPerSec >= 1024L * 1024 -> "%.1fMB".format(bytesPerSec / (1024.0 * 1024))
+    bytesPerSec >= 1024L -> "%.0fKB".format(bytesPerSec / 1024.0)
+    else -> "${bytesPerSec}B"
 }
