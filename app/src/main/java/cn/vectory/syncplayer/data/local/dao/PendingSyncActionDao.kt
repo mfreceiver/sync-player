@@ -22,4 +22,13 @@ interface PendingSyncActionDao {
         deleteByRelationId(relationId)
         insertAll(actions)
     }
+
+    @Transaction
+    suspend fun getAndDeleteByRelationId(relationId: Long): List<PendingSyncActionEntity> {
+        val entities = getByRelationId(relationId)
+        if (entities.isNotEmpty()) {
+            deleteByRelationId(relationId)
+        }
+        return entities
+    }
 }

@@ -79,7 +79,6 @@ class SyncEngine @Inject constructor(
     }
 
     suspend fun setPendingTask(task: PendingSyncTask) {
-        pendingSyncActionDao.deleteByRelationId(task.relationId)
         val entities = mutableListOf<PendingSyncActionEntity>()
         for (action in task.toDownload) {
             entities.add(PendingSyncActionEntity(
@@ -105,11 +104,11 @@ class SyncEngine @Inject constructor(
                 remoteModifiedTime = action.remoteModifiedTime
             ))
         }
-        pendingSyncActionDao.insertAll(entities)
+        pendingSyncActionDao.replaceForRelation(task.relationId, entities)
     }
 
     suspend fun consumePendingTask(relationId: Long): PendingSyncTask? {
-        val entities = pendingSyncActionDao.getByRelationId(relationId)
+        val entities = pendingSyncActionDao.getAndDeleteByRelationId(relationId)
         if (entities.isEmpty()) return null
         val first = entities.first()
         val toDownload = entities.filter { it.actionGroup == 0 }.map {
@@ -128,7 +127,6 @@ class SyncEngine @Inject constructor(
                 remoteModifiedTime = it.remoteModifiedTime
             )
         }
-        pendingSyncActionDao.deleteByRelationId(relationId)
         return PendingSyncTask(
             relationId = relationId,
             relationName = first.relationName,
@@ -523,7 +521,11 @@ class SyncEngine @Inject constructor(
                                     completedCount.incrementAndGet()
                                     activeDownloadsMutex.withLock {
                                         completedPathsSet.add(action.relativePath)
-                                        updateActiveDownloadsState(activeDownloadsMap, totalBytesTransferred.get(), totalDownloadBytes, completedCount.get(), totalActions)
+                                        updateActiveDownloadsState(
+                                            activeDownloadsMap, totalBytesTransferred.get(),
+                                            totalDownloadBytes, completedCount.get(), totalActions,
+                                            completedPaths = completedPathsSet.toSet()
+                                        )
                                     }
                                 } finally {
                                     semaphore.release()
@@ -572,7 +574,8 @@ class SyncEngine @Inject constructor(
                 relationId = relationId,
                 relationName = name,
                 localBasePath = basePath,
-                startTimeMs = _progress.value.startTimeMs
+                startTimeMs = _progress.value.startTimeMs,
+                completedPaths = completedPathsSet.toSet()
             )
 
             val successDownloadCount = toActuallyDownload.size - failedCount.get()
