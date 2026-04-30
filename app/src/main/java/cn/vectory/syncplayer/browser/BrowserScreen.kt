@@ -146,11 +146,11 @@ fun BrowserScreen(
                         }
                     } else {
                         IconButton(onClick = {
-                            showDirectoryTree = true
+                            viewModel.setFolder("")
                         }) {
                             Icon(
                                 imageVector = Icons.Default.Home,
-                                contentDescription = "目录"
+                                contentDescription = "根目录"
                             )
                         }
                     }
