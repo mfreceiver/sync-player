@@ -331,11 +331,10 @@ fun SyncPreviewScreen(
                                 currentFileProgress = progress.currentFileProgress
                             )
                         }
-                        val completedPaths = progress.completedPaths
                         val remainingToDownload by remember {
                             derivedStateOf {
                                 if (isSyncing) {
-                                    toDownload.filter { it.relativePath !in completedPaths }
+                                    toDownload.filter { it.relativePath !in progress.completedPaths }
                                 } else {
                                     toDownload
                                 }
@@ -344,7 +343,7 @@ fun SyncPreviewScreen(
                         val remainingToDelete by remember {
                             derivedStateOf {
                                 if (isSyncing || isDeleting) {
-                                    toDelete.filter { it.relativePath !in completedPaths }
+                                    toDelete.filter { it.relativePath !in progress.completedPaths }
                                 } else {
                                     toDelete
                                 }
