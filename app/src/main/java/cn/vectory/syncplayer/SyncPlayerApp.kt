@@ -12,7 +12,10 @@ class SyncPlayerApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        Security.addProvider(org.bouncycastle.jce.provider.BouncyCastleProvider())
+        Security.insertProviderAt(
+            org.bouncycastle.jce.provider.BouncyCastleProvider(),
+            Security.getProviders().size + 1
+        )
         appLockManager.register()
     }
 }
