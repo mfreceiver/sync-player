@@ -327,8 +327,6 @@ fun SyncPreviewScreen(
                                 transferredBytes = progress.transferredBytes,
                                 totalBytes = progress.totalBytes,
                                 activeDownloads = progress.activeDownloads,
-                                currentFileName = progress.currentFileName,
-                                currentFileProgress = progress.currentFileProgress,
                                 speedBytesPerSec = progress.speedBytesPerSec
                             )
                         }
@@ -563,8 +561,6 @@ private fun SyncProgressCard(
     transferredBytes: Long,
     totalBytes: Long,
     activeDownloads: List<ActiveDownload>,
-    currentFileName: String,
-    currentFileProgress: Float,
     speedBytesPerSec: Long = 0
 ) {
     Card(
@@ -619,7 +615,7 @@ private fun SyncProgressCard(
                 }
             }
 
-            if (activeDownloads.size > 1) {
+            if (activeDownloads.isNotEmpty()) {
                 HorizontalDivider()
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -665,41 +661,6 @@ private fun SyncProgressCard(
                                 color = MaterialTheme.colorScheme.primary
                             )
                         }
-                    }
-                }
-            } else if (currentFileName.isNotEmpty()) {
-                HorizontalDivider()
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    CircularProgressIndicator(
-                        progress = { currentFileProgress },
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.dp
-                    )
-                    Text(
-                        text = currentFileName.substringAfterLast('/'),
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    if (speedBytesPerSec > 0) {
-                        Text(
-                            text = "${formatSpeed(speedBytesPerSec)}/s",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    if (currentFileProgress > 0) {
-                        Text(
-                            text = "%.0f%%".format(currentFileProgress * 100),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
                     }
                 }
             }

@@ -30,8 +30,8 @@ android {
         applicationId = "cn.vectory.syncplayer"
         minSdk = 34
         targetSdk = 35
-        versionCode = 108
-        versionName = "10.9.4"
+        versionCode = 109
+        versionName = "10.9.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

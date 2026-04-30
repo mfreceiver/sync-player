@@ -56,11 +56,19 @@ class VideoRepository @Inject constructor(
     fun searchByFileName(query: String): Flow<List<VideoItemEntity>> =
         videoItemDao.searchByFileName(query)
 
+    fun searchByFileNameInFolder(query: String, folder: String): Flow<List<VideoItemEntity>> =
+        if (folder.isEmpty()) videoItemDao.searchByFileName(query)
+        else videoItemDao.searchByFileNameInFolder(query, folder)
+
     fun getAllRelativePaths(): Flow<List<String>> =
         videoItemDao.getAllRelativePaths()
 
     fun getAllParentPaths(): Flow<List<String>> =
         videoItemDao.getAllParentPaths()
+
+    fun getParentPathsInFolder(folder: String): Flow<List<String>> =
+        if (folder.isEmpty()) videoItemDao.getAllParentPaths()
+        else videoItemDao.getParentPathsInFolder(folder)
 
     suspend fun getChildVideoStats(folderPath: String): List<ChildVideoStat> =
         videoItemDao.getChildVideoStats(folderPath)

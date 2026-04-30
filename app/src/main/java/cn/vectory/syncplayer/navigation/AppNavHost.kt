@@ -64,7 +64,8 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                     navController.navigate(Route.Player.create(videoItemId, currentFolder, "browser"))
                 },
                 onNavigateToSearch = {
-                    navController.navigate(Route.Search.route)
+                    val currentFolder = viewModel.currentFolder.value
+                    navController.navigate(Route.Search.create(currentFolder))
                 },
                 onNavigateToPlaybackSettings = {
                     navController.navigate(Route.Settings.route, drawerNavOptions)
@@ -179,8 +180,15 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
         }
 
 
-        composable(Route.Search.route) {
+        composable(
+            route = Route.Search.route,
+            arguments = listOf(
+                navArgument("folder") { type = NavType.StringType; defaultValue = "" }
+            )
+        ) { backStackEntry ->
+            val folder = backStackEntry.arguments?.getString("folder") ?: ""
             SearchScreen(
+                initialFolder = folder,
                 onNavigateToFolder = { folderPath ->
                     navController.popBackStack(Route.Search.route, inclusive = true)
                     navController.navigate(Route.Browser.create(folderPath))

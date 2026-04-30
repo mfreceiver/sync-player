@@ -21,6 +21,8 @@ import cn.vectory.syncplayer.ui.util.getMimeType
 import cn.vectory.syncplayer.ui.util.isVideoFile
 import cn.vectory.syncplayer.ui.util.fileNameComparator
 import cn.vectory.syncplayer.ui.components.DirectoryNode
+import cn.vectory.syncplayer.ui.components.FileContextMenuActions
+import cn.vectory.syncplayer.ui.components.FolderContextMenuActions
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -45,7 +47,7 @@ class BrowserViewModel @Inject constructor(
     private val storagePaths: StoragePaths,
     private val userPrefs: UserPreferencesRepository,
     @ApplicationContext private val context: Context
-) : ViewModel() {
+) : ViewModel(), FileContextMenuActions, FolderContextMenuActions {
 
     enum class SortMode { FILENAME_ASC, FILENAME_DESC, DURATION_ASC, DURATION_DESC, FILE_SIZE_ASC, FILE_SIZE_DESC }
     enum class BrowseFilter { ALL, VIDEO_ONLY, UNWATCHED }
@@ -500,7 +502,7 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    fun updateStar(videoItemId: Long, star: Int) {
+    override fun updateStar(videoItemId: Long, star: Int) {
         viewModelScope.launch {
             try {
                 videoRepository.updateStar(videoItemId, star)
@@ -512,7 +514,7 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    fun updateStarByPath(relativePath: String, star: Int) {
+    override fun updateStarByPath(relativePath: String, star: Int) {
         viewModelScope.launch {
             try {
                 videoRepository.updateStarByPath(relativePath, star)
@@ -524,7 +526,7 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    suspend fun getRecursiveFolderStats(folderPath: String) = videoRepository.getRecursiveFolderStats(folderPath)
+    override suspend fun getRecursiveFolderStats(folderPath: String) = videoRepository.getRecursiveFolderStats(folderPath)
 
     suspend fun loadSubFolders(folderPath: String): List<DirectoryNode> = withContext(Dispatchers.Default) {
         val subDirs = videoRepository.getSubFoldersOnce(folderPath)
@@ -539,7 +541,7 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    fun markFolderRead(folderPath: String, read: Boolean) {
+    override fun markFolderRead(folderPath: String, read: Boolean) {
         viewModelScope.launch {
             try {
                 playbackRepository.markFolderCompleted(folderPath, read)
@@ -579,7 +581,7 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    fun deleteFolder(path: String) {
+    override fun deleteFolder(path: String) {
         viewModelScope.launch {
             try {
                 val dir = File(storagePaths.userdataRoot, path)
@@ -674,7 +676,7 @@ class BrowserViewModel @Inject constructor(
             .mapNotNull { it.videoItemId }
     }
 
-    fun toggleTrashed(videoItemId: Long) {
+    override fun toggleTrashed(videoItemId: Long) {
         viewModelScope.launch {
             try {
                 val video = videoRepository.getById(videoItemId)
@@ -690,14 +692,14 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    fun isFileInBaseDir(relativePath: String): Boolean {
+    override fun isFileInBaseDir(relativePath: String): Boolean {
         val basePathsList = basePaths.value.map { it.relation.localBasePath }
         return basePathsList.any { basePath ->
             relativePath.startsWith("$basePath/") || relativePath == basePath
         }
     }
 
-    fun deleteFile(relativePath: String) {
+    override fun deleteFile(relativePath: String) {
         viewModelScope.launch {
             try {
                 val video = videoRepository.getByRelativePath(relativePath)
@@ -715,7 +717,7 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    suspend fun buildShareIntent(videoItemId: Long): Intent? {
+    override suspend fun buildShareIntent(videoItemId: Long): Intent? {
         val video = videoRepository.getById(videoItemId) ?: return null
         val file = File(video.localAbsolutePath)
         if (!file.exists()) return null

@@ -1,6 +1,5 @@
 package cn.vectory.syncplayer.browser
 
-import cn.vectory.syncplayer.ui.util.formatFileSize
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -62,11 +61,12 @@ import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.saveable.rememberSaveable
-import cn.vectory.syncplayer.data.local.dao.VideoItemDao
 import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.ui.components.FileStatusIcon
 import cn.vectory.syncplayer.ui.components.FolderGridItem
 import cn.vectory.syncplayer.ui.components.FolderIcon
+import cn.vectory.syncplayer.ui.components.FileContextMenuDialog
+import cn.vectory.syncplayer.ui.components.FolderContextMenuDialog
 import cn.vectory.syncplayer.ui.components.Thumbnail
 import cn.vectory.syncplayer.ui.components.VideoGridItem
 import cn.vectory.syncplayer.ui.components.gridVerticalScrollbar
@@ -613,183 +613,22 @@ fun BrowserScreen(
     }
 
     showContextMenu?.let { item ->
-        var localStar by remember { mutableStateOf(item.star) }
-
-        Dialog(onDismissRequest = { showContextMenu = null }) {
-            Card(
-                modifier = Modifier.width(320.dp),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    // Title
-                    Text(
-                        text = item.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    val pathOnly = item.relativePath.substringBeforeLast('/')
-                    Text(
-                        text = if (pathOnly.isEmpty()) "/" else pathOnly,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
-
-                    // Thumbnail for videos - respect original aspect ratio
-                    if (isVideoFile(item.name)) {
-                        val aspectRatio = if (item.width != null && item.height != null && item.width > 0 && item.height > 0) {
-                            item.width.toFloat() / item.height.toFloat()
-                        } else {
-                            16f / 9f
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Thumbnail(
-                            thumbnailPath = item.thumbnailPath,
-                            isVideo = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(aspectRatio)
-                                .heightIn(max = 200.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                        )
-                    }
-
-                    if (isVideoFile(item.name)) {
-                        Spacer(Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            StarRatingInput(
-                                rating = localStar,
-                                onRatingChange = { rating ->
-                                    localStar = rating
-                                    if (item.videoItemId != null) {
-                                        viewModel.updateStar(item.videoItemId, rating)
-                                    } else {
-                                        viewModel.updateStarByPath(item.relativePath, rating)
-                                    }
-                                },
-                                starSize = 20.dp
-                            )
-                        }
-                    }
-
-                    Spacer(Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        TextButton(onClick = {
-                            val itemId = item.videoItemId
-                            if (itemId == null) {
-                                showContextMenu = null
-                                scope.launch { snackbarHostState.showSnackbar("该文件缺少数据库记录，请先重建元数据") }
-                                return@TextButton
-                            }
-                            showContextMenu = null
-                            scope.launch {
-                                val intent = viewModel.buildShareIntent(itemId)
-                                if (intent != null) {
-                                    context.startActivity(intent)
-                                } else {
-                                    scope.launch { snackbarHostState.showSnackbar("分享失败：文件不存在或无法访问") }
-                                }
-                            }
-                        }) {
-                            Text("分享")
-                        }
-                        if (viewModel.isFileInBaseDir(item.relativePath)) {
-                            TextButton(onClick = {
-                                val vidId = item.videoItemId
-                                if (vidId != null) {
-                                    viewModel.toggleTrashed(vidId)
-                                }
-                                showContextMenu = null
-                            }) {
-                                Text(if (item.isTrashed) "从回收站恢复" else "放入回收站")
-                            }
-                        }
-                        if (!viewModel.isFileInBaseDir(item.relativePath)) {
-                            TextButton(onClick = {
-                                viewModel.deleteFile(item.relativePath)
-                                showContextMenu = null
-                            }) {
-                                Text("删除", color = MaterialTheme.colorScheme.error)
-                            }
-                        }
-                        TextButton(onClick = { showContextMenu = null }) {
-                            Text("取消")
-                        }
-                    }
-                }
-            }
-        }
+        FileContextMenuDialog(
+            item = item,
+            actions = viewModel,
+            onDismiss = { showContextMenu = null },
+            scope = scope,
+            snackbarHostState = snackbarHostState,
+            context = context
+        )
     }
 
     showFolderContextMenu?.let { item ->
-        if (viewModel.isFileInBaseDir(item.relativePath)) {
-            Dialog(onDismissRequest = { showFolderContextMenu = null }) {
-                Card(
-                    modifier = Modifier.width(280.dp),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(text = item.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(12.dp))
-                        var stats by remember { mutableStateOf<VideoItemDao.RecursiveFolderStat?>(null) }
-                        LaunchedEffect(item.relativePath) {
-                            stats = viewModel.getRecursiveFolderStats(item.relativePath)
-                        }
-                        if (stats != null) {
-                            Text("总文件数：${stats!!.totalFileCount}", style = MaterialTheme.typography.bodyMedium)
-                            Text("视频文件数：${stats!!.totalVideoCount}", style = MaterialTheme.typography.bodyMedium)
-                            Text("总大小：${formatFileSize(stats!!.totalSize)}", style = MaterialTheme.typography.bodyMedium)
-                        } else {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                        }
-                        Spacer(Modifier.height(16.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            TextButton(onClick = {
-                                viewModel.markFolderRead(item.relativePath, true)
-                                showFolderContextMenu = null
-                            }) { Text("标记已读") }
-                            TextButton(onClick = {
-                                viewModel.markFolderRead(item.relativePath, false)
-                                showFolderContextMenu = null
-                            }) { Text("标记未读") }
-                            TextButton(onClick = { showFolderContextMenu = null }) { Text("取消") }
-                        }
-                    }
-                }
-            }
-        } else {
-            AlertDialog(
-                onDismissRequest = { showFolderContextMenu = null },
-                title = { Text(item.name) },
-                confirmButton = {
-                    if (!item.isSyncBaseDir && !item.containsSyncBaseDir && !item.isInSyncBaseDir) {
-                        TextButton(
-                            onClick = {
-                                viewModel.deleteFolder(item.relativePath)
-                                showFolderContextMenu = null
-                            }
-                        ) {
-                            Text("删除", color = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showFolderContextMenu = null }) {
-                        Text("取消")
-                    }
-                }
-            )
-        }
+        FolderContextMenuDialog(
+            item = item,
+            actions = viewModel,
+            onDismiss = { showFolderContextMenu = null }
+        )
     }
 
     if (showAdvancedFilter) {

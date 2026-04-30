@@ -27,7 +27,10 @@ sealed class Route(val route: String) {
         fun create(relationId: Long, initialTab: String = "download"): String =
             "sync_preview/$relationId?initialTab=$initialTab"
     }
-    data object Search : Route("search")
+    data object Search : Route("search?folder={folder}") {
+        fun create(folder: String = ""): String =
+            if (folder.isEmpty()) "search" else "search?folder=${Uri.encode(folder)}"
+    }
     data object Settings : Route("settings")
     data object GainAnalysis : Route("gain_analysis?relationId={relationId}") {
         fun create(relationId: Long = 0L): String =

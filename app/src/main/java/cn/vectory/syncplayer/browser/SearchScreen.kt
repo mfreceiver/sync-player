@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material3.*
@@ -20,22 +21,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import cn.vectory.syncplayer.data.model.BrowseItem
+import cn.vectory.syncplayer.ui.components.FileContextMenuDialog
 import cn.vectory.syncplayer.ui.components.FileStatusIcon
+import cn.vectory.syncplayer.ui.components.FolderContextMenuDialog
 import cn.vectory.syncplayer.ui.components.FolderIcon
 import cn.vectory.syncplayer.ui.components.Thumbnail
 import cn.vectory.syncplayer.ui.components.verticalScrollbar
 import cn.vectory.syncplayer.ui.util.buildMetadataLine
 import cn.vectory.syncplayer.ui.util.isVideoFile
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun SearchScreen(
     viewModel: SearchViewModel = hiltViewModel(),
+    initialFolder: String = "",
     onNavigateToFolder: (String) -> Unit,
     onNavigateToPlayer: (Long, List<Long>) -> Unit,
     onBack: () -> Unit,
@@ -43,8 +49,15 @@ fun SearchScreen(
     val query by viewModel.query.collectAsState()
     val searchScope by viewModel.searchScope.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
+    val error by viewModel.error.collectAsState()
 
     val focusRequester = remember { FocusRequester() }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    var showContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
+    var showFolderContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
 
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
@@ -55,6 +68,7 @@ fun SearchScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 navigationIcon = {
@@ -100,6 +114,30 @@ fun SearchScreen(
                 },
                 singleLine = true
             )
+
+            if (viewModel.searchFolder.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.FolderOpen,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "搜索范围：${viewModel.searchFolder}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
 
             Row(
                 modifier = Modifier
@@ -195,7 +233,8 @@ fun SearchScreen(
                                 item = item,
                                 onClick = {
                                     onNavigateToFolder(item.relativePath)
-                                }
+                                },
+                                onLongClick = { showFolderContextMenu = item }
                             )
                         } else {
                             SearchFileItem(
@@ -204,7 +243,8 @@ fun SearchScreen(
                                     if (isVideoFile(item.name)) {
                                         onNavigateToPlayer(item.videoItemId!!, viewModel.getSearchResultVideoIds())
                                     }
-                                }
+                                },
+                                onLongClick = { showContextMenu = item }
                             )
                         }
                         HorizontalDivider(
@@ -216,13 +256,40 @@ fun SearchScreen(
             }
         }
     }
+
+    showContextMenu?.let { item ->
+        FileContextMenuDialog(
+            item = item,
+            actions = viewModel,
+            onDismiss = { showContextMenu = null },
+            scope = scope,
+            snackbarHostState = snackbarHostState,
+            context = context
+        )
+    }
+
+    showFolderContextMenu?.let { item ->
+        FolderContextMenuDialog(
+            item = item,
+            actions = viewModel,
+            onDismiss = { showFolderContextMenu = null }
+        )
+    }
+
+    error?.let {
+        LaunchedEffect(it) {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearError()
+        }
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SearchFolderItem(
     item: BrowseItem,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
 ) {
     val parentPath = extractParentPath(item.relativePath)
 
@@ -231,7 +298,7 @@ private fun SearchFolderItem(
             .fillMaxWidth()
             .combinedClickable(
                 onClick = onClick,
-                onLongClick = {}
+                onLongClick = onLongClick
             )
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -271,7 +338,8 @@ private fun SearchFolderItem(
 @Composable
 private fun SearchFileItem(
     item: BrowseItem,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
 ) {
     val parentPath = extractParentPath(item.relativePath)
 
@@ -280,7 +348,7 @@ private fun SearchFileItem(
             .fillMaxWidth()
             .combinedClickable(
                 onClick = onClick,
-                onLongClick = {}
+                onLongClick = onLongClick
             )
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically

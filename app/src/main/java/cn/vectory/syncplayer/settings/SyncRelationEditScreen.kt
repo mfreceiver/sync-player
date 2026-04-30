@@ -104,23 +104,21 @@ fun SyncRelationEditScreen(
                 singleLine = true
             )
 
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { sourceExpanded = true }
+            ExposedDropdownMenuBox(
+                expanded = sourceExpanded,
+                onExpandedChange = { sourceExpanded = it }
             ) {
                 OutlinedTextField(
                     value = sources.find { it.id == selectedSourceId }?.name ?: "请选择数据源",
                     onValueChange = {},
                     label = { Text("数据源") },
                     readOnly = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .menuAnchor(MenuAnchorType.PrimaryNotEditable),
                     trailingIcon = {
-                        IconButton(onClick = { sourceExpanded = true }) {
-                            Icon(Icons.Filled.ArrowDropDown, contentDescription = "展开")
-                        }
-                    },
-                    interactionSource = remember { MutableInteractionSource() }
+                        Icon(Icons.Filled.ArrowDropDown, contentDescription = "展开")
+                    }
                 )
                 DropdownMenu(expanded = sourceExpanded, onDismissRequest = { sourceExpanded = false }) {
                     sources.forEach { source ->

@@ -442,14 +442,18 @@ class SyncEngine @Inject constructor(
                                                     )
                                                     val now = System.currentTimeMillis()
                                                     if (now - lastProgressUpdateMs.get() >= PROGRESS_THROTTLE_MS) {
-                                                        lastProgressUpdateMs.set(now)
-                                                        _progress.value = _progress.value.copy(
-                                                            activeDownloads = activeDownloadsMap.values.toList(),
-                                                            transferredBytes = totalBytesTransferred.get() + activeDownloadsMap.values.sumOf { it.transferredBytes },
-                                                            totalBytes = totalDownloadBytes,
-                                                            completedFiles = completedCount.get(),
-                                                            totalFiles = totalActions
-                                                        )
+                                                    lastProgressUpdateMs.set(now)
+                                                    val currentTransferred = totalBytesTransferred.get() + activeDownloadsMap.values.sumOf { it.transferredBytes }
+                                                    val elapsed = System.currentTimeMillis() - _progress.value.startTimeMs
+                                                    val speed = if (elapsed > 1000) currentTransferred * 1000 / elapsed else 0L
+                                                    _progress.value = _progress.value.copy(
+                                                        activeDownloads = activeDownloadsMap.values.toList(),
+                                                        transferredBytes = currentTransferred,
+                                                        totalBytes = totalDownloadBytes,
+                                                        completedFiles = completedCount.get(),
+                                                        totalFiles = totalActions,
+                                                        speedBytesPerSec = speed
+                                                    )
                                                     }
                                                 } finally {
                                                     activeDownloadsMutex.unlock()

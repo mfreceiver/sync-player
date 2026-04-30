@@ -93,11 +93,24 @@ interface VideoItemDao {
     @Query("SELECT * FROM video_item WHERE fileName LIKE '%' || :query || '%' COLLATE NOCASE")
     fun searchByFileName(query: String): Flow<List<VideoItemEntity>>
 
+    @Query("""
+        SELECT * FROM video_item 
+        WHERE fileName LIKE '%' || :query || '%' COLLATE NOCASE 
+        AND (parentPath = :folder OR parentPath LIKE :folder || '/%')
+    """)
+    fun searchByFileNameInFolder(query: String, folder: String): Flow<List<VideoItemEntity>>
+
     @Query("SELECT DISTINCT relativePath FROM video_item")
     fun getAllRelativePaths(): Flow<List<String>>
 
     @Query("SELECT DISTINCT parentPath FROM video_item")
     fun getAllParentPaths(): Flow<List<String>>
+
+    @Query("""
+        SELECT DISTINCT parentPath FROM video_item 
+        WHERE parentPath = :folder OR parentPath LIKE :folder || '/%'
+    """)
+    fun getParentPathsInFolder(folder: String): Flow<List<String>>
 
     // Recursive folder statistics for requirement 1 (all files under a folder path)
     data class RecursiveFolderStat(
