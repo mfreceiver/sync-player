@@ -636,15 +636,12 @@ class SyncEngine @Inject constructor(
     ) {
         val activeTransferred = activeDownloadsMap.values.sumOf { it.transferredBytes }
         val totalTransferred = transferredSoFar + activeTransferred
-        val elapsed = System.currentTimeMillis() - _progress.value.startTimeMs
-        val speed = if (elapsed > 1000) totalTransferred * 1000 / elapsed else 0L
         _progress.value = _progress.value.copy(
             activeDownloads = activeDownloadsMap.values.toList(),
             transferredBytes = totalTransferred,
             totalBytes = totalDownloadBytes,
             completedFiles = completedFiles,
             totalFiles = totalFiles,
-            speedBytesPerSec = speed,
             currentFileName = activeDownloadsMap.values.firstOrNull()?.fileName ?: _progress.value.currentFileName,
             currentFileProgress = activeDownloadsMap.values.firstOrNull()?.progress ?: _progress.value.currentFileProgress,
             completedPaths = completedPaths
