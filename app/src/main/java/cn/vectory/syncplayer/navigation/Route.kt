@@ -36,5 +36,11 @@ sealed class Route(val route: String) {
         fun create(relationId: Long = 0L): String =
             if (relationId == 0L) "gain_analysis" else "gain_analysis?relationId=$relationId"
     }
+    data object ImageViewer : Route("image_viewer/{imageItemId}?returnFolder={returnFolder}&fromRoute={fromRoute}") {
+        fun create(imageItemId: Long, returnFolder: String = "", fromRoute: String = "browser"): String {
+            val encodedFolder = if (returnFolder.isEmpty()) "" else Uri.encode(returnFolder)
+            return "image_viewer/$imageItemId?returnFolder=$encodedFolder&fromRoute=$fromRoute"
+        }
+    }
     data object MetadataRebuild : Route("metadata_rebuild")
 }

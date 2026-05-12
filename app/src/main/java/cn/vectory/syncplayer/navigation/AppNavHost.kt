@@ -16,6 +16,8 @@ import androidx.navigation.navOptions
 import cn.vectory.syncplayer.browser.BrowserScreen
 import cn.vectory.syncplayer.browser.BrowserViewModel
 import cn.vectory.syncplayer.browser.SearchScreen
+import cn.vectory.syncplayer.imageviewer.ImageViewerScreen
+import cn.vectory.syncplayer.imageviewer.ImageViewerViewModel
 import cn.vectory.syncplayer.player.PlayerScreen
 import cn.vectory.syncplayer.player.PlayerViewModel
 import cn.vectory.syncplayer.settings.SyncSourceListScreen
@@ -63,6 +65,11 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                     navHelper.videoQueue.setIds(videoIds)
                     navController.navigate(Route.Player.create(videoItemId, currentFolder, "browser"))
                 },
+                onNavigateToImageViewer = { imageItemId, imageIds ->
+                    val currentFolder = viewModel.currentFolder.value
+                    navHelper.imageQueue.setIds(imageIds)
+                    navController.navigate(Route.ImageViewer.create(imageItemId, currentFolder, "browser"))
+                },
                 onNavigateToSearch = {
                     val currentFolder = viewModel.currentFolder.value
                     navController.navigate(Route.Search.create(currentFolder))
@@ -94,6 +101,34 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             PlayerScreen(
                 viewModel = viewModel,
                 videoItemId = videoItemId,
+                onExit = {
+                    if (fromRoute == "search") {
+                        navController.popBackStack(Route.Search.route, inclusive = false)
+                    } else {
+                        navController.popBackStack(Route.Browser.route, inclusive = false)
+                    }
+                }
+            )
+        }
+
+        composable(
+            route = Route.ImageViewer.route,
+            arguments = listOf(
+                navArgument("imageItemId") { type = NavType.LongType },
+                navArgument("returnFolder") { type = NavType.StringType; defaultValue = "" },
+                navArgument("fromRoute") { type = NavType.StringType; defaultValue = "browser" }
+            ),
+            enterTransition = { fadeIn(tween(0)) },
+            exitTransition = { fadeOut(tween(0)) },
+            popEnterTransition = { fadeIn(tween(0)) },
+            popExitTransition = { fadeOut(tween(0)) }
+        ) { backStackEntry ->
+            val imageItemId = backStackEntry.arguments?.getLong("imageItemId") ?: return@composable
+            val fromRoute = backStackEntry.arguments?.getString("fromRoute") ?: "browser"
+            val viewModel: ImageViewerViewModel = hiltViewModel()
+            ImageViewerScreen(
+                viewModel = viewModel,
+                imageItemId = imageItemId,
                 onExit = {
                     if (fromRoute == "search") {
                         navController.popBackStack(Route.Search.route, inclusive = false)
@@ -196,6 +231,10 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                 onNavigateToPlayer = { videoItemId, videoIds ->
                     navHelper.videoQueue.setIds(videoIds)
                     navController.navigate(Route.Player.create(videoItemId, "", "search"))
+                },
+                onNavigateToImageViewer = { imageItemId, imageIds ->
+                    navHelper.imageQueue.setIds(imageIds)
+                    navController.navigate(Route.ImageViewer.create(imageItemId, "", "search"))
                 },
                 onBack = { navController.popBackStack() }
             )

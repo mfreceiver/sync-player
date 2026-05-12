@@ -6,5 +6,6 @@ import javax.inject.Inject
 
 @HiltViewModel
 class NavigationHelper @Inject constructor(
-    val videoQueue: VideoQueue
+    val videoQueue: VideoQueue,
+    val imageQueue: ImageQueue
 ) : ViewModel()
