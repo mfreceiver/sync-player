@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -34,7 +35,10 @@ import cn.vectory.syncplayer.ui.components.FolderIcon
 import cn.vectory.syncplayer.ui.components.Thumbnail
 import cn.vectory.syncplayer.ui.components.verticalScrollbar
 import cn.vectory.syncplayer.ui.util.buildMetadataLine
+import cn.vectory.syncplayer.ui.util.buildImageMetadataLine
 import cn.vectory.syncplayer.ui.util.isVideoFile
+import cn.vectory.syncplayer.ui.util.isImageFile
+import cn.vectory.syncplayer.R
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -44,6 +48,7 @@ fun SearchScreen(
     initialFolder: String = "",
     onNavigateToFolder: (String) -> Unit,
     onNavigateToPlayer: (Long, List<Long>) -> Unit,
+    onNavigateToImageViewer: (Long, List<Long>) -> Unit = { _, _ -> },
     onBack: () -> Unit,
 ) {
     val query by viewModel.query.collectAsState()
@@ -75,11 +80,11 @@ fun SearchScreen(
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                 },
-                title = { Text("搜索") }
+                title = { Text(stringResource(R.string.search_title)) }
             )
         }
     ) { paddingValues ->
@@ -95,11 +100,11 @@ fun SearchScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 0.dp)
                     .focusRequester(focusRequester),
-                placeholder = { Text("搜索文件名或文件夹名") },
+                placeholder = { Text(stringResource(R.string.search_hint)) },
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Default.Search,
-                        contentDescription = "搜索"
+                        contentDescription = stringResource(R.string.browser_search)
                     )
                 },
                 trailingIcon = {
@@ -107,7 +112,7 @@ fun SearchScreen(
                         IconButton(onClick = { viewModel.setQuery("") }) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "清除"
+                                contentDescription = stringResource(R.string.search_clear)
                             )
                         }
                     }
@@ -130,7 +135,7 @@ fun SearchScreen(
                     )
                     Spacer(Modifier.width(4.dp))
                     Text(
-                        text = "搜索范围：${viewModel.searchFolder}",
+                        text = stringResource(R.string.search_scope_label, viewModel.searchFolder),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -148,17 +153,17 @@ fun SearchScreen(
                 FilterChip(
                     selected = searchScope == SearchViewModel.SearchScope.ALL,
                     onClick = { viewModel.setSearchScope(SearchViewModel.SearchScope.ALL) },
-                    label = { Text("全部") }
+                    label = { Text(stringResource(R.string.search_scope_all)) }
                 )
                 FilterChip(
                     selected = searchScope == SearchViewModel.SearchScope.FILES_ONLY,
                     onClick = { viewModel.setSearchScope(SearchViewModel.SearchScope.FILES_ONLY) },
-                    label = { Text("仅文件") }
+                    label = { Text(stringResource(R.string.search_scope_files)) }
                 )
                 FilterChip(
                     selected = searchScope == SearchViewModel.SearchScope.FOLDERS_ONLY,
                     onClick = { viewModel.setSearchScope(SearchViewModel.SearchScope.FOLDERS_ONLY) },
-                    label = { Text("仅文件夹") }
+                    label = { Text(stringResource(R.string.search_scope_folders)) }
                 )
             }
 
@@ -185,7 +190,7 @@ fun SearchScreen(
                             modifier = Modifier.size(48.dp)
                         )
                         Text(
-                            text = "输入关键词开始搜索",
+                            text = stringResource(R.string.search_empty_hint),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -209,7 +214,7 @@ fun SearchScreen(
                             modifier = Modifier.size(48.dp)
                         )
                         Text(
-                            text = "未找到匹配的结果",
+                            text = stringResource(R.string.search_no_results),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -240,8 +245,12 @@ fun SearchScreen(
                             SearchFileItem(
                                 item = item,
                                 onClick = {
-                                    if (isVideoFile(item.name)) {
-                                        onNavigateToPlayer(item.videoItemId!!, viewModel.getSearchResultVideoIds())
+                                    when {
+                                        isVideoFile(item.name) -> onNavigateToPlayer(item.videoItemId!!, viewModel.getSearchResultVideoIds())
+                                        isImageFile(item.name) -> {
+                                            val id = item.videoItemId ?: return@SearchFileItem
+                                            onNavigateToImageViewer(id, viewModel.getSearchResultImageIds())
+                                        }
                                     }
                                 },
                                 onLongClick = { showContextMenu = item }
@@ -356,6 +365,7 @@ private fun SearchFileItem(
         Thumbnail(
             thumbnailPath = item.thumbnailPath,
             isVideo = isVideoFile(item.name),
+            isImage = isImageFile(item.name),
             modifier = Modifier
                 .size(40.dp)
                 .clip(RoundedCornerShape(4.dp))
@@ -374,13 +384,22 @@ private fun SearchFileItem(
                 overflow = TextOverflow.Ellipsis
             )
 
-            val metadata = buildMetadataLine(
-                duration = item.duration,
-                width = item.width,
-                height = item.height,
-                bitrate = item.bitrate,
-                extension = item.name.substringAfterLast('.', "").lowercase()
-            )
+            val metadata = if (isImageFile(item.name)) {
+                buildImageMetadataLine(
+                    width = item.width,
+                    height = item.height,
+                    dateTaken = item.dateTaken,
+                    fileSize = item.fileSize
+                ) + (if (item.name.substringAfterLast('.', "").isNotEmpty()) " · ${item.name.substringAfterLast('.', "").uppercase()}" else "")
+            } else {
+                buildMetadataLine(
+                    duration = item.duration,
+                    width = item.width,
+                    height = item.height,
+                    bitrate = item.bitrate,
+                    extension = item.name.substringAfterLast('.', "").lowercase()
+                )
+            }
             if (metadata.isNotEmpty()) {
                 Spacer(Modifier.height(2.dp))
                 Text(

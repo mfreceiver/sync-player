@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -22,6 +23,7 @@ import java.io.File
 internal fun Thumbnail(
     thumbnailPath: String?,
     isVideo: Boolean = true,
+    isImage: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -42,8 +44,16 @@ internal fun Thumbnail(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = if (isVideo) Icons.Default.Movie else Icons.AutoMirrored.Filled.InsertDriveFile,
-                contentDescription = if (isVideo) "视频" else "文件",
+                imageVector = when {
+                    isVideo -> Icons.Default.Movie
+                    isImage -> Icons.Default.Image
+                    else -> Icons.AutoMirrored.Filled.InsertDriveFile
+                },
+                contentDescription = when {
+                    isVideo -> "视频"
+                    isImage -> "图片"
+                    else -> "文件"
+                },
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                 modifier = Modifier.size(32.dp)
             )

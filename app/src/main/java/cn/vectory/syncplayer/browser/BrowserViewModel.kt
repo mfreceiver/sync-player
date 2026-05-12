@@ -3,12 +3,12 @@ package cn.vectory.syncplayer.browser
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.model.BrowseItem
+import cn.vectory.syncplayer.data.model.FolderStats
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
@@ -16,9 +16,12 @@ import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.data.model.SyncRelationWithSource
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.VideoMetadataExtractor
+import cn.vectory.syncplayer.sync.ImageMetadataExtractor
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.ui.util.extractParentPath
-import cn.vectory.syncplayer.ui.util.getMimeType
 import cn.vectory.syncplayer.ui.util.isVideoFile
+import cn.vectory.syncplayer.ui.util.isImageFile
+import cn.vectory.syncplayer.ui.util.isMediaFile
 import cn.vectory.syncplayer.ui.util.fileNameComparator
 import cn.vectory.syncplayer.ui.components.DirectoryNode
 import cn.vectory.syncplayer.ui.components.FileContextMenuActions
@@ -44,14 +47,16 @@ class BrowserViewModel @Inject constructor(
     private val playbackRepository: PlaybackRepository,
     private val syncRelationRepository: SyncRelationRepository,
     private val videoMetadataExtractor: VideoMetadataExtractor,
+    private val imageMetadataExtractor: ImageMetadataExtractor,
     private val storagePaths: StoragePaths,
     private val userPrefs: UserPreferencesRepository,
+    private val fileOps: FileOperationsUseCase,
     @ApplicationContext private val context: Context
 ) : ViewModel(), FileContextMenuActions, FolderContextMenuActions {
 
     enum class SortMode { FILENAME_ASC, FILENAME_DESC, DURATION_ASC, DURATION_DESC, FILE_SIZE_ASC, FILE_SIZE_DESC }
     enum class BrowseFilter { ALL, VIDEO_ONLY, UNWATCHED }
-    enum class ViewMode { LIST, GRID }
+    enum class ViewMode { LIST, GRID, STAGGERED_GRID }
     // Star-based filtering for videos
     enum class StarFilterMode { OFF, EQ, GT, LT }
     // Browse mode controls how items are presented
@@ -247,15 +252,17 @@ class BrowserViewModel @Inject constructor(
                     isCompleted = record?.isCompleted ?: false,
                     isTrashed = record?.isTrashed ?: false,
                     hasGainAdjusted = video.audioGainDb != null,
-                    star = video.star
+                    star = video.star,
+                    mediaType = video.mediaType,
+                    dateTaken = video.dateTaken
                 )
             }
 
             val filtered = when (filterVal) {
                 BrowseFilter.ALL -> allVideos
-                BrowseFilter.VIDEO_ONLY -> allVideos.filter { isVideoFile(it.name) }
+                BrowseFilter.VIDEO_ONLY -> allVideos.filter { isVideoFile(it.name) || isImageFile(it.name) }
                 BrowseFilter.UNWATCHED -> allVideos.filter {
-                    isVideoFile(it.name) && it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
+                    (isVideoFile(it.name) || isImageFile(it.name)) && it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
                 }
             }
 
@@ -271,8 +278,12 @@ class BrowserViewModel @Inject constructor(
             return@withContext when (mode) {
                 SortMode.FILENAME_ASC -> starFiltered.sortedWith(compareBy(fileNameComparator) { it.name })
                 SortMode.FILENAME_DESC -> starFiltered.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
-                SortMode.DURATION_ASC -> starFiltered.sortedBy { it.duration ?: 0L }
-                SortMode.DURATION_DESC -> starFiltered.sortedByDescending { it.duration ?: 0L }
+                SortMode.DURATION_ASC -> starFiltered.sortedBy {
+                    if (isVideoFile(it.name)) it.duration ?: 0L else it.dateTaken ?: 0L
+                }
+                SortMode.DURATION_DESC -> starFiltered.sortedByDescending {
+                    if (isVideoFile(it.name)) it.duration ?: 0L else it.dateTaken ?: 0L
+                }
                 SortMode.FILE_SIZE_ASC -> starFiltered.sortedBy { it.fileSize }
                 SortMode.FILE_SIZE_DESC -> starFiltered.sortedByDescending { it.fileSize }
             }
@@ -376,19 +387,29 @@ class BrowserViewModel @Inject constructor(
                     isCompleted = record?.isCompleted ?: false,
                     isTrashed = record?.isTrashed ?: false,
                     hasGainAdjusted = video.audioGainDb != null,
-                    star = video.star
+                    star = video.star,
+                    mediaType = video.mediaType,
+                    dateTaken = video.dateTaken
                 )
             }
 
         val allVideos = videos + diskOnlyItems
 
-        val nonVideoFiles = allVideos.filter { !isVideoFile(it.name) }
+        val imageFiles = allVideos.filter { isImageFile(it.name) }
         val videoFiles = allVideos.filter { isVideoFile(it.name) }
+        val otherFiles = allVideos.filter { !isVideoFile(it.name) && !isImageFile(it.name) }
 
         val filteredVideos = when (filterVal) {
             BrowseFilter.ALL -> videoFiles
             BrowseFilter.VIDEO_ONLY -> videoFiles
             BrowseFilter.UNWATCHED -> videoFiles.filter {
+                it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
+            }
+        }
+        val filteredImages = when (filterVal) {
+            BrowseFilter.ALL -> imageFiles
+            BrowseFilter.VIDEO_ONLY -> imageFiles
+            BrowseFilter.UNWATCHED -> imageFiles.filter {
                 it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
             }
         }
@@ -399,13 +420,19 @@ class BrowserViewModel @Inject constructor(
             StarFilterMode.GT -> filteredVideos.filter { it.star > starValue }
             StarFilterMode.LT -> filteredVideos.filter { it.star < starValue }
         }
+        val starFilteredImages = when (starMode) {
+            StarFilterMode.OFF -> filteredImages
+            StarFilterMode.EQ -> filteredImages.filter { it.star == starValue }
+            StarFilterMode.GT -> filteredImages.filter { it.star > starValue }
+            StarFilterMode.LT -> filteredImages.filter { it.star < starValue }
+        }
 
         val sortedFolders = when (mode) {
             SortMode.FILENAME_ASC -> folders.sortedWith(compareBy(fileNameComparator) { it.name })
             SortMode.FILENAME_DESC -> folders.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
             else -> folders.sortedWith(compareBy(fileNameComparator) { it.name })
         }
-        val sortedNonVideos = nonVideoFiles.sortedWith(compareBy(fileNameComparator) { it.name })
+        val sortedNonVideos = otherFiles.sortedWith(compareBy(fileNameComparator) { it.name })
         val sortedVideos = when (mode) {
             SortMode.FILENAME_ASC -> starFilteredVideos.sortedWith(compareBy(fileNameComparator) { it.name })
             SortMode.FILENAME_DESC -> starFilteredVideos.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
@@ -413,6 +440,14 @@ class BrowserViewModel @Inject constructor(
             SortMode.DURATION_DESC -> starFilteredVideos.sortedByDescending { it.duration ?: 0L }
             SortMode.FILE_SIZE_ASC -> starFilteredVideos.sortedBy { it.fileSize }
             SortMode.FILE_SIZE_DESC -> starFilteredVideos.sortedByDescending { it.fileSize }
+        }
+        val sortedImages = when (mode) {
+            SortMode.FILENAME_ASC -> starFilteredImages.sortedWith(compareBy(fileNameComparator) { it.name })
+            SortMode.FILENAME_DESC -> starFilteredImages.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
+            SortMode.DURATION_ASC -> starFilteredImages.sortedBy { it.dateTaken ?: 0L }
+            SortMode.DURATION_DESC -> starFilteredImages.sortedByDescending { it.dateTaken ?: 0L }
+            SortMode.FILE_SIZE_ASC -> starFilteredImages.sortedBy { it.fileSize }
+            SortMode.FILE_SIZE_DESC -> starFilteredImages.sortedByDescending { it.fileSize }
         }
 
         val totalBeforeFilter = sortedFolders.size + allVideos.size
@@ -429,9 +464,14 @@ class BrowserViewModel @Inject constructor(
             BrowseFilter.VIDEO_ONLY -> emptyList()
             BrowseFilter.UNWATCHED -> emptyList()
         }
-        _hiddenByFilterCount.value = (totalBeforeFilter - filteredFolders.size - finalNonVideos.size - sortedVideos.size).coerceAtLeast(0)
+        val finalImages = when (filterVal) {
+            BrowseFilter.ALL -> sortedImages
+            BrowseFilter.VIDEO_ONLY -> sortedImages
+            BrowseFilter.UNWATCHED -> sortedImages
+        }
+        _hiddenByFilterCount.value = (totalBeforeFilter - filteredFolders.size - finalNonVideos.size - finalImages.size - sortedVideos.size).coerceAtLeast(0)
 
-        (filteredFolders + finalNonVideos + sortedVideos).distinctBy { it.relativePath }
+        (filteredFolders + finalNonVideos + finalImages + sortedVideos).distinctBy { it.relativePath }
     }
 
     fun setFolder(folder: String) {
@@ -454,10 +494,24 @@ class BrowserViewModel @Inject constructor(
 
     fun setSortMode(mode: SortMode) {
         _sortMode.value = mode
+        viewModelScope.launch {
+            try {
+                userPrefs.setDefaultSortMode(mode.name)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save sort mode", e)
+            }
+        }
     }
 
     fun setFilter(filter: BrowseFilter) {
         _filter.value = filter
+        viewModelScope.launch {
+            try {
+                userPrefs.setDefaultFilter(filter.name)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save filter", e)
+            }
+        }
     }
 
     fun setViewMode(mode: ViewMode) {
@@ -503,30 +557,15 @@ class BrowserViewModel @Inject constructor(
     }
 
     override fun updateStar(videoItemId: Long, star: Int) {
-        viewModelScope.launch {
-            try {
-                videoRepository.updateStar(videoItemId, star)
-                _refreshTrigger.value++
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to update star", e)
-                _error.value = e.message
-            }
-        }
+        fileOps.updateStar(videoItemId, star, viewModelScope, _error) { _refreshTrigger.value++ }
     }
 
     override fun updateStarByPath(relativePath: String, star: Int) {
-        viewModelScope.launch {
-            try {
-                videoRepository.updateStarByPath(relativePath, star)
-                _refreshTrigger.value++
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to update star by path", e)
-                _error.value = e.message
-            }
-        }
+        fileOps.updateStarByPath(relativePath, star, viewModelScope, _error) { _refreshTrigger.value++ }
     }
 
-    override suspend fun getRecursiveFolderStats(folderPath: String) = videoRepository.getRecursiveFolderStats(folderPath)
+    override suspend fun getRecursiveFolderStats(folderPath: String): FolderStats =
+        fileOps.getRecursiveFolderStats(folderPath)
 
     suspend fun loadSubFolders(folderPath: String): List<DirectoryNode> = withContext(Dispatchers.Default) {
         val subDirs = videoRepository.getSubFoldersOnce(folderPath)
@@ -542,22 +581,14 @@ class BrowserViewModel @Inject constructor(
     }
 
     override fun markFolderRead(folderPath: String, read: Boolean) {
-        viewModelScope.launch {
-            try {
-                playbackRepository.markFolderCompleted(folderPath, read)
-                _refreshTrigger.value++
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to mark folder read", e)
-                _error.value = e.message
-            }
-        }
+        fileOps.markFolderRead(folderPath, read, viewModelScope, _error) { _refreshTrigger.value++ }
     }
 
     fun createFolder(parentPath: String, folderName: String) {
         viewModelScope.launch {
             try {
                 if (parentPath.isNotEmpty() && isFileInBaseDir(parentPath)) {
-                    _error.value = "同步基目录内无法手动创建文件夹"
+                    _error.value = context.getString(R.string.error_cannot_create_in_base_dir)
                     return@launch
                 }
                 val newDir = if (parentPath.isEmpty()) {
@@ -566,11 +597,11 @@ class BrowserViewModel @Inject constructor(
                     File(File(storagePaths.userdataRoot, parentPath), folderName)
                 }
                 if (newDir.exists()) {
-                    _error.value = "文件夹已存在"
+                    _error.value = context.getString(R.string.error_folder_exists)
                     return@launch
                 }
                 if (!newDir.mkdirs()) {
-                    _error.value = "创建文件夹失败"
+                    _error.value = context.getString(R.string.error_create_folder_failed)
                     return@launch
                 }
                 _refreshTrigger.value++
@@ -582,39 +613,7 @@ class BrowserViewModel @Inject constructor(
     }
 
     override fun deleteFolder(path: String) {
-        viewModelScope.launch {
-            try {
-                val dir = File(storagePaths.userdataRoot, path)
-                val isBase = syncRelationRepository.getByLocalBasePath(path) != null
-                if (isBase) {
-                    _error.value = "同步基目录不能删除，请先删除对应的同步关系"
-                    return@launch
-                }
-                val allBasePaths = syncRelationRepository.getAllBasePaths()
-                val hasDescendantBase = allBasePaths.any { basePath ->
-                    basePath.startsWith("$path/")
-                }
-                if (hasDescendantBase) {
-                    _error.value = "文件夹内包含同步基目录，请先删除对应的同步关系"
-                    return@launch
-                }
-                if (isFileInBaseDir(path)) {
-                    _error.value = "同步目录内的文件夹不能手动删除"
-                    return@launch
-                }
-                if (!dir.exists() || !dir.isDirectory) {
-                    _error.value = "文件夹不存在"
-                    return@launch
-                }
-                videoRepository.deleteByFolderPath(path)
-                playbackRepository.deleteByFolderPath(path)
-                dir.deleteRecursively()
-                _refreshTrigger.value++
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to delete folder", e)
-                _error.value = e.message
-            }
-        }
+        fileOps.deleteFolder(path, basePaths.value, viewModelScope, _error) { _refreshTrigger.value++ }
     }
 
     fun clearError() {
@@ -656,15 +655,20 @@ class BrowserViewModel @Inject constructor(
             fileName = item.name,
             localAbsolutePath = file.absolutePath,
             fileSize = file.length(),
-            syncRelationId = 0
+            syncRelationId = 0,
+            mediaType = when {
+                isImageFile(item.name) -> "IMAGE"
+                isVideoFile(item.name) -> "VIDEO"
+                else -> "OTHER"
+            }
         )
         val id = videoRepository.upsert(entity)
 
-        // Trigger metadata extraction in the background
         val saved = videoRepository.getById(id)
         if (saved != null) {
             withContext(Dispatchers.IO) {
-                videoMetadataExtractor.extractAndSave(saved)
+                if (isImageFile(saved.fileName)) imageMetadataExtractor.extractAndSave(saved)
+                else videoMetadataExtractor.extractAndSave(saved)
             }
         }
         return id
@@ -676,71 +680,26 @@ class BrowserViewModel @Inject constructor(
             .mapNotNull { it.videoItemId }
     }
 
+    fun getFolderImageIds(): List<Long> {
+        return browseItems.value
+            .filter { !it.isDirectory && it.videoItemId != null && isImageFile(it.name) }
+            .mapNotNull { it.videoItemId }
+    }
+
     override fun toggleTrashed(videoItemId: Long) {
-        viewModelScope.launch {
-            try {
-                val video = videoRepository.getById(videoItemId)
-                if (video == null || !isFileInBaseDir(video.relativePath)) {
-                    _error.value = "仅同步基目录内的文件可标记回收站"
-                    return@launch
-                }
-                playbackRepository.toggleTrashed(videoItemId)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to toggle trashed", e)
-                _error.value = e.message
-            }
-        }
+        fileOps.toggleTrashed(videoItemId, basePaths.value, viewModelScope, _error)
     }
 
     override fun isFileInBaseDir(relativePath: String): Boolean {
-        val basePathsList = basePaths.value.map { it.relation.localBasePath }
-        return basePathsList.any { basePath ->
-            relativePath.startsWith("$basePath/") || relativePath == basePath
-        }
+        return fileOps.isFileInBaseDir(relativePath, basePaths.value)
     }
 
     override fun deleteFile(relativePath: String) {
-        viewModelScope.launch {
-            try {
-                val video = videoRepository.getByRelativePath(relativePath)
-                if (video != null) {
-                    playbackRepository.deleteByVideoId(video.id)
-                    videoRepository.deleteByRelativePath(relativePath)
-                }
-                val file = File(storagePaths.userdataRoot, relativePath)
-                if (file.exists()) file.delete()
-                _refreshTrigger.value++
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to delete file", e)
-                _error.value = e.message
-            }
-        }
+        fileOps.deleteFile(relativePath, viewModelScope, _error) { _refreshTrigger.value++ }
     }
 
-    override suspend fun buildShareIntent(videoItemId: Long): Intent? {
-        val video = videoRepository.getById(videoItemId) ?: return null
-        val file = File(video.localAbsolutePath)
-        if (!file.exists()) return null
-
-        return try {
-            val uri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                file
-            )
-
-            val mimeType = getMimeType(video.fileName)
-            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = mimeType
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-
-            Intent.createChooser(shareIntent, "分享文件")
-        } catch (e: Exception) {
-            null
-        }
-    }
+    override suspend fun buildShareIntent(videoItemId: Long): Intent? =
+        fileOps.buildShareIntent(videoItemId)
 
     companion object {
         private const val TAG = "BrowserViewModel"

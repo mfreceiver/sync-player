@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.browser
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -13,6 +14,10 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.items
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,11 +53,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -72,7 +80,10 @@ import cn.vectory.syncplayer.ui.components.VideoGridItem
 import cn.vectory.syncplayer.ui.components.gridVerticalScrollbar
 import cn.vectory.syncplayer.ui.components.verticalScrollbar
 import cn.vectory.syncplayer.ui.util.buildMetadataLineWithoutExtension
+import cn.vectory.syncplayer.ui.util.buildImageMetadataLine
 import cn.vectory.syncplayer.ui.util.isVideoFile
+import cn.vectory.syncplayer.ui.util.isImageFile
+import cn.vectory.syncplayer.R
 import kotlinx.coroutines.launch
 import java.lang.Math
 
@@ -82,6 +93,7 @@ fun BrowserScreen(
     viewModel: BrowserViewModel = hiltViewModel(),
     currentFolder: String = "",
     onNavigateToPlayer: (videoItemId: Long, videoIds: List<Long>) -> Unit,
+    onNavigateToImageViewer: (imageItemId: Long, imageIds: List<Long>) -> Unit = { _, _ -> },
     onNavigateToSearch: () -> Unit,
     onNavigateToPlaybackSettings: () -> Unit,
     onNavigateToSyncPreview: (relationId: Long) -> Unit,
@@ -141,7 +153,7 @@ fun BrowserScreen(
                         }) {
                             Icon(
                                 imageVector = Icons.Default.Settings,
-                                contentDescription = "设置"
+                                contentDescription = stringResource(R.string.browser_settings)
                             )
                         }
                     } else {
@@ -150,7 +162,7 @@ fun BrowserScreen(
                         }) {
                             Icon(
                                 imageVector = Icons.Default.Home,
-                                contentDescription = "根目录"
+                                contentDescription = stringResource(R.string.browser_root_dir)
                             )
                         }
                     }
@@ -180,7 +192,7 @@ fun BrowserScreen(
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.Sync,
-                                    contentDescription = "同步"
+                                    contentDescription = stringResource(R.string.browser_sync)
                                 )
                             }
                         }
@@ -189,7 +201,7 @@ fun BrowserScreen(
                         }) {
                             Icon(
                                 imageVector = Icons.Default.Search,
-                                contentDescription = "搜索"
+                                contentDescription = stringResource(R.string.browser_search)
                             )
                         }
                         Box {
@@ -209,169 +221,31 @@ fun BrowserScreen(
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.FilterList,
-                                    contentDescription = "排序筛选",
+                                    contentDescription = stringResource(R.string.browser_sort_filter),
                                     tint = if (isAdvancedFilterActive) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface
                                 )
                             }
-                            DropdownMenu(
+                            SortFilterDropdown(
                                 expanded = showSortMenu,
-                                onDismissRequest = { showSortMenu = false },
-                                modifier = Modifier.widthIn(max = 260.dp)
-                            ) {
-                                Text(
-                                    "排序",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp)
-                                )
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    SortFieldChip(
-                                        selected = sortMode == BrowserViewModel.SortMode.FILENAME_ASC || sortMode == BrowserViewModel.SortMode.FILENAME_DESC,
-                                        ascending = sortMode == BrowserViewModel.SortMode.FILENAME_ASC,
-                                        mainIcon = Icons.Default.SortByAlpha,
-                                        onClick = {
-                                            val next = when (sortMode) {
-                                                BrowserViewModel.SortMode.FILENAME_ASC -> BrowserViewModel.SortMode.FILENAME_DESC
-                                                else -> BrowserViewModel.SortMode.FILENAME_ASC
-                                            }
-                                            viewModel.setSortMode(next)
-                                        }
-                                    )
-                                    SortFieldChip(
-                                        selected = sortMode == BrowserViewModel.SortMode.DURATION_ASC || sortMode == BrowserViewModel.SortMode.DURATION_DESC,
-                                        ascending = sortMode == BrowserViewModel.SortMode.DURATION_ASC,
-                                        mainIcon = Icons.Default.Schedule,
-                                        onClick = {
-                                            val next = when (sortMode) {
-                                                BrowserViewModel.SortMode.DURATION_ASC -> BrowserViewModel.SortMode.DURATION_DESC
-                                                else -> BrowserViewModel.SortMode.DURATION_ASC
-                                            }
-                                            viewModel.setSortMode(next)
-                                        }
-                                    )
-                                    SortFieldChip(
-                                        selected = sortMode == BrowserViewModel.SortMode.FILE_SIZE_ASC || sortMode == BrowserViewModel.SortMode.FILE_SIZE_DESC,
-                                        ascending = sortMode == BrowserViewModel.SortMode.FILE_SIZE_ASC,
-                                        mainIcon = Icons.Default.SdCard,
-                                        onClick = {
-                                            val next = when (sortMode) {
-                                                BrowserViewModel.SortMode.FILE_SIZE_ASC -> BrowserViewModel.SortMode.FILE_SIZE_DESC
-                                                else -> BrowserViewModel.SortMode.FILE_SIZE_ASC
-                                            }
-                                            viewModel.setSortMode(next)
-                                        }
-                                    )
-                                }
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                                Text(
-                                    "筛选",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
-                                )
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    IconOptionChip(
-                                        selected = filter == BrowserViewModel.BrowseFilter.ALL,
-                                        onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.ALL); showSortMenu = false }
-                                    ) { Icon(Icons.AutoMirrored.Filled.InsertDriveFile, null, modifier = Modifier.size(20.dp)) }
-                                    IconOptionChip(
-                                        selected = filter == BrowserViewModel.BrowseFilter.VIDEO_ONLY,
-                                        onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.VIDEO_ONLY); showSortMenu = false }
-                                    ) { Icon(Icons.Default.VideoFile, null, modifier = Modifier.size(20.dp)) }
-                                    IconOptionChip(
-                                        selected = filter == BrowserViewModel.BrowseFilter.UNWATCHED,
-                                        onClick = { viewModel.setFilter(BrowserViewModel.BrowseFilter.UNWATCHED); showSortMenu = false }
-                                    ) { Icon(Icons.Default.PlayCircleOutline, null, modifier = Modifier.size(20.dp)) }
-                                }
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                                if (browseMode == BrowserViewModel.BrowseMode.FILE || folder.isEmpty()) {
-                                    Text(
-                                        "浏览",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
-                                    )
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        IconOptionChip(
-                                            selected = browseMode == BrowserViewModel.BrowseMode.DIRECTORY,
-                                            onClick = { viewModel.setBrowseMode(BrowserViewModel.BrowseMode.DIRECTORY); showSortMenu = false }
-                                        ) { Icon(Icons.Default.FolderOpen, null, modifier = Modifier.size(20.dp)) }
-                                        IconOptionChip(
-                                            selected = browseMode == BrowserViewModel.BrowseMode.FILE,
-                                            onClick = { viewModel.setBrowseMode(BrowserViewModel.BrowseMode.FILE); showSortMenu = false }
-                                        ) { Icon(Icons.Default.VideoFile, null, modifier = Modifier.size(20.dp)) }
-                                    }
-                                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                                }
-                                Text(
-                                    "视图",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
-                                )
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    IconOptionChip(
-                                        selected = viewMode == BrowserViewModel.ViewMode.LIST,
-                                        onClick = { viewModel.setViewMode(BrowserViewModel.ViewMode.LIST); showSortMenu = false }
-                                    ) { Icon(Icons.AutoMirrored.Filled.ViewList, null, modifier = Modifier.size(20.dp)) }
-                                    IconOptionChip(
-                                        selected = viewMode == BrowserViewModel.ViewMode.GRID,
-                                        onClick = { viewModel.setViewMode(BrowserViewModel.ViewMode.GRID); showSortMenu = false }
-                                    ) { Icon(Icons.Default.Apps, null, modifier = Modifier.size(20.dp)) }
-                                }
-                                if (viewMode == BrowserViewModel.ViewMode.GRID) {
-                                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        listOf(1, 2, 3, 4, 5).forEach { col ->
-                                            GridColumnChip(
-                                                selected = gridColumns == col,
-                                                onClick = { viewModel.setGridColumns(col) },
-                                                label = "$col"
-                                            )
-                                        }
-                                    }
-                                }
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp).fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    TextButton(
-                                        onClick = {
-                                            showSortMenu = false
-                                            showAdvancedFilter = true
-                                        }
-                                    ) {
-                                        Text("高级筛选", style = MaterialTheme.typography.bodySmall)
-                                    }
-                                    if (starFilterMode != BrowserViewModel.StarFilterMode.OFF) {
-                                        TextButton(
-                                            onClick = {
-                                                viewModel.setStarFilterMode(BrowserViewModel.StarFilterMode.OFF)
-                                                viewModel.setStarFilterValue(0)
-                                            }
-                                        ) {
-                                            Text("清除", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                                        }
-                                    }
-                                }
-                            }
+                                onDismiss = { showSortMenu = false },
+                                sortMode = sortMode,
+                                onSortChange = { viewModel.setSortMode(it) },
+                                filter = filter,
+                                onFilterChange = { viewModel.setFilter(it) },
+                                browseMode = browseMode,
+                                onBrowseModeChange = { viewModel.setBrowseMode(it) },
+                                viewMode = viewMode,
+                                onViewModeChange = { viewModel.setViewMode(it) },
+                                gridColumns = gridColumns,
+                                onGridColumnsChange = { viewModel.setGridColumns(it) },
+                                starFilterMode = starFilterMode,
+                                onClearStarFilter = {
+                                    viewModel.setStarFilterMode(BrowserViewModel.StarFilterMode.OFF)
+                                    viewModel.setStarFilterValue(0)
+                                },
+                                onAdvancedFilter = { showAdvancedFilter = true },
+                                folder = folder
+                            )
                         }
 
                     }
@@ -380,21 +254,15 @@ fun BrowserScreen(
         ) { paddingValues ->
             if (viewMode == BrowserViewModel.ViewMode.GRID) {
                 val gridState = rememberLazyGridState()
-                var previousFolder by remember { mutableStateOf(folder) }
-                LaunchedEffect(folder) {
-                    if (previousFolder != folder) {
-                        viewModel.saveScrollPosition(previousFolder, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
-                    }
-                    previousFolder = folder
-                }
-                LaunchedEffect(browseItemsFolder) {
-                    if (browseItemsFolder == folder && browseItems.isNotEmpty()) {
-                        val saved: Pair<Int, Int>? = viewModel.getScrollPosition(folder)
-                        if (saved != null) {
-                            gridState.scrollToItem(saved.first, saved.second)
-                        }
-                    }
-                }
+                BrowseScrollTracker(
+                    folder = folder,
+                    browseItemsFolder = browseItemsFolder,
+                    browseItemsNotEmpty = browseItems.isNotEmpty(),
+                    currentScrollPosition = { gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset },
+                    saveScrollPosition = { f, i, o -> viewModel.saveScrollPosition(f, i, o) },
+                    getSavedScrollPosition = { f -> viewModel.getScrollPosition(f) },
+                    scrollToPosition = { i, o -> gridState.scrollToItem(i, o) }
+                )
                 LazyVerticalGrid(
                     columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(gridColumns),
                     state = gridState,
@@ -436,21 +304,37 @@ fun BrowserScreen(
                                 isCompleted = item.isCompleted,
                                 isTrashed = item.isTrashed,
                                 isVideo = isVideoFile(item.name),
+                                isImage = isImageFile(item.name),
                                 star = item.star,
                                 onClick = {
-                                    if (isVideoFile(item.name)) {
-                                        viewModel.saveScrollPosition(folder, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
-                                        val id = item.videoItemId
-                                        if (id != null) {
-                                            onNavigateToPlayer(id, viewModel.getFolderVideoIds())
-                                        } else {
-                                            scope.launch {
-                                                val newId = viewModel.ensureVideoRecord(item)
-                                                if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds())
+                                    when {
+                                        isVideoFile(item.name) -> {
+                                            viewModel.saveScrollPosition(folder, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
+                                            val id = item.videoItemId
+                                            if (id != null) {
+                                                onNavigateToPlayer(id, viewModel.getFolderVideoIds())
+                                            } else {
+                                                scope.launch {
+                                                    val newId = viewModel.ensureVideoRecord(item)
+                                                    if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds())
+                                                }
                                             }
                                         }
-                                    } else {
-                                        scope.launch { snackbarHostState.showSnackbar("该文件无法播放") }
+                                        isImageFile(item.name) -> {
+                                            viewModel.saveScrollPosition(folder, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
+                                            val id = item.videoItemId
+                                            if (id != null) {
+                                                onNavigateToImageViewer(id, viewModel.getFolderImageIds())
+                                            } else {
+                                                scope.launch {
+                                                    val newId = viewModel.ensureVideoRecord(item)
+                                                    if (newId > 0) onNavigateToImageViewer(newId, viewModel.getFolderImageIds())
+                                                }
+                                            }
+                                        }
+                                        else -> {
+                                            scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
+                                        }
                                     }
                                 },
                                 onLongClick = { showContextMenu = item }
@@ -460,16 +344,7 @@ fun BrowserScreen(
 
                     if (browseItems.isNotEmpty() && filter != BrowserViewModel.BrowseFilter.ALL && hiddenByFilterCount > 0) {
                         item(span = { GridItemSpan(maxLineSpan) }) {
-                            Box(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "已通过筛选隐藏${hiddenByFilterCount}个文件",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                            FilterCountFooter(hiddenByFilterCount)
                         }
                     }
 
@@ -481,45 +356,96 @@ fun BrowserScreen(
                                     .height(200.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.FolderOpen,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                        modifier = Modifier.size(48.dp)
-                                    )
-                                    Text(
-                                        text = if (filter != BrowserViewModel.BrowseFilter.ALL && hiddenByFilterCount > 0)
-                                            "已通过筛选隐藏${hiddenByFilterCount}个文件"
-                                        else "当前目录为空",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                                EmptyBrowseContent(filter, hiddenByFilterCount)
                             }
+                        }
+                    }
+                }
+            } else if (viewMode == BrowserViewModel.ViewMode.STAGGERED_GRID) {
+                val staggeredState = rememberLazyStaggeredGridState()
+                LazyVerticalStaggeredGrid(
+                    columns = StaggeredGridCells.Fixed(gridColumns),
+                    state = staggeredState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues),
+                    contentPadding = PaddingValues(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalItemSpacing = 8.dp
+                ) {
+                    items(
+                        items = browseItems,
+                        key = { it.relativePath }
+                    ) { item ->
+                        if (item.isDirectory) {
+                            FolderGridItem(
+                                folderName = item.name,
+                                isSyncBaseDir = item.isSyncBaseDir,
+                                onClick = { viewModel.setFolder(item.relativePath) },
+                                onLongClick = { showFolderContextMenu = item },
+                                thumbnailPaths = item.thumbnailPaths,
+                                gridDensity = when { gridColumns <= 2 -> 3 else -> 2 }
+                            )
+                        } else {
+                            VideoGridItem(
+                                thumbnailPath = item.thumbnailPath,
+                                fileName = item.name,
+                                duration = item.duration,
+                                width = item.width,
+                                height = item.height,
+                                playbackPosition = item.playbackPosition,
+                                playbackDuration = item.playbackDuration,
+                                isCompleted = item.isCompleted,
+                                isTrashed = item.isTrashed,
+                                isVideo = isVideoFile(item.name),
+                                isImage = isImageFile(item.name),
+                                star = item.star,
+                                staggeredMode = true,
+                                onClick = {
+                                    when {
+                                        isVideoFile(item.name) -> {
+                                            val id = item.videoItemId
+                                            if (id != null) {
+                                                onNavigateToPlayer(id, viewModel.getFolderVideoIds())
+                                            } else {
+                                                scope.launch {
+                                                    val newId = viewModel.ensureVideoRecord(item)
+                                                    if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds())
+                                                }
+                                            }
+                                        }
+                                        isImageFile(item.name) -> {
+                                            val id = item.videoItemId
+                                            if (id != null) {
+                                                onNavigateToImageViewer(id, viewModel.getFolderImageIds())
+                                            } else {
+                                                scope.launch {
+                                                    val newId = viewModel.ensureVideoRecord(item)
+                                                    if (newId > 0) onNavigateToImageViewer(newId, viewModel.getFolderImageIds())
+                                                }
+                                            }
+                                        }
+                                        else -> {
+                                            scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
+                                        }
+                                    }
+                                },
+                                onLongClick = { showContextMenu = item }
+                            )
                         }
                     }
                 }
             } else {
                 val listState = rememberLazyListState()
-                var previousFolder by remember { mutableStateOf(folder) }
-                LaunchedEffect(folder) {
-                    if (previousFolder != folder) {
-                        viewModel.saveScrollPosition(previousFolder, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
-                    }
-                    previousFolder = folder
-                }
-                LaunchedEffect(browseItemsFolder) {
-                    if (browseItemsFolder == folder && browseItems.isNotEmpty()) {
-                        val saved: Pair<Int, Int>? = viewModel.getScrollPosition(folder)
-                        if (saved != null) {
-                            listState.scrollToItem(saved.first, saved.second)
-                        }
-                    }
-                }
+                BrowseScrollTracker(
+                    folder = folder,
+                    browseItemsFolder = browseItemsFolder,
+                    browseItemsNotEmpty = browseItems.isNotEmpty(),
+                    currentScrollPosition = { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset },
+                    saveScrollPosition = { f, i, o -> viewModel.saveScrollPosition(f, i, o) },
+                    getSavedScrollPosition = { f -> viewModel.getScrollPosition(f) },
+                    scrollToPosition = { i, o -> listState.scrollToItem(i, o) }
+                )
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
@@ -543,19 +469,34 @@ fun BrowserScreen(
                             FileItem(
                                 item = item,
                                 onClick = {
-                                    if (isVideoFile(item.name)) {
-                                        viewModel.saveScrollPosition(folder, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
-                                        val id = item.videoItemId
-                                        if (id != null) {
-                                            onNavigateToPlayer(id, viewModel.getFolderVideoIds())
-                                        } else {
-                                            scope.launch {
-                                                val newId = viewModel.ensureVideoRecord(item)
-                                                if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds())
+                                    when {
+                                        isVideoFile(item.name) -> {
+                                            viewModel.saveScrollPosition(folder, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
+                                            val id = item.videoItemId
+                                            if (id != null) {
+                                                onNavigateToPlayer(id, viewModel.getFolderVideoIds())
+                                            } else {
+                                                scope.launch {
+                                                    val newId = viewModel.ensureVideoRecord(item)
+                                                    if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds())
+                                                }
                                             }
                                         }
-                                    } else {
-                                        scope.launch { snackbarHostState.showSnackbar("该文件无法播放") }
+                                        isImageFile(item.name) -> {
+                                            viewModel.saveScrollPosition(folder, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
+                                            val id = item.videoItemId
+                                            if (id != null) {
+                                                onNavigateToImageViewer(id, viewModel.getFolderImageIds())
+                                            } else {
+                                                scope.launch {
+                                                    val newId = viewModel.ensureVideoRecord(item)
+                                                    if (newId > 0) onNavigateToImageViewer(newId, viewModel.getFolderImageIds())
+                                                }
+                                            }
+                                        }
+                                        else -> {
+                                            scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
+                                        }
                                     }
                                 },
                                 onLongClick = { showContextMenu = item }
@@ -565,16 +506,7 @@ fun BrowserScreen(
 
                     if (browseItems.isNotEmpty() && filter != BrowserViewModel.BrowseFilter.ALL && hiddenByFilterCount > 0) {
                         item {
-                            Box(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "已通过筛选隐藏${hiddenByFilterCount}个文件",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                            FilterCountFooter(hiddenByFilterCount)
                         }
                     }
 
@@ -587,27 +519,10 @@ fun BrowserScreen(
                                     .padding(vertical = 64.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.FolderOpen,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                        modifier = Modifier.size(48.dp)
-                                    )
-                                    Text(
-                                        text = if (filter != BrowserViewModel.BrowseFilter.ALL && hiddenByFilterCount > 0)
-                                            "已通过筛选隐藏${hiddenByFilterCount}个文件"
-                                        else "当前目录为空",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                                EmptyBrowseContent(filter, hiddenByFilterCount)
                             }
                         }
-                }
+                    }
             }
         }
     }
@@ -634,10 +549,10 @@ fun BrowserScreen(
     if (showAdvancedFilter) {
         AlertDialog(
             onDismissRequest = { showAdvancedFilter = false },
-            title = { Text("高级筛选") },
+            title = { Text(stringResource(R.string.browser_advanced_filter)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("星级", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.browser_star_rating), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -691,7 +606,7 @@ fun BrowserScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showAdvancedFilter = false }) { Text("确定") }
+                TextButton(onClick = { showAdvancedFilter = false }) { Text(stringResource(R.string.common_confirm)) }
             }
         )
     }
@@ -722,6 +637,262 @@ fun BrowserScreen(
             snackbarHostState.showSnackbar(it)
             viewModel.clearError()
         }
+    }
+}
+
+@Composable
+private fun SortFilterDropdown(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    sortMode: BrowserViewModel.SortMode,
+    onSortChange: (BrowserViewModel.SortMode) -> Unit,
+    filter: BrowserViewModel.BrowseFilter,
+    onFilterChange: (BrowserViewModel.BrowseFilter) -> Unit,
+    browseMode: BrowserViewModel.BrowseMode,
+    onBrowseModeChange: (BrowserViewModel.BrowseMode) -> Unit,
+    viewMode: BrowserViewModel.ViewMode,
+    onViewModeChange: (BrowserViewModel.ViewMode) -> Unit,
+    gridColumns: Int,
+    onGridColumnsChange: (Int) -> Unit,
+    starFilterMode: BrowserViewModel.StarFilterMode,
+    onClearStarFilter: () -> Unit,
+    onAdvancedFilter: () -> Unit,
+    folder: String
+) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        modifier = Modifier.widthIn(max = 260.dp)
+    ) {
+        Text(
+            stringResource(R.string.browser_sort),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp)
+        )
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            SortFieldChip(
+                selected = sortMode == BrowserViewModel.SortMode.FILENAME_ASC || sortMode == BrowserViewModel.SortMode.FILENAME_DESC,
+                ascending = sortMode == BrowserViewModel.SortMode.FILENAME_ASC,
+                mainIcon = Icons.Default.SortByAlpha,
+                onClick = {
+                    val next = when (sortMode) {
+                        BrowserViewModel.SortMode.FILENAME_ASC -> BrowserViewModel.SortMode.FILENAME_DESC
+                        else -> BrowserViewModel.SortMode.FILENAME_ASC
+                    }
+                    onSortChange(next)
+                }
+            )
+            SortFieldChip(
+                selected = sortMode == BrowserViewModel.SortMode.DURATION_ASC || sortMode == BrowserViewModel.SortMode.DURATION_DESC,
+                ascending = sortMode == BrowserViewModel.SortMode.DURATION_ASC,
+                mainIcon = Icons.Default.Schedule,
+                onClick = {
+                    val next = when (sortMode) {
+                        BrowserViewModel.SortMode.DURATION_ASC -> BrowserViewModel.SortMode.DURATION_DESC
+                        else -> BrowserViewModel.SortMode.DURATION_ASC
+                    }
+                    onSortChange(next)
+                }
+            )
+            SortFieldChip(
+                selected = sortMode == BrowserViewModel.SortMode.FILE_SIZE_ASC || sortMode == BrowserViewModel.SortMode.FILE_SIZE_DESC,
+                ascending = sortMode == BrowserViewModel.SortMode.FILE_SIZE_ASC,
+                mainIcon = Icons.Default.SdCard,
+                onClick = {
+                    val next = when (sortMode) {
+                        BrowserViewModel.SortMode.FILE_SIZE_ASC -> BrowserViewModel.SortMode.FILE_SIZE_DESC
+                        else -> BrowserViewModel.SortMode.FILE_SIZE_ASC
+                    }
+                    onSortChange(next)
+                }
+            )
+        }
+        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+        Text(
+            stringResource(R.string.browser_filter),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
+        )
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            IconOptionChip(
+                selected = filter == BrowserViewModel.BrowseFilter.ALL,
+                onClick = { onFilterChange(BrowserViewModel.BrowseFilter.ALL); onDismiss() }
+            ) { Icon(Icons.AutoMirrored.Filled.InsertDriveFile, null, modifier = Modifier.size(20.dp)) }
+            IconOptionChip(
+                selected = filter == BrowserViewModel.BrowseFilter.VIDEO_ONLY,
+                onClick = { onFilterChange(BrowserViewModel.BrowseFilter.VIDEO_ONLY); onDismiss() }
+            ) { Icon(Icons.Default.VideoFile, null, modifier = Modifier.size(20.dp)) }
+            IconOptionChip(
+                selected = filter == BrowserViewModel.BrowseFilter.UNWATCHED,
+                onClick = { onFilterChange(BrowserViewModel.BrowseFilter.UNWATCHED); onDismiss() }
+            ) { Icon(Icons.Default.PlayCircleOutline, null, modifier = Modifier.size(20.dp)) }
+        }
+        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+        if (browseMode == BrowserViewModel.BrowseMode.FILE || folder.isEmpty()) {
+                Text(
+                    stringResource(R.string.browser_browse),
+                    style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
+            )
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                IconOptionChip(
+                    selected = browseMode == BrowserViewModel.BrowseMode.DIRECTORY,
+                    onClick = { onBrowseModeChange(BrowserViewModel.BrowseMode.DIRECTORY); onDismiss() }
+                ) { Icon(Icons.Default.FolderOpen, null, modifier = Modifier.size(20.dp)) }
+                IconOptionChip(
+                    selected = browseMode == BrowserViewModel.BrowseMode.FILE,
+                    onClick = { onBrowseModeChange(BrowserViewModel.BrowseMode.FILE); onDismiss() }
+                ) { Icon(Icons.Default.VideoFile, null, modifier = Modifier.size(20.dp)) }
+            }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+        }
+        Text(
+            stringResource(R.string.browser_view),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
+        )
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            IconOptionChip(
+                selected = viewMode == BrowserViewModel.ViewMode.LIST,
+                onClick = { onViewModeChange(BrowserViewModel.ViewMode.LIST); onDismiss() }
+            ) { Icon(Icons.AutoMirrored.Filled.ViewList, null, modifier = Modifier.size(20.dp)) }
+            IconOptionChip(
+                selected = viewMode == BrowserViewModel.ViewMode.GRID,
+                onClick = { onViewModeChange(BrowserViewModel.ViewMode.GRID); onDismiss() }
+            ) { Icon(Icons.Default.Apps, null, modifier = Modifier.size(20.dp)) }
+            IconOptionChip(
+                selected = viewMode == BrowserViewModel.ViewMode.STAGGERED_GRID,
+                onClick = { onViewModeChange(BrowserViewModel.ViewMode.STAGGERED_GRID); onDismiss() }
+            ) {
+                Canvas(modifier = Modifier.size(20.dp)) {
+                    val barWidth = size.width / 5f
+                    val gap = barWidth
+                    drawRect(Color(0xFFFFFFFF), topLeft = Offset(0f, size.height * 0.15f), size = Size(barWidth, size.height * 0.85f))
+                    drawRect(Color(0xFFFFFFFF), topLeft = Offset(barWidth + gap, 0f), size = Size(barWidth, size.height * 0.6f))
+                    drawRect(Color(0xFFFFFFFF), topLeft = Offset(2 * (barWidth + gap), size.height * 0.3f), size = Size(barWidth, size.height * 0.7f))
+                }
+            }
+        }
+        if (viewMode == BrowserViewModel.ViewMode.GRID || viewMode == BrowserViewModel.ViewMode.STAGGERED_GRID) {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                listOf(1, 2, 3, 4, 5).forEach { col ->
+                    GridColumnChip(
+                        selected = gridColumns == col,
+                        onClick = { onGridColumnsChange(col) },
+                        label = "$col"
+                    )
+                }
+            }
+        }
+        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp).fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(
+                onClick = {
+                    onDismiss()
+                    onAdvancedFilter()
+                }
+            ) {
+                Text(stringResource(R.string.browser_advanced_filter), style = MaterialTheme.typography.bodySmall)
+            }
+            if (starFilterMode != BrowserViewModel.StarFilterMode.OFF) {
+                TextButton(
+                    onClick = onClearStarFilter
+                ) {
+                    Text(stringResource(R.string.browser_clear_filter), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BrowseScrollTracker(
+    folder: String,
+    browseItemsFolder: String,
+    browseItemsNotEmpty: Boolean,
+    currentScrollPosition: () -> Pair<Int, Int>,
+    saveScrollPosition: (String, Int, Int) -> Unit,
+    getSavedScrollPosition: (String) -> Pair<Int, Int>?,
+    scrollToPosition: suspend (Int, Int) -> Unit
+) {
+    var previousFolder by remember { mutableStateOf(folder) }
+    LaunchedEffect(folder) {
+        if (previousFolder != folder) {
+            val (index, offset) = currentScrollPosition()
+            saveScrollPosition(previousFolder, index, offset)
+        }
+        previousFolder = folder
+    }
+    LaunchedEffect(browseItemsFolder) {
+        if (browseItemsFolder == folder && browseItemsNotEmpty) {
+            val saved = getSavedScrollPosition(folder)
+            if (saved != null) {
+                scrollToPosition(saved.first, saved.second)
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyBrowseContent(
+    filter: BrowserViewModel.BrowseFilter,
+    hiddenByFilterCount: Int
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Default.FolderOpen,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            modifier = Modifier.size(48.dp)
+        )
+        Text(
+            text = if (filter != BrowserViewModel.BrowseFilter.ALL && hiddenByFilterCount > 0)
+                stringResource(R.string.browser_hidden_by_filter, hiddenByFilterCount)
+            else stringResource(R.string.browser_empty_dir),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun FilterCountFooter(hiddenCount: Int) {
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = stringResource(R.string.browser_hidden_by_filter, hiddenCount),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -760,9 +931,9 @@ private fun FolderItem(
             )
             val infoText = buildString {
                 if (item.videoCount > 0) {
-                    append("视频数：${item.videoCount}")
-                    if (item.playedCount > 0) append(" · 已播放：${item.playedCount}")
-                    if (item.trashedCount > 0) append(" · 回收站：${item.trashedCount}个")
+                    append(stringResource(R.string.browser_video_count, item.videoCount))
+                    if (item.playedCount > 0) append(" · ${stringResource(R.string.browser_played_count, item.playedCount)}")
+                    if (item.trashedCount > 0) append(" · ${stringResource(R.string.browser_trashed_count, item.trashedCount)}")
                 }
             }
             Spacer(Modifier.height(2.dp))
@@ -797,6 +968,7 @@ private fun FileItem(
         Thumbnail(
             thumbnailPath = item.thumbnailPath,
             isVideo = isVideoFile(item.name),
+            isImage = isImageFile(item.name),
             modifier = Modifier
                 .size(40.dp)
                 .clip(RoundedCornerShape(4.dp))
@@ -815,13 +987,22 @@ private fun FileItem(
             overflow = TextOverflow.Ellipsis
         )
 
-            val metadataPrefix = buildMetadataLineWithoutExtension(
-                duration = item.duration,
-                width = item.width,
-                height = item.height,
-                bitrate = item.bitrate,
-                hasGainAdjusted = item.hasGainAdjusted
-            )
+            val metadataPrefix = if (isImageFile(item.name)) {
+                buildImageMetadataLine(
+                    width = item.width,
+                    height = item.height,
+                    dateTaken = item.dateTaken,
+                    fileSize = item.fileSize
+                )
+            } else {
+                buildMetadataLineWithoutExtension(
+                    duration = item.duration,
+                    width = item.width,
+                    height = item.height,
+                    bitrate = item.bitrate,
+                    hasGainAdjusted = item.hasGainAdjusted
+                )
+            }
             val extension = item.name.substringAfterLast('.', "").uppercase()
             val hasContent = metadataPrefix.isNotEmpty() || item.star > 0 || extension.isNotEmpty()
             if (hasContent) {

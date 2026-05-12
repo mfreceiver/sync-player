@@ -131,6 +131,54 @@ internal fun buildMetadataLine(
     return parts.joinToString(" · ")
 }
 
+internal fun buildImageMetadataLine(
+    width: Int?,
+    height: Int?,
+    dateTaken: Long?,
+    fileSize: Long = 0
+): String {
+    val parts = mutableListOf<String>()
+    if (width != null && height != null && width > 0 && height > 0) {
+        parts.add("${width}×${height}")
+    }
+    dateTaken?.let { dt ->
+        if (dt > 0) {
+            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+            parts.add(sdf.format(java.util.Date(dt)))
+        }
+    }
+    if (fileSize > 0) {
+        parts.add(formatFileSize(fileSize))
+    }
+    return parts.joinToString(" · ")
+}
+
+internal fun buildImageMetadataLineWithExtension(
+    width: Int?,
+    height: Int?,
+    dateTaken: Long?,
+    fileSize: Long = 0,
+    extension: String = ""
+): String {
+    val parts = mutableListOf<String>()
+    if (width != null && height != null && width > 0 && height > 0) {
+        parts.add("${width}×${height}")
+    }
+    dateTaken?.let { dt ->
+        if (dt > 0) {
+            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+            parts.add(sdf.format(java.util.Date(dt)))
+        }
+    }
+    if (fileSize > 0) {
+        parts.add(formatFileSize(fileSize))
+    }
+    if (extension.isNotEmpty()) {
+        parts.add(extension.uppercase())
+    }
+    return parts.joinToString(" · ")
+}
+
 internal fun buildMetadataLineWithoutExtension(
     duration: Long?,
     width: Int?,

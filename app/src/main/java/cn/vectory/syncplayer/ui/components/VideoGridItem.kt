@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -66,12 +67,24 @@ internal fun VideoGridItem(
     isCompleted: Boolean,
     isTrashed: Boolean,
     isVideo: Boolean,
+    isImage: Boolean = false,
     star: Int = 0,
+    staggeredMode: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val extendedColors = LocalExtendedColors.current
+
+    val imageAspectRatio = if (isImage && width != null && height != null && width > 0 && height > 0) {
+        width.toFloat() / height.toFloat()
+    } else null
+
+    val thumbnailModifier = if (isImage && imageAspectRatio != null) {
+        Modifier.fillMaxWidth().aspectRatio(imageAspectRatio)
+    } else {
+        Modifier.fillMaxWidth().aspectRatio(4f / 3f)
+    }
 
     Box(
         modifier = modifier
@@ -81,19 +94,29 @@ internal fun VideoGridItem(
                 onLongClick = onLongClick
             )
     ) {
-        GridThumbnail(
-            thumbnailPath = thumbnailPath,
-            isVideo = isVideo,
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(4f / 3f)
-        )
+        if (isImage) {
+            Box(
+                modifier = thumbnailModifier.background(Color(0xFF1A1A1A)),
+                contentAlignment = Alignment.Center
+            ) {
+                GridThumbnail(
+                    thumbnailPath = thumbnailPath,
+                    isVideo = isVideo,
+                    isImage = isImage,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        } else {
+            GridThumbnail(
+                thumbnailPath = thumbnailPath,
+                isVideo = isVideo,
+                isImage = isImage,
+                modifier = thumbnailModifier
+            )
+        }
 
         Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(4f / 3f)
-                .align(Alignment.TopStart)
+            modifier = thumbnailModifier.align(Alignment.TopStart)
         ) {
             val gradientHeight = size.height * 0.35f
             drawRect(
@@ -116,7 +139,6 @@ internal fun VideoGridItem(
             }
 
             if (progress > 0f) {
-                // Always use the blue (primary) color for the progress bar
                 val progressColor = MaterialTheme.colorScheme.primary
 
                 Canvas(
@@ -125,13 +147,11 @@ internal fun VideoGridItem(
                         .align(Alignment.BottomCenter)
                 ) {
                     val barHeight = 3.dp.toPx()
-                    // Track/background bar remains unchanged
                     drawRect(
                         color = Color.White.copy(alpha = 0.25f),
                         topLeft = Offset(0f, size.height - barHeight),
                         size = Size(size.width, barHeight)
                     )
-                    // Filled progress bar with semi-transparency
                     drawRect(
                         color = progressColor.copy(alpha = 0.6f),
                         topLeft = Offset(0f, size.height - barHeight),
@@ -142,7 +162,7 @@ internal fun VideoGridItem(
         }
 
         val showDuration = duration != null && duration > 0 && isVideoFile(fileName)
-        val showFileName = !isVideo || !showDuration
+        val showFileName = !showDuration
 
         if (showDuration) {
             Text(
@@ -164,12 +184,12 @@ internal fun VideoGridItem(
 
         if (showFileName) {
             Text(
-                text = fileName.substringBeforeLast('.'),
+                text = truncateFileName(fileName, headChars = 5, tailChars = 5),
                 color = Color.White,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                overflow = TextOverflow.Clip,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .padding(start = 4.dp, bottom = 6.dp)
@@ -229,6 +249,7 @@ internal fun VideoGridItem(
 private fun GridThumbnail(
     thumbnailPath: String?,
     isVideo: Boolean,
+    isImage: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -243,17 +264,34 @@ private fun GridThumbnail(
                     .build(),
                 contentDescription = "缩略图",
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
+                contentScale = if (isImage) ContentScale.Fit else ContentScale.Crop
             )
         } else {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Icon(
-                    imageVector = if (isVideo) Icons.Default.Movie else Icons.AutoMirrored.Filled.InsertDriveFile,
-                    contentDescription = if (isVideo) "视频" else "文件",
+                    imageVector = when {
+                        isVideo -> Icons.Default.Movie
+                        isImage -> Icons.Default.Image
+                        else -> Icons.AutoMirrored.Filled.InsertDriveFile
+                    },
+                    contentDescription = when {
+                        isVideo -> "视频"
+                        isImage -> "图片"
+                        else -> "文件"
+                    },
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                     modifier = Modifier.size(32.dp)
                 )
             }
         }
     }
+}
+
+private fun truncateFileName(fileName: String, headChars: Int = 5, tailChars: Int = 5): String {
+    val nameWithoutExt = fileName.substringBeforeLast('.')
+    val ext = fileName.substringAfterLast('.', "")
+    if (nameWithoutExt.length <= headChars + tailChars + 3) return nameWithoutExt
+    val head = nameWithoutExt.take(headChars)
+    val tail = nameWithoutExt.takeLast(tailChars)
+    return if (ext.isNotEmpty()) "$head…$tail" else "$head…$tail"
 }

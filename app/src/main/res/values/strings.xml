@@ -3,4 +3,255 @@
     <string name="sync_notification_channel">文件同步</string>
     <string name="sync_notification_title">正在同步文件…</string>
     <string name="share_video">分享视频</string>
+
+    <!-- Common -->
+    <string name="common_close">关闭</string>
+    <string name="common_retry">重试</string>
+    <string name="common_cancel">取消</string>
+    <string name="common_delete">删除</string>
+    <string name="common_save">保存</string>
+    <string name="common_saving">保存中…</string>
+    <string name="common_stop">停止</string>
+    <string name="common_back">返回</string>
+    <string name="common_confirm">确定</string>
+    <string name="common_create">创建</string>
+    <string name="unknown_error">未知错误</string>
+
+    <!-- Player -->
+    <string name="player_speed_up">加速</string>
+    <string name="player_direction">方向</string>
+    <string name="player_speed">速度</string>
+
+    <!-- Browser -->
+    <string name="browser_settings">设置</string>
+    <string name="browser_root_dir">根目录</string>
+    <string name="browser_sync">同步</string>
+    <string name="browser_search">搜索</string>
+    <string name="browser_sort_filter">排序筛选</string>
+    <string name="browser_sort">排序</string>
+    <string name="browser_filter">筛选</string>
+    <string name="browser_browse">浏览</string>
+    <string name="browser_view">视图</string>
+    <string name="browser_advanced_filter">高级筛选</string>
+    <string name="browser_star_rating">星级</string>
+    <string name="browser_clear_filter">清除</string>
+    <string name="browser_cannot_play">该文件无法播放</string>
+    <string name="browser_no_viewer">该文件类型不支持预览</string>
+    <string name="browser_empty_dir">当前目录为空</string>
+    <string name="browser_hidden_by_filter">已通过筛选隐藏%d个文件</string>
+    <string name="browser_video_count">视频数：%d</string>
+    <string name="browser_played_count">已播放：%d</string>
+    <string name="browser_trashed_count">回收站：%d个</string>
+    <string name="browser_select_directory">选择目录</string>
+    <string name="browser_root_label">根目录</string>
+    <string name="browser_collapse">折叠</string>
+    <string name="browser_expand">展开</string>
+
+    <!-- Search -->
+    <string name="search_title">搜索</string>
+    <string name="search_hint">搜索文件名或文件夹名</string>
+    <string name="search_clear">清除</string>
+    <string name="search_scope_label">搜索范围：%s</string>
+    <string name="search_scope_all">全部</string>
+    <string name="search_scope_files">仅文件</string>
+    <string name="search_scope_folders">仅文件夹</string>
+    <string name="search_empty_hint">输入关键词开始搜索</string>
+    <string name="search_no_results">未找到匹配的结果</string>
+
+    <!-- Sync Preview -->
+    <string name="sync_preview_title">同步预览</string>
+    <string name="sync_preview_switch_relation">切换同步关系</string>
+    <string name="sync_preview_download">下载</string>
+    <string name="sync_preview_delete_label">删除</string>
+    <string name="sync_preview_hint">按下方预览按钮查看同步内容</string>
+    <string name="sync_preview_button">预览</string>
+    <string name="sync_preview_confirm_download">确认下载</string>
+    <string name="sync_preview_confirm_delete">确认删除</string>
+    <string name="sync_preview_completed">同步已完成</string>
+    <string name="sync_preview_up_to_date">已同步，无需操作</string>
+    <string name="sync_preview_rescan">重新扫描</string>
+    <string name="sync_preview_download_summary">将下载 %1$d 个文件 (%2$s)，删除 %3$d 个本地文件 (%4$s)</string>
+    <string name="sync_preview_delete_summary">%1$d 个预删除文件将从本地和远端同时删除 (%2$s)</string>
+    <string name="sync_preview_delete_warning">此操作不可恢复！删除后文件将从本地和远端永久移除</string>
+    <string name="sync_preview_warning">警告</string>
+    <string name="sync_preview_completed_files">已完成 %1$d / %2$d 个文件</string>
+    <string name="sync_preview_remaining">剩余 %d 个</string>
+    <string name="sync_preview_downloading">正在下载 %d 个文件</string>
+    <string name="sync_preview_content_desc_download">下载</string>
+    <string name="sync_preview_content_desc_delete">删除</string>
+
+    <!-- Settings -->
+    <string name="settings_title">设置</string>
+    <string name="settings_configure_source">配置数据源</string>
+    <string name="settings_configure_sync">配置同步关系</string>
+    <string name="settings_quick_recycle">快捷回收</string>
+    <string name="settings_quick_recycle_desc">启用时双击屏幕中部标记回收</string>
+    <string name="settings_volume_balance">音量均衡</string>
+    <string name="settings_volume_balance_desc">点击进行增益分析</string>
+    <string name="settings_saf">安卓存储框架</string>
+    <string name="settings_app_lock">应用安全锁</string>
+    <string name="settings_no_auth">设备未设置任何认证方式</string>
+    <string name="settings_auth_support">当前支持: %s</string>
+    <string name="settings_rebuild_metadata">重建元数据</string>
+    <string name="settings_rebuild_metadata_desc">扫描本地文件并重建数据库记录</string>
+    <string name="settings_app_version">应用版本</string>
+
+    <!-- Sync Source -->
+    <string name="source_list_title">数据源</string>
+    <string name="source_add">新增</string>
+    <string name="source_edit">编辑数据源</string>
+    <string name="source_new">新增数据源</string>
+    <string name="source_empty">尚未配置数据源，点击右下角 + 新增数据源</string>
+    <string name="source_name">名称</string>
+    <string name="source_name_placeholder">家庭NAS</string>
+    <string name="source_server">服务器地址</string>
+    <string name="source_server_placeholder">192.168.1.100</string>
+    <string name="source_port">端口</string>
+    <string name="source_username">用户名</string>
+    <string name="source_password">密码</string>
+    <string name="source_show_password">显示密码</string>
+    <string name="source_hide_password">隐藏密码</string>
+    <string name="source_test_connection">测试连接</string>
+    <string name="source_testing">测试中…</string>
+    <string name="source_delete_source">删除数据源</string>
+    <string name="source_delete_confirm_title">删除数据源</string>
+    <string name="source_delete_confirm_text">确定要删除该数据源吗？请先删除所有关联的同步关系。</string>
+    <string name="source_edit_label">编辑</string>
+
+    <!-- Sync Source Edit ViewModel -->
+    <string name="source_connect_success">连接成功</string>
+    <string name="source_connect_failed">连接失败: %s</string>
+    <string name="source_save_success">保存成功</string>
+    <string name="source_save_failed">保存失败: %s</string>
+    <string name="source_delete_success">删除成功</string>
+    <string name="source_delete_failed">删除失败: %s</string>
+    <string name="source_has_relations">该数据源仍有 %d 个同步关系，请先删除所有同步关系</string>
+
+    <!-- Sync Relation -->
+    <string name="relation_list_title">同步关系</string>
+    <string name="relation_add">新增</string>
+    <string name="relation_edit">编辑同步关系</string>
+    <string name="relation_new">新增同步关系</string>
+    <string name="relation_empty">尚未配置同步关系，点击右下角 + 新增同步关系</string>
+    <string name="relation_last_sync">上次同步: %s</string>
+    <string name="relation_never_synced">从未同步</string>
+    <string name="relation_edit_label">编辑</string>
+    <string name="relation_friendly_name">友好名称</string>
+    <string name="relation_name_placeholder">电影同步</string>
+    <string name="relation_source">数据源</string>
+    <string name="relation_select_source">请选择数据源</string>
+    <string name="relation_expand">展开</string>
+    <string name="relation_remote_dir">远端目录</string>
+    <string name="relation_remote_dir_placeholder">/share/电影</string>
+    <string name="relation_browse">浏览</string>
+    <string name="relation_local_base_dir">本地基目录</string>
+    <string name="relation_local_dir_placeholder">动作片</string>
+    <string name="relation_select_local_dir">选择本地目录</string>
+    <string name="relation_test_remote">测试远端目录</string>
+    <string name="relation_testing">测试中…</string>
+    <string name="relation_delete_confirm_title">删除同步关系</string>
+    <string name="relation_delete_confirm_text">确定要删除该同步关系吗？已同步的本地文件不会被删除。</string>
+    <string name="relation_browse_remote">浏览远端目录</string>
+    <string name="relation_current_path">当前路径: %s</string>
+    <string name="relation_parent_dir">.. (上级目录)</string>
+    <string name="relation_select_dir">选择此目录</string>
+    <string name="relation_select_local_base">选择本地基目录</string>
+    <string name="relation_new_folder">新建文件夹</string>
+    <string name="relation_folder_name">文件夹名称</string>
+
+    <!-- Sync Relation Edit ViewModel -->
+    <string name="relation_select_source_first">请先选择数据源</string>
+    <string name="relation_input_remote_first">请先输入远端目录</string>
+    <string name="relation_dir_accessible">目录可访问</string>
+    <string name="relation_dir_not_exist">目录不存在</string>
+    <string name="relation_timeout_check_network">连接超时，请检查网络</string>
+    <string name="relation_access_failed">无法访问: %s</string>
+    <string name="relation_complete_fields">请完善所有字段</string>
+    <string name="relation_base_dir_conflict">本地基目录与现有同步关系冲突，基目录不能互相嵌套</string>
+    <string name="relation_save_success">保存成功</string>
+    <string name="relation_save_failed">保存失败: %s</string>
+    <string name="relation_delete_success">删除成功</string>
+    <string name="relation_remote_path_not_found">远程路径不存在，请检查路径是否正确</string>
+    <string name="relation_remote_timeout">连接服务器超时，请检查网络连接</string>
+    <string name="relation_remote_browse_failed">浏览远程目录失败</string>
+
+    <!-- Gain Analysis -->
+    <string name="gain_title">增益分析</string>
+    <string name="gain_discover">发现</string>
+    <string name="gain_process">处理</string>
+    <string name="gain_complete">分析完成 — 无需要分析的文件</string>
+    <string name="gain_discover_hint">点击下方"发现"按钮查找缺少增益信息的文件</string>
+    <string name="gain_discovered_count">发现 %d 个需要分析的文件</string>
+    <string name="gain_completed_files">已完成 %1$d / %2$d 个文件</string>
+    <string name="gain_remaining">剩余 %d 个</string>
+    <string name="gain_analyzing">正在分析 %d 个文件</string>
+    <string name="gain_analysis">分析</string>
+
+    <!-- Metadata Rebuild -->
+    <string name="metadata_title">重建元数据</string>
+    <string name="metadata_discover">发现</string>
+    <string name="metadata_process">处理</string>
+    <string name="metadata_complete">重建完成</string>
+    <string name="metadata_discover_hint">点击下方"发现"按钮扫描需要处理的文件</string>
+    <string name="metadata_completed_items">已完成 %1$d / %2$d 项</string>
+    <string name="metadata_remaining_items">剩余 %d 项</string>
+    <string name="metadata_new_files">发现 %d 个磁盘文件缺少记录</string>
+    <string name="metadata_orphaned_records">发现 %d 个孤立数据库记录</string>
+    <string name="metadata_incomplete_records">发现 %d 个文件缺少元数据</string>
+    <string name="metadata_total_items">共需处理 %d 项</string>
+
+    <!-- About -->
+    <string name="about_title">关于</string>
+    <string name="about_card_title">关于</string>
+    <string name="about_app_version">应用版本</string>
+    <string name="about_sync_logs">同步日志</string>
+    <string name="about_collapse">收起</string>
+    <string name="about_view_logs">查看日志</string>
+    <string name="about_no_logs">暂无日志记录</string>
+    <string name="about_clear_logs">清除日志</string>
+
+    <!-- Lock Screen -->
+    <string name="lock_app_locked">应用已锁定</string>
+    <string name="lock_verify_prompt">请验证身份以继续使用</string>
+    <string name="lock_verify">验证</string>
+
+    <!-- Context Menu -->
+    <string name="context_share">分享</string>
+    <string name="context_no_record">该文件缺少数据库记录，请先重建元数据</string>
+    <string name="context_share_failed">分享失败：文件不存在或无法访问</string>
+    <string name="context_restore">从回收站恢复</string>
+    <string name="context_trash">放入回收站</string>
+    <string name="context_total_files">总文件数：%d</string>
+    <string name="context_video_files">视频文件数：%d</string>
+    <string name="context_image_files">图片文件数：%d</string>
+    <string name="context_total_size">总大小：%s</string>
+    <string name="context_mark_read">标记已读</string>
+    <string name="context_mark_unread">标记未读</string>
+    <string name="context_share_file">分享文件</string>
+
+    <!-- FileOperations errors -->
+    <string name="error_only_base_dir_trash">仅同步基目录内的文件可标记回收站</string>
+    <string name="error_cannot_delete_base_dir">同步基目录不能删除，请先删除对应的同步关系</string>
+    <string name="error_base_dir_inside">文件夹内包含同步基目录，请先删除对应的同步关系</string>
+    <string name="error_cannot_delete_sync_dir">同步目录内的文件夹不能手动删除</string>
+    <string name="error_folder_not_exist">文件夹不存在</string>
+    <string name="error_cannot_create_in_base_dir">同步基目录内无法手动创建文件夹</string>
+    <string name="error_folder_exists">文件夹已存在</string>
+    <string name="error_create_folder_failed">创建文件夹失败</string>
+
+    <!-- Sync Engine -->
+    <string name="sync_disk_space_insufficient">磁盘空间不足：需要 %1$s，可用 %2$s</string>
+    <string name="sync_result_success">成功：下载 %1$d 个%2$s%3$s，删除 %4$d 个</string>
+    <string name="sync_result_reconcile">，匹配 %d 个</string>
+    <string name="sync_result_failed">，失败 %d 个</string>
+    <string name="sync_failed">同步失败: %s</string>
+    <string name="sync_relation_not_found">未找到关联</string>
+    <string name="sync_source_not_found">未找到来源</string>
+    <string name="sync_delete_success">成功：删除 %d 个文件</string>
+    <string name="sync_delete_failed">删除失败: %s</string>
+
+    <!-- Error Message Mapper -->
+    <string name="error_unknown_host">无法解析主机地址: %s</string>
+    <string name="error_connection_refused">连接被拒绝，请检查主机地址 %s 是否可达</string>
+    <string name="error_connection_timeout">连接超时，请检查网络连接和主机地址 %s</string>
 </resources>
