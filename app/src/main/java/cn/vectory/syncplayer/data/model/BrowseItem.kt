@@ -30,5 +30,8 @@ data class BrowseItem(
     // Video metadata
     val hasGainAdjusted: Boolean = false,
     val star: Int = 0,
-    val thumbnailPaths: List<String> = emptyList()
+    val thumbnailPaths: List<String> = emptyList(),
+    // Image metadata
+    val mediaType: String = "VIDEO",
+    val dateTaken: Long? = null
 )

@@ -4,10 +4,21 @@ internal val VIDEO_EXTENSIONS = setOf(
     "mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "ts", "m4v", "3gp", "mpeg", "mpg"
 )
 
+internal val IMAGE_EXTENSIONS = setOf(
+    "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif"
+)
+
 internal fun isVideoFile(fileName: String): Boolean {
     val ext = fileName.substringAfterLast('.', "").lowercase()
     return ext in VIDEO_EXTENSIONS
 }
+
+internal fun isImageFile(fileName: String): Boolean {
+    val ext = fileName.substringAfterLast('.', "").lowercase()
+    return ext in IMAGE_EXTENSIONS
+}
+
+internal fun isMediaFile(fileName: String): Boolean = isVideoFile(fileName) || isImageFile(fileName)
 
 internal fun extractParentPath(relativePath: String): String {
     val lastSlash = relativePath.lastIndexOf('/')
@@ -23,6 +34,7 @@ internal fun getMimeType(fileName: String): String {
         "gif" -> "image/gif"
         "bmp" -> "image/bmp"
         "webp" -> "image/webp"
+        "heic", "heif" -> "image/heic"
         "mp3" -> "audio/mpeg"
         "flac" -> "audio/flac"
         "wav" -> "audio/wav"

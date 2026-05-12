@@ -116,16 +116,15 @@ interface VideoItemDao {
     data class RecursiveFolderStat(
         val totalFileCount: Int,
         val totalVideoCount: Int,
+        val totalImageCount: Int,
         val totalSize: Long
     )
 
     @Query("""
         SELECT 
             COUNT(*) as totalFileCount,
-            SUM(CASE WHEN fileName LIKE '%.mp4' OR fileName LIKE '%.mkv' OR fileName LIKE '%.avi' 
-                OR fileName LIKE '%.mov' OR fileName LIKE '%.wmv' OR fileName LIKE '%.flv' 
-                OR fileName LIKE '%.webm' OR fileName LIKE '%.ts' OR fileName LIKE '%.m4v' 
-                OR fileName LIKE '%.3gp' OR fileName LIKE '%.rmvb' OR fileName LIKE '%.rm' THEN 1 ELSE 0 END) as totalVideoCount,
+            SUM(CASE WHEN mediaType = 'VIDEO' THEN 1 ELSE 0 END) as totalVideoCount,
+            SUM(CASE WHEN mediaType = 'IMAGE' THEN 1 ELSE 0 END) as totalImageCount,
             COALESCE(SUM(fileSize), 0) as totalSize
         FROM video_item
         WHERE relativePath LIKE :folderPath || '/%'
@@ -165,7 +164,8 @@ interface VideoItemDao {
                pr.position, pr.isCompleted, pr.isTrashed
         FROM video_item vi
         LEFT JOIN playback_record pr ON pr.videoItemId = vi.id
-        WHERE CASE
+        WHERE vi.mediaType IN ('VIDEO', 'IMAGE')
+        AND CASE
             WHEN :folderPath = '' THEN
                 vi.parentPath != '' AND vi.parentPath NOT LIKE '%/%'
             ELSE

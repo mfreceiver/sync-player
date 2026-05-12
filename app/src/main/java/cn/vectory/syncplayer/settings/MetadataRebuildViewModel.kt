@@ -7,7 +7,9 @@ import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.StoragePaths
+import cn.vectory.syncplayer.sync.ImageMetadataExtractor
 import cn.vectory.syncplayer.sync.VideoMetadataExtractor
+import cn.vectory.syncplayer.ui.util.isImageFile
 import cn.vectory.syncplayer.ui.util.isVideoFile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +39,7 @@ class MetadataRebuildViewModel @Inject constructor(
     private val videoRepository: VideoRepository,
     private val playbackRepository: PlaybackRepository,
     private val videoMetadataExtractor: VideoMetadataExtractor,
+    private val imageMetadataExtractor: ImageMetadataExtractor,
     private val storagePaths: StoragePaths
 ) : ViewModel() {
 
@@ -99,31 +102,33 @@ class MetadataRebuildViewModel @Inject constructor(
                             }
                     }
 
-                    // 只将视频文件纳入重建范围，非视频文件不需要元数据提取
-                    val videoNewFiles = newFiles.filter { isVideoFile(it.fileName) }
-                    val nonVideoNewFiles = newFiles.filter { !isVideoFile(it.fileName) }
+                    // 将视频和图片文件纳入重建范围，其他文件不需要元数据提取
+                    val mediaNewFiles = newFiles.filter { isVideoFile(it.fileName) || isImageFile(it.fileName) }
+                    val nonMediaFiles = newFiles.filter { !isVideoFile(it.fileName) && !isImageFile(it.fileName) }
 
                     for (record in dbRecords) {
                         val file = File(record.localAbsolutePath)
                         if (!file.exists()) {
                             orphanedRecords.add(record)
-                        } else if (isVideoFile(record.fileName) && (record.duration == null || record.thumbnailPath == null)) {
+                        } else if ((isVideoFile(record.fileName) && (record.duration == null || record.thumbnailPath == null))
+                            || (isImageFile(record.fileName) && (record.width == null || record.thumbnailPath == null))) {
                             incompleteRecords.add(record)
                         }
                     }
 
-                    _discoveryResult.value = DiscoveryResult(videoNewFiles, orphanedRecords, incompleteRecords)
-                    _totalCount.value = videoNewFiles.size + orphanedRecords.size + incompleteRecords.size
+                    _discoveryResult.value = DiscoveryResult(mediaNewFiles, orphanedRecords, incompleteRecords)
+                    _totalCount.value = mediaNewFiles.size + orphanedRecords.size + incompleteRecords.size
 
-                    // 非视频文件仍需创建 DB 记录以供浏览，但不计入重建进度
-                    if (nonVideoNewFiles.isNotEmpty()) {
-                        for (file in nonVideoNewFiles) {
+                    // 非媒体文件仍需创建 DB 记录以供浏览，但不计入重建进度
+                    if (nonMediaFiles.isNotEmpty()) {
+                        for (file in nonMediaFiles) {
                             val entity = VideoItemEntity(
                                 relativePath = file.relativePath,
                                 fileName = file.fileName,
                                 localAbsolutePath = file.absolutePath,
                                 fileSize = file.fileSize,
-                                syncRelationId = 0
+                                syncRelationId = 0,
+                                mediaType = if (isVideoFile(file.fileName)) "VIDEO" else if (isImageFile(file.fileName)) "IMAGE" else "OTHER"
                             )
                             videoRepository.upsert(entity)
                         }
@@ -159,7 +164,8 @@ class MetadataRebuildViewModel @Inject constructor(
                         val saved = videoRepository.getById(id)
                         if (saved != null) {
                             try {
-                                videoMetadataExtractor.extractAndSave(saved)
+                                if (isImageFile(saved.fileName)) imageMetadataExtractor.extractAndSave(saved)
+                                else videoMetadataExtractor.extractAndSave(saved)
                             } catch (e: Exception) {
                                 Log.w(TAG, "Failed to extract metadata for ${file.fileName}", e)
                             }
@@ -178,7 +184,8 @@ class MetadataRebuildViewModel @Inject constructor(
                         _currentFile.value = record.fileName
                         val fresh = videoRepository.getById(record.id) ?: continue
                         try {
-                            videoMetadataExtractor.extractAndSave(fresh)
+                            if (isImageFile(fresh.fileName)) imageMetadataExtractor.extractAndSave(fresh)
+                            else videoMetadataExtractor.extractAndSave(fresh)
                         } catch (e: Exception) {
                             Log.w(TAG, "Failed to extract metadata for ${record.fileName}", e)
                         }

@@ -30,8 +30,8 @@ android {
         applicationId = "cn.vectory.syncplayer"
         minSdk = 34
         targetSdk = 35
-        versionCode = 110
-        versionName = "10.9.6"
+        versionCode = 114
+        versionName = "11.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -139,6 +139,9 @@ dependencies {
     // Biometric authentication for app lock
     implementation(libs.biometric)
     implementation(libs.appcompat)
+
+    // EXIF metadata extraction for image files
+    implementation(libs.exifinterface)
 
     // Unit Testing
     testImplementation(libs.junit)

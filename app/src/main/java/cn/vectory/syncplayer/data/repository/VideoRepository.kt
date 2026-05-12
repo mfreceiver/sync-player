@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.data.repository
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao.ChildVideoStat
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
+import cn.vectory.syncplayer.data.model.FolderStats
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -74,7 +75,15 @@ class VideoRepository @Inject constructor(
         videoItemDao.getChildVideoStats(folderPath)
 
     // New helper APIs for phase 2/3
-    suspend fun getRecursiveFolderStats(folderPath: String) = videoItemDao.getRecursiveFolderStats(folderPath)
+    suspend fun getRecursiveFolderStats(folderPath: String): FolderStats {
+        val daoResult = videoItemDao.getRecursiveFolderStats(folderPath)
+        return FolderStats(
+            totalFileCount = daoResult.totalFileCount,
+            totalVideoCount = daoResult.totalVideoCount,
+            totalImageCount = daoResult.totalImageCount,
+            totalSize = daoResult.totalSize
+        )
+    }
 
     fun getAllItemsFlow(): Flow<List<VideoItemEntity>> = videoItemDao.getAllItemsFlow()
 

@@ -2,6 +2,7 @@ package cn.vectory.syncplayer.sync
 
 import android.content.Context
 import android.util.Log
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.ActiveDownload
 import cn.vectory.syncplayer.data.model.SyncAction
 import cn.vectory.syncplayer.data.model.SyncActionType
@@ -19,6 +20,7 @@ import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.ui.util.extractParentPath
+import cn.vectory.syncplayer.ui.util.isImageFile
 import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -56,6 +58,7 @@ class SyncEngine @Inject constructor(
     private val playbackRepository: PlaybackRepository,
     private val syncLogRepository: SyncLogRepository,
     private val videoMetadataExtractor: VideoMetadataExtractor,
+    private val imageMetadataExtractor: ImageMetadataExtractor,
     private val pendingSyncActionDao: PendingSyncActionDao,
     private val smbFileClient: SmbFileClient,
     private val sftpFileClient: SftpFileClient,
@@ -76,6 +79,14 @@ class SyncEngine @Inject constructor(
 
     companion object {
         private const val TAG = "SyncEngine"
+    }
+
+    private suspend fun extractMetadata(entity: VideoItemEntity) {
+        if (isImageFile(entity.fileName)) {
+            imageMetadataExtractor.extractAndSave(entity)
+        } else {
+            videoMetadataExtractor.extractAndSave(entity)
+        }
     }
 
     suspend fun setPendingTask(task: PendingSyncTask) {
@@ -324,7 +335,7 @@ class SyncEngine @Inject constructor(
 
         val availableSpace = storagePaths.userdataRoot.usableSpace
         if (totalDownloadSize > availableSpace) {
-            syncRelationRepository.updateLastSync(relationId, "磁盘空间不足：需要 ${formatSize(totalDownloadSize)}，可用 ${formatSize(availableSpace)}")
+            syncRelationRepository.updateLastSync(relationId, context.getString(R.string.sync_disk_space_insufficient, formatSize(totalDownloadSize), formatSize(availableSpace)))
             _progress.value = SyncProgress(isRunning = false, phase = SyncPhase.FAILED, relationId = relationId, relationName = name, localBasePath = basePath)
             return false
         }
@@ -386,7 +397,7 @@ class SyncEngine @Inject constructor(
                     val saved = videoRepository.getByRelativePathAndRelationId(localRelPath, relationId)
                     if (saved != null && (saved.duration == null || saved.thumbnailPath == null)) {
                         try {
-                            videoMetadataExtractor.extractAndSave(saved)
+                            extractMetadata(saved)
                         } catch (e: Exception) {
                             Log.w(TAG, "Metadata extraction failed for ${saved.fileName}", e)
                         }
@@ -496,7 +507,7 @@ class SyncEngine @Inject constructor(
                                         val savedEntity = videoRepository.getByRelativePath(localRelPath)
                                         if (savedEntity != null) {
                                             try {
-                                                videoMetadataExtractor.extractAndSave(savedEntity)
+                                                extractMetadata(savedEntity)
                                             } catch (e: Exception) {
                                                 Log.w(TAG, "Metadata extraction failed for ${savedEntity.fileName}", e)
                                             }
@@ -531,6 +542,28 @@ class SyncEngine @Inject constructor(
                                             completedPaths = completedPathsSet.toSet()
                                         )
                                     }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    val localRelPath = storagePaths.toLocalRelativePath(relation.localBasePath, action.relativePath)
+                                    val tmpFile = File(localRoot, "${action.relativePath}.sync_tmp")
+                                    if (tmpFile.exists() && !tmpFile.delete()) {
+                                        Log.w(TAG, "Failed to delete temp file after exception: ${tmpFile.absolutePath}")
+                                    }
+                                    activeDownloadsMutex.withLock {
+                                        activeDownloadsMap.remove(action.relativePath)
+                                    }
+                                    failedCount.incrementAndGet()
+                                    completedCount.incrementAndGet()
+                                    syncLogRepository.log(
+                                        action = "DOWNLOAD",
+                                        relativePath = localRelPath,
+                                        status = "FAILED",
+                                        dryRun = false,
+                                        fileSize = action.fileSize,
+                                        errorMessage = e.message
+                                    )
+                                    Log.e(TAG, "Download failed with exception: ${action.relativePath}", e)
                                 } finally {
                                     semaphore.release()
                                 }
@@ -583,12 +616,9 @@ class SyncEngine @Inject constructor(
             )
 
             val successDownloadCount = toActuallyDownload.size - failedCount.get()
-            val msg = buildString {
-                append("成功：下载 $successDownloadCount 个")
-                if (toReconcile.isNotEmpty()) append("，匹配 ${toReconcile.size} 个")
-                if (failedCount.get() > 0) append("，失败 ${failedCount.get()} 个")
-                append("，删除 ${toDelete.size} 个")
-            }
+            val reconcilePart = if (toReconcile.isNotEmpty()) context.getString(R.string.sync_result_reconcile, toReconcile.size) else ""
+            val failedPart = if (failedCount.get() > 0) context.getString(R.string.sync_result_failed, failedCount.get()) else ""
+            val msg = context.getString(R.string.sync_result_success, successDownloadCount, reconcilePart, failedPart, toDelete.size)
             syncRelationRepository.updateLastSync(relationId, msg)
             syncLogRepository.clearOldLogs()
             return true
@@ -611,7 +641,7 @@ class SyncEngine @Inject constructor(
                 relationName = name,
                 localBasePath = basePath
             )
-            syncRelationRepository.updateLastSync(relationId, "同步失败: ${e.message}")
+            syncRelationRepository.updateLastSync(relationId, context.getString(R.string.sync_failed, e.message))
             syncLogRepository.log(
                 action = "SYNC",
                 relativePath = "",
@@ -654,8 +684,8 @@ class SyncEngine @Inject constructor(
 
     suspend fun dryRunDelete(relationId: Long): Pair<List<SyncAction>, String?> = getMutexForRelation(relationId).withLock {
         try {
-            val relation = syncRelationRepository.getById(relationId) ?: return Pair(emptyList(), "未找到关联")
-            val source = syncSourceRepository.getById(relation.syncSourceId) ?: return Pair(emptyList(), "未找到来源")
+            val relation = syncRelationRepository.getById(relationId) ?: return Pair(emptyList(), context.getString(R.string.sync_relation_not_found))
+            val source = syncSourceRepository.getById(relation.syncSourceId) ?: return Pair(emptyList(), context.getString(R.string.sync_source_not_found))
             val client = getClient(source.protocol)
             _progress.value = SyncProgress(phase = SyncPhase.SCANNING, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
 
@@ -770,7 +800,7 @@ class SyncEngine @Inject constructor(
                 localBasePath = relation.localBasePath
             )
 
-            syncRelationRepository.updateLastSync(relationId, "成功：删除 ${actions.size} 个文件")
+            syncRelationRepository.updateLastSync(relationId, context.getString(R.string.sync_delete_success, actions.size))
             syncLogRepository.clearOldLogs()
             return true
         } catch (e: CancellationException) {
@@ -783,7 +813,7 @@ class SyncEngine @Inject constructor(
                 relationName = relation.name,
                 localBasePath = relation.localBasePath
             )
-            syncRelationRepository.updateLastSync(relationId, "删除失败: ${e.message}")
+            syncRelationRepository.updateLastSync(relationId, context.getString(R.string.sync_delete_failed, e.message))
             syncLogRepository.log(
                 action = "DELETE_BOTH",
                 relativePath = "",

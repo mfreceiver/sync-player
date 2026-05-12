@@ -33,7 +33,7 @@ object DatabaseModule {
             AppDatabase::class.java,
             "sync-player.db"
         )
-            .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+            .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
             .build()
     }
 
@@ -185,6 +185,31 @@ object DatabaseModule {
                 )
                 WHERE parentPath = ''
             """)
+        }
+    }
+
+    private val MIGRATION_15_16 = object : Migration(15, 16) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE video_item ADD COLUMN mediaType TEXT NOT NULL DEFAULT 'VIDEO'")
+            db.execSQL("ALTER TABLE video_item ADD COLUMN dateTaken INTEGER")
+
+            // Backfill mediaType for image files based on file extension
+            val imageExtensions = listOf("jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif")
+            for (ext in imageExtensions) {
+                db.execSQL("UPDATE video_item SET mediaType = 'IMAGE' WHERE fileName LIKE '%.$ext'")
+            }
+
+            // Backfill mediaType: anything not VIDEO and not IMAGE becomes OTHER
+            val videoConditions = listOf(
+                "fileName NOT LIKE '%.mp4'", "fileName NOT LIKE '%.mkv'",
+                "fileName NOT LIKE '%.avi'", "fileName NOT LIKE '%.mov'",
+                "fileName NOT LIKE '%.flv'", "fileName NOT LIKE '%.wmv'",
+                "fileName NOT LIKE '%.webm'", "fileName NOT LIKE '%.ts'",
+                "fileName NOT LIKE '%.m4v'", "fileName NOT LIKE '%.3gp'",
+                "fileName NOT LIKE '%.mpeg'", "fileName NOT LIKE '%.mpg'"
+            )
+            val videoNotMatch = videoConditions.joinToString(" AND ")
+            db.execSQL("UPDATE video_item SET mediaType = 'OTHER' WHERE mediaType = 'VIDEO' AND $videoNotMatch")
         }
     }
 }
