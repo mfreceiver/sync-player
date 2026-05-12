@@ -4,6 +4,7 @@ import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.media.AudioManager
 import android.net.Uri
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
@@ -37,6 +38,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.res.stringResource
+import cn.vectory.syncplayer.R
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -173,6 +176,7 @@ fun PlayerScreen(
                     val nextId = viewModel.getNextVideoId()
                     if (nextId != null) {
                         viewModel.updateAutoSwitchTime()
+                        viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
                         viewModel.loadVideo(nextId)
                     } else {
                         if (!isExiting) {
@@ -193,6 +197,12 @@ fun PlayerScreen(
                 reason: Int
             ) {
                 viewModel.updatePlaybackProgress(newPosition.positionMs, exoPlayer.duration.coerceAtLeast(0))
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                val message = error.message ?: "Unknown playback error"
+                Log.e("PlayerScreen", "Playback error: $message", error)
+                viewModel.onPlayerError(message)
             }
         }
     }
@@ -297,6 +307,7 @@ fun PlayerScreen(
                     val prevId = viewModel.getPrevVideoId()
                     if (prevId != null) {
                         viewModel.showOverlay(PlayerOverlay.Previous)
+                        viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
                         viewModel.loadVideo(prevId)
                     } else {
                         viewModel.showOverlay(PlayerOverlay.NoPrevious)
@@ -308,6 +319,7 @@ fun PlayerScreen(
                     val nextId = viewModel.getNextVideoId()
                     if (nextId != null) {
                         viewModel.showOverlay(PlayerOverlay.Next)
+                        viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
                         viewModel.loadVideo(nextId)
                     } else {
                         viewModel.showOverlay(PlayerOverlay.NoNext)
@@ -392,14 +404,7 @@ fun PlayerScreen(
                 val bitmap = previewExtractor.extractFrameAtPosition(filePath, posMs)
                 lastExtractedPosMs = posMs
                 if (bitmap != null && isActive) {
-                    val curMs = when {
-                        uiState.isUserSeeking -> uiState.userSeekPosition
-                        uiState.isGestureSeeking -> uiState.gestureSeekPosition
-                        else -> 0f
-                    }.let { (it * duration).toLong() }
-                    if (curMs == posMs) {
-                        seekPreviewBitmap = bitmap
-                    }
+                    seekPreviewBitmap = bitmap
                 }
             }
         }
@@ -600,10 +605,53 @@ fun PlayerScreen(
                             modifier = Modifier.size(20.dp)
                         )
                         Text(
-                            text = "加速",
+                            text = stringResource(R.string.player_speed_up),
                             color = Color.White,
                             style = MaterialTheme.typography.bodyMedium
                         )
+                    }
+                }
+            }
+        }
+
+        if (uiState.playerError != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.7f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.padding(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Error,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.9f),
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Text(
+                        text = uiState.playerError!!,
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedButton(
+                            onClick = { viewModel.clearPlayerError() }
+                        ) {
+                            Text(stringResource(R.string.common_close), color = Color.White)
+                        }
+                        Button(
+                            onClick = {
+                                viewModel.clearPlayerError()
+                                exoPlayer.prepare()
+                            }
+                        ) {
+                            Text(stringResource(R.string.common_retry))
+                        }
                     }
                 }
             }
@@ -808,7 +856,7 @@ private fun SettingsPopup(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "方向",
+                    text = stringResource(R.string.player_direction),
                     color = Color.White.copy(alpha = 0.7f),
                     style = MaterialTheme.typography.labelMedium
                 )
@@ -842,7 +890,7 @@ private fun SettingsPopup(
                 }
                 HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
                 Text(
-                    text = "速度",
+                    text = stringResource(R.string.player_speed),
                     color = Color.White.copy(alpha = 0.7f),
                     style = MaterialTheme.typography.labelMedium
                 )

@@ -10,6 +10,7 @@ import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.provider.SyncDocumentsProvider
+import cn.vectory.syncplayer.security.AuthCapabilityInfo
 import cn.vectory.syncplayer.security.BiometricAuthManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -36,7 +37,7 @@ class SettingsViewModel @Inject constructor(
     private val _settingsState = MutableStateFlow<SettingsState?>(null)
     val settingsState: StateFlow<SettingsState?> = _settingsState.asStateFlow()
 
-    val canAuthenticateBio: Boolean = biometricAuthManager.canAuthenticate()
+    val authCapabilityInfo: AuthCapabilityInfo = biometricAuthManager.getAuthCapabilityInfo()
 
     val syncLogs: StateFlow<List<SyncLogEntity>> = syncLogRepository.getRecentFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

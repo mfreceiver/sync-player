@@ -1,13 +1,15 @@
 package cn.vectory.syncplayer.sync
 
+import android.content.Context
+import cn.vectory.syncplayer.R
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 
-fun mapNetworkErrorMessage(e: Exception, host: String): String? = when (e) {
-    is UnknownHostException -> "无法解析主机地址: $host"
-    is ConnectException -> "连接被拒绝，请检查主机地址 ${host} 是否可达"
-    is SocketTimeoutException -> "连接超时，请检查网络连接和主机地址 ${host}"
+fun mapNetworkErrorMessage(e: Exception, host: String, context: Context): String? = when (e) {
+    is UnknownHostException -> context.getString(R.string.error_unknown_host, host)
+    is ConnectException -> context.getString(R.string.error_connection_refused, host)
+    is SocketTimeoutException -> context.getString(R.string.error_connection_timeout, host)
     else -> null
 }
 

@@ -13,9 +13,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import cn.vectory.syncplayer.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,7 +33,7 @@ fun SyncSourceListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("数据源") },
+                title = { Text(stringResource(R.string.source_list_title)) },
                 navigationIcon = {
                     IconButton(
                         onClick = {
@@ -42,14 +44,14 @@ fun SyncSourceListScreen(
                         },
                         enabled = !isNavigatingBack
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 }
             )
         },
         floatingActionButton = {
             FloatingActionButton(onClick = onNavigateToCreate) {
-                Icon(Icons.Filled.Add, contentDescription = "新增")
+                Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.source_add))
             }
         }
     ) { padding ->
@@ -58,7 +60,7 @@ fun SyncSourceListScreen(
                 modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text("尚未配置数据源，点击右下角 + 新增数据源")
+                Text(stringResource(R.string.source_empty))
             }
         } else {
             LazyColumn(
@@ -80,7 +82,7 @@ fun SyncSourceListScreen(
                             IconButton(onClick = { onNavigateToEdit(source.id) }) {
                                 Icon(
                                     imageVector = Icons.Default.Edit,
-                                    contentDescription = "编辑",
+                                    contentDescription = stringResource(R.string.source_edit_label),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }

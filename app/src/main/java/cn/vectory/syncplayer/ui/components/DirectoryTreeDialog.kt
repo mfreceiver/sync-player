@@ -38,10 +38,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import kotlinx.coroutines.launch
 
@@ -106,7 +108,7 @@ internal fun DirectoryTreeDialog(
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
-                    text = "选择目录",
+                    text = stringResource(R.string.browser_select_directory),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -121,7 +123,7 @@ internal fun DirectoryTreeDialog(
                 ) {
                     item {
                         DirectoryTreeRow(
-                            name = "根目录",
+                            name = stringResource(R.string.browser_root_label),
                             fullPath = "",
                             level = 0,
                             isExpanded = true,
@@ -208,7 +210,7 @@ private fun DirectoryTreeRow(
         if (isRoot) {
             Icon(
                 imageVector = Icons.Filled.Home,
-                contentDescription = "根目录",
+                contentDescription = stringResource(R.string.browser_root_dir),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp)
             )
@@ -258,7 +260,7 @@ private fun DirectoryTreeRow(
             } else {
                 Icon(
                     imageVector = if (isExpanded) Icons.Filled.ExpandMore else Icons.Filled.ChevronRight,
-                    contentDescription = if (isExpanded) "折叠" else "展开",
+                    contentDescription = if (isExpanded) stringResource(R.string.browser_collapse) else stringResource(R.string.browser_expand),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier
                         .size(16.dp)

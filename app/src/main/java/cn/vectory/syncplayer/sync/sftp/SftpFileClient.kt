@@ -28,7 +28,7 @@ class SftpFileClient(
     private var remoteBasePath: String = ""
 
     private fun sftpErrorMessage(e: Exception, host: String): String {
-        val commonMsg = mapNetworkErrorMessage(e, host)
+        val commonMsg = mapNetworkErrorMessage(e, host, context)
         if (commonMsg != null) return commonMsg
         return when (e) {
             is UserAuthException -> "SSH认证失败，请检查用户名和密码 (${e.message})"

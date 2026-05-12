@@ -11,11 +11,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
+import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.ui.components.FullScreenError
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,7 +44,7 @@ fun GainAnalysisScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("增益分析") },
+                title = { Text(stringResource(R.string.gain_title)) },
                 navigationIcon = {
                     IconButton(
                         onClick = {
@@ -53,7 +56,7 @@ fun GainAnalysisScreen(
                         },
                         enabled = !isNavigatingBack
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 }
             )
@@ -74,7 +77,7 @@ fun GainAnalysisScreen(
                             onBack()
                         }
                     }) {
-                        Text(if (isAnalyzing) "停止" else "取消")
+                        Text(if (isAnalyzing) stringResource(R.string.common_stop) else stringResource(R.string.common_cancel))
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
@@ -88,7 +91,7 @@ fun GainAnalysisScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         } else {
-                            Text("发现")
+                            Text(stringResource(R.string.gain_discover))
                         }
                     }
                     Spacer(modifier = Modifier.width(8.dp))
@@ -103,7 +106,7 @@ fun GainAnalysisScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         } else {
-                            Text("处理")
+                            Text(stringResource(R.string.gain_process))
                         }
                     }
                     Spacer(modifier = Modifier.width(16.dp))
@@ -113,14 +116,11 @@ fun GainAnalysisScreen(
     ) { paddingValues ->
         when {
             error != null && discoveredFiles.isEmpty() -> {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(paddingValues),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(error!!, color = MaterialTheme.colorScheme.error)
-                    }
-                }
+                FullScreenError(
+                    message = error!!,
+                    onRetry = { viewModel.discover() },
+                    modifier = Modifier.padding(paddingValues)
+                )
             }
             isComplete -> {
                 Box(
@@ -144,7 +144,7 @@ fun GainAnalysisScreen(
                                 modifier = Modifier.size(48.dp)
                             )
                             Spacer(Modifier.height(8.dp))
-                            Text("分析完成 — 无需要分析的文件", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.gain_complete), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -155,7 +155,7 @@ fun GainAnalysisScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "点击下方\u201C发现\u201D按钮查找缺少增益信息的文件",
+                        stringResource(R.string.gain_discover_hint),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -175,7 +175,7 @@ fun GainAnalysisScreen(
                             modifier = Modifier.fillMaxWidth().padding(16.dp)
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Text("发现 ${discoveredFiles.size} 个需要分析的文件")
+                                Text(stringResource(R.string.gain_discovered_count, discoveredFiles.size))
                             }
                         }
                     }
@@ -203,7 +203,7 @@ fun GainAnalysisScreen(
                                 leadingContent = {
                                     Icon(
                                         Icons.Default.Equalizer,
-                                        contentDescription = "分析",
+                                        contentDescription = stringResource(R.string.gain_analysis),
                                         tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
@@ -236,13 +236,13 @@ private fun GainAnalysisProgressCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("已完成 $completedFiles / $totalFiles 个文件", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                Text("剩余 ${totalFiles - completedFiles} 个", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.gain_completed_files, completedFiles, totalFiles), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.gain_remaining, totalFiles - completedFiles), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             if (activeAnalysis.isNotEmpty()) {
                 HorizontalDivider()
-                Text("正在分析 ${activeAnalysis.size} 个文件", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(stringResource(R.string.gain_analyzing, activeAnalysis.size), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 activeAnalysis.forEach { name ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),

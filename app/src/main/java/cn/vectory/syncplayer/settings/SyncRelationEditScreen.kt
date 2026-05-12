@@ -16,8 +16,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import cn.vectory.syncplayer.sync.RemoteBrowseError
+import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.ui.components.FormResultText
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -55,13 +59,14 @@ fun SyncRelationEditScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isNavigatingBack by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
 
     LaunchedEffect(browseError) {
         val err = browseError ?: return@LaunchedEffect
         val msg = when (err) {
-            RemoteBrowseError.PATH_NOT_FOUND -> "远程路径不存在，请检查路径是否正确"
-            RemoteBrowseError.TIMEOUT -> "连接服务器超时，请检查网络连接"
-            RemoteBrowseError.OTHER -> "浏览远程目录失败"
+            RemoteBrowseError.PATH_NOT_FOUND -> context.getString(R.string.relation_remote_path_not_found)
+            RemoteBrowseError.TIMEOUT -> context.getString(R.string.relation_remote_timeout)
+            RemoteBrowseError.OTHER -> context.getString(R.string.relation_remote_browse_failed)
         }
         snackbarHostState.showSnackbar(msg)
         viewModel.clearBrowseError()
@@ -71,7 +76,7 @@ fun SyncRelationEditScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text(if (viewModel.relationId > 0) "编辑同步关系" else "新增同步关系") },
+                title = { Text(if (viewModel.relationId > 0) stringResource(R.string.relation_edit) else stringResource(R.string.relation_new)) },
                 navigationIcon = {
                     IconButton(
                         onClick = {
@@ -82,7 +87,7 @@ fun SyncRelationEditScreen(
                         },
                         enabled = !isNavigatingBack
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 }
             )
@@ -98,8 +103,8 @@ fun SyncRelationEditScreen(
             OutlinedTextField(
                 value = name,
                 onValueChange = { viewModel.setName(it) },
-                label = { Text("友好名称") },
-                placeholder = { Text("电影同步", color = extendedColors.placeholderGrey) },
+                label = { Text(stringResource(R.string.relation_friendly_name)) },
+                placeholder = { Text(stringResource(R.string.relation_name_placeholder), color = extendedColors.placeholderGrey) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
@@ -109,15 +114,15 @@ fun SyncRelationEditScreen(
                 onExpandedChange = { sourceExpanded = it }
             ) {
                 OutlinedTextField(
-                    value = sources.find { it.id == selectedSourceId }?.name ?: "请选择数据源",
+                    value = sources.find { it.id == selectedSourceId }?.name ?: stringResource(R.string.relation_select_source),
                     onValueChange = {},
-                    label = { Text("数据源") },
+                    label = { Text(stringResource(R.string.relation_source)) },
                     readOnly = true,
                     modifier = Modifier
                         .fillMaxWidth()
                         .menuAnchor(MenuAnchorType.PrimaryNotEditable),
                     trailingIcon = {
-                        Icon(Icons.Filled.ArrowDropDown, contentDescription = "展开")
+                        Icon(Icons.Filled.ArrowDropDown, contentDescription = stringResource(R.string.relation_expand))
                     }
                 )
                 DropdownMenu(expanded = sourceExpanded, onDismissRequest = { sourceExpanded = false }) {
@@ -140,8 +145,8 @@ fun SyncRelationEditScreen(
                 OutlinedTextField(
                     value = remotePath,
                     onValueChange = { viewModel.setRemotePath(it) },
-                    label = { Text("远端目录") },
-                    placeholder = { Text("/share/电影", color = extendedColors.placeholderGrey) },
+                    label = { Text(stringResource(R.string.relation_remote_dir)) },
+                    placeholder = { Text(stringResource(R.string.relation_remote_dir_placeholder), color = extendedColors.placeholderGrey) },
                     modifier = Modifier.weight(1f),
                     singleLine = true
                 )
@@ -149,7 +154,7 @@ fun SyncRelationEditScreen(
                     showRemoteBrowser = true
                     viewModel.browseRemote()
                 }) {
-                    Icon(Icons.Filled.FolderOpen, contentDescription = "浏览")
+                    Icon(Icons.Filled.FolderOpen, contentDescription = stringResource(R.string.relation_browse))
                 }
             }
 
@@ -160,8 +165,8 @@ fun SyncRelationEditScreen(
                 OutlinedTextField(
                     value = localBasePath,
                     onValueChange = {},
-                    label = { Text("本地基目录") },
-                    placeholder = { Text("动作片", color = extendedColors.placeholderGrey) },
+                    label = { Text(stringResource(R.string.relation_local_base_dir)) },
+                    placeholder = { Text(stringResource(R.string.relation_local_dir_placeholder), color = extendedColors.placeholderGrey) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     readOnly = true
@@ -170,7 +175,7 @@ fun SyncRelationEditScreen(
                     showLocalBrowser = true
                     viewModel.browseLocalDirectories()
                 }) {
-                    Icon(Icons.Filled.FolderOpen, contentDescription = "选择本地目录")
+                    Icon(Icons.Filled.FolderOpen, contentDescription = stringResource(R.string.relation_select_local_dir))
                 }
             }
 
@@ -183,7 +188,7 @@ fun SyncRelationEditScreen(
                     enabled = !isTesting && selectedSourceId > 0L && remotePath.isNotBlank(),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text(if (isTesting) "测试中…" else "测试远端目录")
+                    Text(if (isTesting) stringResource(R.string.relation_testing) else stringResource(R.string.relation_test_remote))
                 }
                 Button(
                     onClick = { viewModel.save() },
@@ -191,7 +196,7 @@ fun SyncRelationEditScreen(
                             && remotePath.isNotBlank() && localBasePath.isNotBlank(),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text(if (isSaving) "保存中…" else "保存")
+                    Text(if (isSaving) stringResource(R.string.common_saving) else stringResource(R.string.common_save))
                 }
             }
 
@@ -203,33 +208,28 @@ fun SyncRelationEditScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Delete,
-                        contentDescription = "删除",
+                        contentDescription = stringResource(R.string.common_delete),
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text("删除")
+                    Text(stringResource(R.string.common_delete))
                 }
             }
 
             testResult?.let {
-                Text(
-                    it,
-                    color = if (it.contains("可访问")) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall
-                )
+                FormResultText(message = it, isSuccess = it.contains(context.getString(R.string.relation_dir_accessible)))
             }
             error?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                FormResultText(message = it, isSuccess = false)
             }
             saveResult?.let {
-                Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+                FormResultText(message = it, isSuccess = true)
             }
         }
     }
 
     LaunchedEffect(saveResult) {
-        if (saveResult?.contains("成功") == true) {
+        if (saveResult?.contains(context.getString(R.string.source_save_success)) == true || saveResult?.contains(context.getString(R.string.relation_save_success)) == true) {
             onNavigateToRelationList()
         }
     }
@@ -237,19 +237,19 @@ fun SyncRelationEditScreen(
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            title = { Text("删除同步关系") },
-            text = { Text("确定要删除该同步关系吗？已同步的本地文件不会被删除。") },
+            title = { Text(stringResource(R.string.relation_delete_confirm_title)) },
+            text = { Text(stringResource(R.string.relation_delete_confirm_text)) },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.deleteRelation()
                     showDeleteDialog = false
                 }) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("取消")
+                    Text(stringResource(R.string.common_cancel))
                 }
             }
         )
@@ -259,14 +259,14 @@ fun SyncRelationEditScreen(
     if (showRemoteBrowser) {
         AlertDialog(
             onDismissRequest = { showRemoteBrowser = false },
-            title = { Text("浏览远端目录") },
+            title = { Text(stringResource(R.string.relation_browse_remote)) },
             text = {
                 Column {
-                    Text("当前路径: $currentRemotePath", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.relation_current_path, currentRemotePath), style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))
                     if (currentRemotePath != "/") {
                         TextButton(onClick = { viewModel.navigateRemoteUp() }) {
-                            Text(".. (上级目录)")
+                            Text(stringResource(R.string.relation_parent_dir))
                         }
                     }
                     if (isBrowsing) {
@@ -304,12 +304,12 @@ fun SyncRelationEditScreen(
                     viewModel.selectRemotePath()
                     showRemoteBrowser = false
                 }) {
-                    Text("选择此目录")
+                    Text(stringResource(R.string.relation_select_dir))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showRemoteBrowser = false }) {
-                    Text("取消")
+                    Text(stringResource(R.string.common_cancel))
                 }
             }
         )
@@ -321,11 +321,11 @@ fun SyncRelationEditScreen(
 
         AlertDialog(
             onDismissRequest = { showLocalBrowser = false },
-            title = { Text("选择本地基目录") },
+            title = { Text(stringResource(R.string.relation_select_local_base)) },
             text = {
                 Column {
                     Text(
-                        "当前路径: /${if (currentLocalPath.isEmpty()) "" else currentLocalPath}",
+                        stringResource(R.string.relation_current_path, "/${if (currentLocalPath.isEmpty()) "" else currentLocalPath}"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -333,7 +333,7 @@ fun SyncRelationEditScreen(
 
                     if (currentLocalPath.isNotEmpty()) {
                         TextButton(onClick = { viewModel.navigateLocalUp() }) {
-                            Text(".. (上级目录)")
+                            Text(stringResource(R.string.relation_parent_dir))
                         }
                     }
 
@@ -366,7 +366,7 @@ fun SyncRelationEditScreen(
                         IconButton(onClick = { showCreateFolderDialog = true }) {
                             Icon(
                                 Icons.Filled.CreateNewFolder,
-                                contentDescription = "新建文件夹",
+                                contentDescription = stringResource(R.string.relation_new_folder),
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -378,12 +378,12 @@ fun SyncRelationEditScreen(
                     viewModel.confirmLocalSelection()
                     showLocalBrowser = false
                 }) {
-                    Text("选择此目录")
+                    Text(stringResource(R.string.relation_select_dir))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showLocalBrowser = false }) {
-                    Text("取消")
+                    Text(stringResource(R.string.common_cancel))
                 }
             }
         )
@@ -392,12 +392,12 @@ fun SyncRelationEditScreen(
             var newFolderName by remember { mutableStateOf("") }
             AlertDialog(
                 onDismissRequest = { showCreateFolderDialog = false },
-                title = { Text("新建文件夹") },
+                title = { Text(stringResource(R.string.relation_new_folder)) },
                 text = {
                     OutlinedTextField(
                         value = newFolderName,
                         onValueChange = { newFolderName = it },
-                        label = { Text("文件夹名称") },
+                        label = { Text(stringResource(R.string.relation_folder_name)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -412,15 +412,15 @@ fun SyncRelationEditScreen(
                         },
                         enabled = newFolderName.isNotBlank()
                     ) {
-                        Text("创建")
+                        Text(stringResource(R.string.common_create))
                     }
                 },
-                dismissButton = {
-                    TextButton(onClick = { showCreateFolderDialog = false }) {
-                        Text("取消")
-                    }
-                }
-            )
-        }
-    }
-}
+                 dismissButton = {
+                     TextButton(onClick = { showCreateFolderDialog = false }) {
+                         Text(stringResource(R.string.common_cancel))
+                     }
+                 }
+             )
+         }
+     }
+ }

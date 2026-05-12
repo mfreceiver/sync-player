@@ -35,7 +35,7 @@ class SmbFileClient(
     private var subPath: String = ""
 
     private fun smbErrorMessage(e: Exception, host: String): String {
-        val commonMsg = mapNetworkErrorMessage(e, host)
+        val commonMsg = mapNetworkErrorMessage(e, host, context)
         if (commonMsg != null) return commonMsg
         return when (e) {
             is SmbAuthException -> "SMB认证失败，请检查用户名和密码 (${e.message})"

@@ -10,9 +10,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
+import cn.vectory.syncplayer.R
 
 @Composable
 fun LockScreenOverlay(
@@ -55,12 +57,12 @@ fun LockScreenOverlay(
             )
             Spacer(Modifier.height(16.dp))
             Text(
-                text = "应用已锁定",
+                text = stringResource(R.string.lock_app_locked),
                 style = MaterialTheme.typography.headlineMedium
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "请验证身份以继续使用",
+                text = stringResource(R.string.lock_verify_prompt),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -77,7 +79,7 @@ fun LockScreenOverlay(
                         )
                     }
                 ) {
-                    Text("验证")
+                    Text(stringResource(R.string.lock_verify))
                 }
             }
         }

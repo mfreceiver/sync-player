@@ -50,7 +50,8 @@ data class PlayerUiState(
     val seekTarget: Long = -1L,
     val speedOverlayMultiplier: Float? = null,
     val isLongPressing: Boolean = false,
-    val lastAutoSwitchTime: Long = 0L
+    val lastAutoSwitchTime: Long = 0L,
+    val playerError: String? = null
 )
 
 @HiltViewModel
@@ -278,6 +279,14 @@ class PlayerViewModel @Inject constructor(
 
     fun clearSeekTarget() {
         _uiState.update { it.copy(seekTarget = -1L) }
+    }
+
+    fun onPlayerError(errorMessage: String) {
+        _uiState.update { it.copy(playerError = errorMessage, isPlaying = false) }
+    }
+
+    fun clearPlayerError() {
+        _uiState.update { it.copy(playerError = null) }
     }
 
     override fun onCleared() {

@@ -12,13 +12,17 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.ActiveDownload
 import cn.vectory.syncplayer.data.model.SyncAction
+import cn.vectory.syncplayer.ui.components.ErrorBanner
+import cn.vectory.syncplayer.ui.components.FullScreenError
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,10 +56,10 @@ fun SyncPreviewScreen(
                                 modifier = Modifier.clickable { showRelationDropdown = !showRelationDropdown },
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(currentRelationName.ifEmpty { "同步预览" })
+                                Text(currentRelationName.ifEmpty { stringResource(R.string.sync_preview_title) })
                                 Icon(
                                     Icons.Default.ArrowDropDown,
-                                    contentDescription = "切换同步关系",
+                                    contentDescription = stringResource(R.string.sync_preview_switch_relation),
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -97,7 +101,7 @@ fun SyncPreviewScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "返回"
+                                contentDescription = stringResource(R.string.common_back)
                             )
                         }
                     }
@@ -106,12 +110,12 @@ fun SyncPreviewScreen(
                     Tab(
                         selected = syncMode == SyncMode.DOWNLOAD,
                         onClick = { viewModel.setSyncMode(SyncMode.DOWNLOAD) },
-                        text = { Text("下载") }
+                        text = { Text(stringResource(R.string.sync_preview_download)) }
                     )
                     Tab(
                         selected = syncMode == SyncMode.DELETE,
                         onClick = { viewModel.setSyncMode(SyncMode.DELETE) },
-                        text = { Text("删除") }
+                        text = { Text(stringResource(R.string.sync_preview_delete_label)) }
                     )
                 }
             }
@@ -132,7 +136,7 @@ fun SyncPreviewScreen(
                             onBack()
                         }
                     }) {
-                        Text(if (isSyncing || isDeleting) "停止" else "取消")
+                        Text(if (isSyncing || isDeleting) stringResource(R.string.common_stop) else stringResource(R.string.common_cancel))
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
@@ -146,7 +150,7 @@ fun SyncPreviewScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         } else {
-                            Text("预览")
+                            Text(stringResource(R.string.sync_preview_button))
                         }
                     }
                     Spacer(modifier = Modifier.width(8.dp))
@@ -180,9 +184,9 @@ fun SyncPreviewScreen(
                             )
                         } else {
                             if (syncMode == SyncMode.DOWNLOAD) {
-                                Text("确认下载")
+                                Text(stringResource(R.string.sync_preview_confirm_download))
                             } else {
-                                Text("确认删除")
+                                Text(stringResource(R.string.sync_preview_confirm_delete))
                             }
                         }
                     }
@@ -203,31 +207,11 @@ fun SyncPreviewScreen(
                 }
             }
             error != null && !previewLoaded -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Error,
-                            contentDescription = "错误",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Text(
-                            text = error ?: "未知错误",
-                            color = MaterialTheme.colorScheme.error
-                        )
-                        Button(onClick = { viewModel.loadPreview() }) {
-                            Text("重试")
-                        }
-                    }
-                }
+                FullScreenError(
+                    message = error ?: stringResource(R.string.unknown_error),
+                    onRetry = { viewModel.loadPreview() },
+                    modifier = Modifier.padding(paddingValues)
+                )
             }
             !previewLoaded -> {
                 Box(
@@ -242,11 +226,11 @@ fun SyncPreviewScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.PlayCircleOutline,
-                            contentDescription = "提示",
+                            contentDescription = stringResource(R.string.sync_preview_hint),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "按下方预览按钮查看同步内容",
+                            text = stringResource(R.string.sync_preview_hint),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -260,35 +244,10 @@ fun SyncPreviewScreen(
                         .padding(paddingValues)
                 ) {
                     if (error != null) {
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.errorContainer
-                            )
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Error,
-                                    contentDescription = "错误",
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                                Text(
-                                    text = error!!,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onErrorContainer,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                TextButton(onClick = { viewModel.clearError() }) {
-                                    Text("关闭")
-                                }
-                            }
-                        }
+                        ErrorBanner(
+                            message = error!!,
+                            onDismiss = { viewModel.clearError() }
+                        )
                     }
                     if (syncComplete) {
                         Card(
@@ -313,7 +272,7 @@ fun SyncPreviewScreen(
                                 )
                                 Spacer(Modifier.height(8.dp))
                                 Text(
-                                    text = "同步已完成",
+                                    text = stringResource(R.string.sync_preview_completed),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -380,13 +339,13 @@ fun SyncPreviewScreen(
                                     )
                                     Spacer(Modifier.height(8.dp))
                                     Text(
-                                        text = "已同步，无需操作",
+                                        text = stringResource(R.string.sync_preview_up_to_date),
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Spacer(Modifier.height(16.dp))
                                     Button(onClick = { viewModel.loadPreview() }) {
-                                        Text("重新扫描")
+                                        Text(stringResource(R.string.sync_preview_rescan))
                                     }
                                 }
                             }
@@ -454,7 +413,7 @@ private fun SyncDownloadSummaryCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "将下载 $downloadCount 个文件 (${formatFileSize(downloadSize)})，删除 $deleteCount 个本地文件 (${formatFileSize(deleteSize)})",
+                text = stringResource(R.string.sync_preview_download_summary, downloadCount, formatFileSize(downloadSize), deleteCount, formatFileSize(deleteSize)),
                 style = MaterialTheme.typography.bodyMedium
             )
         }
@@ -476,7 +435,7 @@ private fun SyncDeleteSummaryCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "$count 个预删除文件将从本地和远端同时删除 (${formatFileSize(totalSize)})",
+                text = stringResource(R.string.sync_preview_delete_summary, count, formatFileSize(totalSize)),
                 style = MaterialTheme.typography.bodyMedium
             )
         }
@@ -500,11 +459,11 @@ private fun SyncDeleteWarningCard() {
         ) {
             Icon(
                 imageVector = Icons.Default.Warning,
-                contentDescription = "警告",
+                contentDescription = stringResource(R.string.sync_preview_warning),
                 tint = MaterialTheme.colorScheme.error
             )
             Text(
-                text = "此操作不可恢复！删除后文件将从本地和远端永久移除",
+                text = stringResource(R.string.sync_preview_delete_warning),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onErrorContainer
             )
@@ -538,7 +497,7 @@ private fun SyncActionItem(
         leadingContent = {
             Icon(
                 imageVector = if (isDownload) Icons.Default.Download else Icons.Default.Delete,
-                contentDescription = if (isDownload) "下载" else "删除",
+                contentDescription = if (isDownload) stringResource(R.string.sync_preview_content_desc_download) else stringResource(R.string.sync_preview_content_desc_delete),
                 tint = if (isDownload) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
             )
         },
@@ -586,12 +545,12 @@ private fun SyncProgressCard(
             ) {
                 val remaining = totalFiles - completedFiles
                 Text(
-                    text = "已完成 $completedFiles / $totalFiles 个文件",
+                    text = stringResource(R.string.sync_preview_completed_files, completedFiles, totalFiles),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "剩余 $remaining 个",
+                    text = stringResource(R.string.sync_preview_remaining, remaining),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -623,7 +582,7 @@ private fun SyncProgressCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "正在下载 ${activeDownloads.size} 个文件",
+                        text = stringResource(R.string.sync_preview_downloading, activeDownloads.size),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary
                     )

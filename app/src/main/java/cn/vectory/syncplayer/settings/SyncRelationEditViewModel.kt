@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.RemoteFile
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncRelation
@@ -30,6 +31,7 @@ class SyncRelationEditViewModel @Inject constructor(
     private val smbFileClient: SmbFileClient,
     private val sftpFileClient: SftpFileClient,
     private val storagePaths: StoragePaths,
+    @ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -160,7 +162,7 @@ class SyncRelationEditViewModel @Inject constructor(
             val sourceId = _selectedSourceId.value
             val source = _availableSources.value.find { it.id == sourceId }
             if (source == null) {
-                _error.value = "请先选择数据源"
+                _error.value = context.getString(R.string.relation_select_source_first)
                 return@launch
             }
             _error.value = null
@@ -192,12 +194,12 @@ class SyncRelationEditViewModel @Inject constructor(
             val sourceId = _selectedSourceId.value
             val source = _availableSources.value.find { it.id == sourceId }
             if (source == null) {
-                _testResult.value = "请先选择数据源"
+                _testResult.value = context.getString(R.string.relation_select_source_first)
                 return@launch
             }
             val path = _remotePath.value.trim()
             if (path.isBlank()) {
-                _testResult.value = "请先输入远端目录"
+                _testResult.value = context.getString(R.string.relation_input_remote_first)
                 return@launch
             }
             _isTesting.value = true
@@ -209,12 +211,12 @@ class SyncRelationEditViewModel @Inject constructor(
             try {
                 client.connect(source, path)
                 client.listDirectories(path)
-                _testResult.value = "目录可访问"
+                _testResult.value = context.getString(R.string.relation_dir_accessible)
             } catch (e: Exception) {
                 _testResult.value = when (classifyRemoteError(e)) {
-                    RemoteBrowseError.PATH_NOT_FOUND -> "目录不存在"
-                    RemoteBrowseError.TIMEOUT -> "连接超时，请检查网络"
-                    RemoteBrowseError.OTHER -> "无法访问: ${e.message}"
+                    RemoteBrowseError.PATH_NOT_FOUND -> context.getString(R.string.relation_dir_not_exist)
+                    RemoteBrowseError.TIMEOUT -> context.getString(R.string.relation_timeout_check_network)
+                    RemoteBrowseError.OTHER -> context.getString(R.string.relation_access_failed, e.message)
                 }
             } finally {
                 _isTesting.value = false
@@ -250,14 +252,14 @@ class SyncRelationEditViewModel @Inject constructor(
             if (_name.value.isBlank() || _selectedSourceId.value == 0L ||
                 _remotePath.value.isBlank() || _localBasePath.value.isBlank()
             ) {
-                _error.value = "请完善所有字段"
+                _error.value = context.getString(R.string.relation_complete_fields)
                 return@launch
             }
             val conflicts = syncRelationRepository.checkBasePathConflict(
                 _localBasePath.value, if (relationId > 0) relationId else 0
             )
             if (conflicts.isNotEmpty()) {
-                _error.value = "本地基目录与现有同步关系冲突，基目录不能互相嵌套"
+                _error.value = context.getString(R.string.relation_base_dir_conflict)
                 return@launch
             }
             _isSaving.value = true
@@ -271,9 +273,9 @@ class SyncRelationEditViewModel @Inject constructor(
                         localBasePath = _localBasePath.value.trim()
                     )
                 )
-                _saveResult.value = "保存成功"
+                _saveResult.value = context.getString(R.string.relation_save_success)
             } catch (e: Exception) {
-                _error.value = "保存失败: ${e.message}"
+                _error.value = context.getString(R.string.relation_save_failed, e.message)
             } finally {
                 _isSaving.value = false
             }
@@ -284,7 +286,7 @@ class SyncRelationEditViewModel @Inject constructor(
         viewModelScope.launch {
             if (relationId <= 0) return@launch
             syncRelationRepository.delete(relationId)
-            _saveResult.value = "删除成功"
+            _saveResult.value = context.getString(R.string.relation_delete_success)
         }
     }
 }

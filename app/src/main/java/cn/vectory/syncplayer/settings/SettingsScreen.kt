@@ -21,9 +21,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.BuildConfig
+import cn.vectory.syncplayer.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,7 +44,7 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("设置") },
+                title = { Text(stringResource(R.string.settings_title)) },
                 navigationIcon = {
                     IconButton(
                         onClick = {
@@ -53,7 +55,7 @@ fun SettingsScreen(
                         },
                         enabled = !isNavigatingBack
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.common_back))
                     }
                 }
             )
@@ -79,20 +81,20 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             ListItem(
-                headlineContent = { Text("配置数据源") },
+                headlineContent = { Text(stringResource(R.string.settings_configure_source)) },
                 leadingContent = { Icon(Icons.Default.Cloud, contentDescription = null) },
                 modifier = Modifier.clickable { onNavigateToSyncSourceList() }
             )
 
             ListItem(
-                headlineContent = { Text("配置同步关系") },
+                headlineContent = { Text(stringResource(R.string.settings_configure_sync)) },
                 leadingContent = { Icon(Icons.Default.Sync, contentDescription = null) },
                 modifier = Modifier.clickable { onNavigateToSyncRelationList() }
             )
 
             ListItem(
-                headlineContent = { Text("快捷回收") },
-                supportingContent = { Text("启用时双击屏幕中部标记回收") },
+                headlineContent = { Text(stringResource(R.string.settings_quick_recycle)) },
+                supportingContent = { Text(stringResource(R.string.settings_quick_recycle_desc)) },
                 leadingContent = { Icon(Icons.Default.Delete, contentDescription = null) },
                 trailingContent = {
                     Switch(
@@ -103,8 +105,8 @@ fun SettingsScreen(
             )
 
             ListItem(
-                headlineContent = { Text("音量均衡") },
-                supportingContent = { Text("点击进行增益分析") },
+                headlineContent = { Text(stringResource(R.string.settings_volume_balance)) },
+                supportingContent = { Text(stringResource(R.string.settings_volume_balance_desc)) },
                 leadingContent = { Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null) },
                 trailingContent = {
                     Switch(
@@ -116,7 +118,7 @@ fun SettingsScreen(
             )
 
             ListItem(
-                headlineContent = { Text("安卓存储框架") },
+                headlineContent = { Text(stringResource(R.string.settings_saf)) },
                 leadingContent = { Icon(Icons.Default.FolderOpen, contentDescription = null) },
                 trailingContent = {
                     Switch(
@@ -127,12 +129,13 @@ fun SettingsScreen(
             )
 
             ListItem(
-                headlineContent = { Text("应用安全锁") },
+                headlineContent = { Text(stringResource(R.string.settings_app_lock)) },
                 supportingContent = {
-                    if (!viewModel.canAuthenticateBio) {
-                        Text("设备未设置生物识别信息", color = MaterialTheme.colorScheme.error)
+                    val cap = viewModel.authCapabilityInfo
+                    if (!cap.canAuthenticate) {
+                        Text(stringResource(R.string.settings_no_auth), color = MaterialTheme.colorScheme.error)
                     } else {
-                        Text("指纹/面部识别验证")
+                        Text(stringResource(R.string.settings_auth_support, cap.description))
                     }
                 },
                 leadingContent = { Icon(Icons.Default.Lock, contentDescription = null) },
@@ -145,20 +148,20 @@ fun SettingsScreen(
                                 viewModel.authenticateAndToggle(activity, checked)
                             }
                         },
-                        enabled = viewModel.canAuthenticateBio
+                        enabled = viewModel.authCapabilityInfo.canAuthenticate
                     )
                 }
             )
 
             ListItem(
-                headlineContent = { Text("重建元数据") },
-                supportingContent = { Text("扫描本地文件并重建数据库记录") },
+                headlineContent = { Text(stringResource(R.string.settings_rebuild_metadata)) },
+                supportingContent = { Text(stringResource(R.string.settings_rebuild_metadata_desc)) },
                 leadingContent = { Icon(Icons.Default.Build, contentDescription = null) },
                 modifier = Modifier.clickable { onNavigateToMetadataRebuild() }
             )
 
             ListItem(
-                headlineContent = { Text("应用版本") },
+                headlineContent = { Text(stringResource(R.string.settings_app_version)) },
                 leadingContent = { Icon(Icons.Default.Info, contentDescription = null) },
                 trailingContent = {
                     Text(

@@ -9,9 +9,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.ui.components.FullScreenError
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,7 +35,7 @@ fun MetadataRebuildScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("重建元数据") },
+                title = { Text(stringResource(R.string.metadata_title)) },
                 navigationIcon = {
                     IconButton(
                         onClick = {
@@ -44,7 +47,7 @@ fun MetadataRebuildScreen(
                         },
                         enabled = !isNavigatingBack
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 }
             )
@@ -65,7 +68,7 @@ fun MetadataRebuildScreen(
                             onBack()
                         }
                     }) {
-                        Text(if (isRebuilding) "停止" else "取消")
+                        Text(if (isRebuilding) stringResource(R.string.common_stop) else stringResource(R.string.common_cancel))
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
@@ -79,7 +82,7 @@ fun MetadataRebuildScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         } else {
-                            Text("发现")
+                            Text(stringResource(R.string.metadata_discover))
                         }
                     }
                     Spacer(modifier = Modifier.width(8.dp))
@@ -94,7 +97,7 @@ fun MetadataRebuildScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         } else {
-                            Text("处理")
+                            Text(stringResource(R.string.metadata_process))
                         }
                     }
                     Spacer(modifier = Modifier.width(16.dp))
@@ -104,14 +107,11 @@ fun MetadataRebuildScreen(
     ) { paddingValues ->
         when {
             error != null && discoveryResult == null && !isComplete -> {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(paddingValues),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(error!!, color = MaterialTheme.colorScheme.error)
-                    }
-                }
+                FullScreenError(
+                    message = error!!,
+                    onRetry = { viewModel.discover() },
+                    modifier = Modifier.padding(paddingValues)
+                )
             }
             isComplete -> {
                 Box(
@@ -126,7 +126,7 @@ fun MetadataRebuildScreen(
                             modifier = Modifier.size(48.dp)
                         )
                         Spacer(Modifier.height(8.dp))
-                        Text("重建完成", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.metadata_complete), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -136,7 +136,7 @@ fun MetadataRebuildScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "点击下方\u201C发现\u201D按钮扫描需要处理的文件",
+                        stringResource(R.string.metadata_discover_hint),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -159,8 +159,8 @@ fun MetadataRebuildScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Text("已完成 $completedCount / $totalCount 项", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                    Text("剩余 ${totalCount - completedCount} 项", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(stringResource(R.string.metadata_completed_items, completedCount, totalCount), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                    Text(stringResource(R.string.metadata_remaining_items, totalCount - completedCount), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
 
                                 currentFile?.let { name ->
@@ -188,13 +188,13 @@ fun MetadataRebuildScreen(
                         Card(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 val r = discoveryResult
-                                Text("发现 ${r!!.newFiles.size} 个磁盘文件缺少记录")
-                                Text("发现 ${r.orphanedRecords.size} 个孤立数据库记录")
-                                Text("发现 ${r.incompleteRecords.size} 个文件缺少元数据")
+                                Text(stringResource(R.string.metadata_new_files, r!!.newFiles.size))
+                                Text(stringResource(R.string.metadata_orphaned_records, r.orphanedRecords.size))
+                                Text(stringResource(R.string.metadata_incomplete_records, r.incompleteRecords.size))
                                 Spacer(Modifier.height(4.dp))
                                 HorizontalDivider()
                                 Spacer(Modifier.height(4.dp))
-                                Text("共需处理 ${r.newFiles.size + r.orphanedRecords.size + r.incompleteRecords.size} 项", fontWeight = FontWeight.Bold)
+                                Text(stringResource(R.string.metadata_total_items, r.newFiles.size + r.orphanedRecords.size + r.incompleteRecords.size), fontWeight = FontWeight.Bold)
                             }
                         }
                     }

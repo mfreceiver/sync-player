@@ -10,11 +10,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.BuildConfig
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -31,7 +33,7 @@ fun AboutScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("关于") },
+                title = { Text(stringResource(R.string.about_title)) },
                 navigationIcon = {
                     IconButton(
                         onClick = {
@@ -42,7 +44,7 @@ fun AboutScreen(
                         },
                         enabled = !isNavigatingBack
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.common_back))
                     }
                 }
             )
@@ -62,14 +64,14 @@ fun AboutScreen(
                         modifier = Modifier.padding(16.dp).fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("关于", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.about_card_title), style = MaterialTheme.typography.titleMedium)
                     }
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                     Row(
                         modifier = Modifier.padding(16.dp).fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("应用版本")
+                        Text(stringResource(R.string.about_app_version))
                         Text(BuildConfig.VERSION_NAME, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -82,9 +84,9 @@ fun AboutScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("同步日志", style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.about_sync_logs), style = MaterialTheme.typography.titleMedium)
                             TextButton(onClick = { logViewerExpanded = !logViewerExpanded }) {
-                                Text(if (logViewerExpanded) "收起" else "查看日志")
+                                Text(if (logViewerExpanded) stringResource(R.string.about_collapse) else stringResource(R.string.about_view_logs))
                             }
                         }
 
@@ -93,7 +95,7 @@ fun AboutScreen(
 
                             if (syncLogs.isEmpty()) {
                                 Text(
-                                    "暂无日志记录",
+                                    stringResource(R.string.about_no_logs),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -115,7 +117,7 @@ fun AboutScreen(
                                 onClick = viewModel::clearLogs,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("清除日志")
+                                Text(stringResource(R.string.about_clear_logs))
                             }
                         }
                     }

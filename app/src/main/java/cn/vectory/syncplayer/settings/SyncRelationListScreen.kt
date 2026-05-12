@@ -13,11 +13,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.data.model.SyncRelationWithSource
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -33,12 +36,13 @@ fun SyncRelationListScreen(
 ) {
     val relations by viewModel.relationsWithSource.collectAsStateWithLifecycle()
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
+    val context = LocalContext.current
     var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("同步关系") },
+                title = { Text(stringResource(R.string.relation_list_title)) },
                 navigationIcon = {
                     IconButton(
                         onClick = {
@@ -49,14 +53,14 @@ fun SyncRelationListScreen(
                         },
                         enabled = !isNavigatingBack
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 }
             )
         },
         floatingActionButton = {
             FloatingActionButton(onClick = onNavigateToCreate) {
-                Icon(Icons.Filled.Add, contentDescription = "新增")
+                Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.relation_add))
             }
         }
     ) { padding ->
@@ -65,7 +69,7 @@ fun SyncRelationListScreen(
                 modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text("尚未配置同步关系，点击右下角 + 新增同步关系")
+                Text(stringResource(R.string.relation_empty))
             }
         } else {
             LazyColumn(
@@ -76,7 +80,8 @@ fun SyncRelationListScreen(
                         val extendedColors = LocalExtendedColors.current
                         val lastSync = item.relation.lastSyncTime
                         val lastResult = item.relation.lastSyncResult
-                        val isSuccess = lastResult != null && !lastResult.contains("失败")
+                        val failKeyword = context.getString(R.string.sync_failed).substringBefore(":").substringBefore("：")
+                        val isSuccess = lastResult != null && !lastResult.contains(failKeyword)
                         val resultColor = when {
                             lastResult == null -> MaterialTheme.colorScheme.onSurfaceVariant
                             isSuccess -> extendedColors.successGreen
@@ -87,9 +92,9 @@ fun SyncRelationListScreen(
                             headlineContent = { Text(item.relation.name) },
                             supportingContent = {
                                 Text(
-                                    "上次同步: ${lastSync?.let {
+                                    stringResource(R.string.relation_last_sync, lastSync?.let {
                                         dateFormat.format(it)
-                                    } ?: "从未同步"}",
+                                    } ?: stringResource(R.string.relation_never_synced)),
                                     color = resultColor
                                 )
                                 if (lastResult != null && !isSuccess) {
@@ -105,7 +110,7 @@ fun SyncRelationListScreen(
                             },
                             trailingContent = {
                                 IconButton(onClick = { onNavigateToEdit(item.relation.id) }) {
-                                    Icon(Icons.Default.Edit, contentDescription = "编辑", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.relation_edit_label), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             },
                             modifier = Modifier.clickable { onNavigateToSyncPreview(item.relation.id) }

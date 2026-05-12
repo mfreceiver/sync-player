@@ -11,6 +11,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -18,6 +20,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.data.model.SyncProtocol
+import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.ui.components.FormResultText
 
 
 
@@ -29,6 +33,7 @@ fun SyncSourceEditScreen(
     viewModel: SyncSourceEditViewModel = hiltViewModel()
 ) {
     val extendedColors = LocalExtendedColors.current
+    val context = LocalContext.current
     val name by viewModel.name.collectAsStateWithLifecycle()
     val protocol by viewModel.protocol.collectAsStateWithLifecycle()
     val host by viewModel.host.collectAsStateWithLifecycle()
@@ -48,7 +53,7 @@ fun SyncSourceEditScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (sourceId > 0L) "编辑数据源" else "新增数据源") },
+                title = { Text(if (sourceId > 0L) stringResource(R.string.source_edit) else stringResource(R.string.source_new)) },
                 navigationIcon = {
                     IconButton(
                         onClick = {
@@ -59,7 +64,7 @@ fun SyncSourceEditScreen(
                         },
                         enabled = !isNavigatingBack
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 }
             )
@@ -76,8 +81,8 @@ fun SyncSourceEditScreen(
                     OutlinedTextField(
                         value = name,
                         onValueChange = { viewModel.setName(it) },
-                        label = { Text("名称") },
-                        placeholder = { Text("家庭NAS", color = extendedColors.placeholderGrey) },
+                        label = { Text(stringResource(R.string.source_name)) },
+                        placeholder = { Text(stringResource(R.string.source_name_placeholder), color = extendedColors.placeholderGrey) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
@@ -100,8 +105,8 @@ fun SyncSourceEditScreen(
                     OutlinedTextField(
                         value = host,
                         onValueChange = { viewModel.setHost(it) },
-                        label = { Text("服务器地址") },
-                        placeholder = { Text("192.168.1.100", color = extendedColors.placeholderGrey) },
+                        label = { Text(stringResource(R.string.source_server)) },
+                        placeholder = { Text(stringResource(R.string.source_server_placeholder), color = extendedColors.placeholderGrey) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
@@ -110,7 +115,7 @@ fun SyncSourceEditScreen(
                     OutlinedTextField(
                         value = port,
                         onValueChange = { viewModel.setPort(it) },
-                        label = { Text("端口") },
+                        label = { Text(stringResource(R.string.source_port)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
@@ -120,7 +125,7 @@ fun SyncSourceEditScreen(
                     OutlinedTextField(
                         value = username,
                         onValueChange = { viewModel.setUsername(it) },
-                        label = { Text("用户名") },
+                        label = { Text(stringResource(R.string.source_username)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
@@ -129,14 +134,14 @@ fun SyncSourceEditScreen(
                     OutlinedTextField(
                         value = password,
                         onValueChange = { viewModel.setPassword(it) },
-                        label = { Text("密码") },
+                        label = { Text(stringResource(R.string.source_password)) },
                         singleLine = true,
                         visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                         trailingIcon = {
                             IconButton(onClick = { passwordVisible = !passwordVisible }) {
                                 Icon(
                                     imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = if (passwordVisible) "隐藏密码" else "显示密码"
+                                    contentDescription = if (passwordVisible) stringResource(R.string.source_hide_password) else stringResource(R.string.source_show_password)
                                 )
                             }
                         },
@@ -153,14 +158,14 @@ fun SyncSourceEditScreen(
                             enabled = !isTesting && host.isNotBlank(),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(if (isTesting) "测试中…" else "测试连接")
+                            Text(if (isTesting) stringResource(R.string.source_testing) else stringResource(R.string.source_test_connection))
                         }
                         Button(
                             onClick = viewModel::save,
                             enabled = !isSaving && name.isNotBlank() && host.isNotBlank(),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(if (isSaving) "保存中…" else "保存")
+                            Text(if (isSaving) stringResource(R.string.common_saving) else stringResource(R.string.common_save))
                         }
                     }
 
@@ -173,31 +178,21 @@ fun SyncSourceEditScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Delete,
-                                contentDescription = "删除",
+                                contentDescription = stringResource(R.string.common_delete),
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(Modifier.width(8.dp))
-                            Text("删除数据源")
+                            Text(stringResource(R.string.source_delete_source))
                         }
                     }
 
                     testResult?.let {
                         Spacer(Modifier.height(8.dp))
-                        Text(
-                            it,
-                            color = if (it.contains("成功")) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                        FormResultText(message = it, isSuccess = it.contains(context.getString(R.string.source_connect_success)) || it.contains(context.getString(R.string.source_save_success)))
                     }
                     saveResult?.let {
                         Spacer(Modifier.height(4.dp))
-                        Text(
-                            it,
-                            color = if (it.contains("成功")) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                        FormResultText(message = it, isSuccess = it.contains(context.getString(R.string.source_connect_success)) || it.contains(context.getString(R.string.source_save_success)))
                     }
                 }
         }
@@ -206,26 +201,26 @@ fun SyncSourceEditScreen(
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            title = { Text("删除数据源") },
-            text = { Text("确定要删除该数据源吗？请先删除所有关联的同步关系。") },
+            title = { Text(stringResource(R.string.source_delete_confirm_title)) },
+            text = { Text(stringResource(R.string.source_delete_confirm_text)) },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.deleteSource()
                     showDeleteDialog = false
                 }) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("取消")
+                    Text(stringResource(R.string.common_cancel))
                 }
             }
         )
     }
 
     LaunchedEffect(saveResult) {
-        if (saveResult?.contains("成功") == true) {
+        if (saveResult?.contains(context.getString(R.string.source_save_success)) == true) {
             onNavigateToSourceList()
         }
     }

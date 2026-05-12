@@ -1,14 +1,17 @@
 package cn.vectory.syncplayer.settings
 
+import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,6 +23,7 @@ class SyncSourceEditViewModel @Inject constructor(
     private val syncSourceRepository: SyncSourceRepository,
     private val smbFileClient: SmbFileClient,
     private val sftpFileClient: SftpFileClient,
+    @ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -51,10 +55,17 @@ class SyncSourceEditViewModel @Inject constructor(
     private val _password = MutableStateFlow("")
     val password: StateFlow<String> = _password.asStateFlow()
     fun setPassword(value: String) { _password.value = value }
-    val isTesting = MutableStateFlow(false)
-    val testResult = MutableStateFlow<String?>(null)
-    val isSaving = MutableStateFlow(false)
-    val saveResult = MutableStateFlow<String?>(null)
+    private val _isTesting = MutableStateFlow(false)
+    val isTesting: StateFlow<Boolean> = _isTesting.asStateFlow()
+
+    private val _testResult = MutableStateFlow<String?>(null)
+    val testResult: StateFlow<String?> = _testResult.asStateFlow()
+
+    private val _isSaving = MutableStateFlow(false)
+    val isSaving: StateFlow<Boolean> = _isSaving.asStateFlow()
+
+    private val _saveResult = MutableStateFlow<String?>(null)
+    val saveResult: StateFlow<String?> = _saveResult.asStateFlow()
 
     init {
         if (sourceId > 0L) {
@@ -74,8 +85,8 @@ class SyncSourceEditViewModel @Inject constructor(
 
     fun testConnection() {
         viewModelScope.launch {
-            isTesting.value = true
-            testResult.value = null
+            _isTesting.value = true
+            _testResult.value = null
             try {
                 val source = buildSource()
                 val client = when (source.protocol) {
@@ -83,46 +94,46 @@ class SyncSourceEditViewModel @Inject constructor(
                     SyncProtocol.SFTP -> sftpFileClient
                 }
                 client.testConnection(source, "/")
-                testResult.value = "连接成功"
+                _testResult.value = context.getString(R.string.source_connect_success)
             } catch (e: Exception) {
-                testResult.value = "连接失败: ${e.message}"
+                _testResult.value = context.getString(R.string.source_connect_failed, e.message)
             } finally {
-                isTesting.value = false
+                _isTesting.value = false
             }
         }
     }
 
     fun save() {
         viewModelScope.launch {
-            isSaving.value = true
-            saveResult.value = null
+            _isSaving.value = true
+            _saveResult.value = null
             try {
                 syncSourceRepository.save(buildSource())
-                saveResult.value = "保存成功"
+                _saveResult.value = context.getString(R.string.source_save_success)
             } catch (e: Exception) {
-                saveResult.value = "保存失败: ${e.message}"
+                _saveResult.value = context.getString(R.string.source_save_failed, e.message)
             } finally {
-                isSaving.value = false
+                _isSaving.value = false
             }
         }
     }
 
     fun deleteSource() {
         viewModelScope.launch {
-            isSaving.value = true
-            saveResult.value = null
+            _isSaving.value = true
+            _saveResult.value = null
             try {
                 val count = syncSourceRepository.getRelationCount(sourceId)
                 if (count > 0) {
-                    saveResult.value = "该数据源仍有 $count 个同步关系，请先删除所有同步关系"
+                    _saveResult.value = context.getString(R.string.source_has_relations, count)
                 } else {
                     syncSourceRepository.delete(sourceId)
-                    saveResult.value = "删除成功"
+                    _saveResult.value = context.getString(R.string.source_delete_success)
                 }
             } catch (e: Exception) {
-                saveResult.value = "删除失败: ${e.message}"
+                _saveResult.value = context.getString(R.string.source_delete_failed, e.message)
             } finally {
-                isSaving.value = false
+                _isSaving.value = false
             }
         }
     }
