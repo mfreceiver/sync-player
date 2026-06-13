@@ -2,13 +2,15 @@ package cn.vectory.syncplayer.data.repository
 
 import cn.vectory.syncplayer.data.local.dao.PlaybackRecordDao
 import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
+import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class PlaybackRepository @Inject constructor(
-    private val playbackRecordDao: PlaybackRecordDao
+    private val playbackRecordDao: PlaybackRecordDao,
+    private val appDatabase: cn.vectory.syncplayer.data.local.AppDatabase
 ) {
 
     suspend fun getByVideoId(videoItemId: Long): PlaybackRecordEntity? =
@@ -31,12 +33,13 @@ class PlaybackRepository @Inject constructor(
     suspend fun saveProgress(videoItemId: Long, position: Long, duration: Long) {
         val existing = playbackRecordDao.getByVideoId(videoItemId)
         val isCompleted = duration > 0 && position >= (duration * 0.95)
+        val now = System.currentTimeMillis()
         if (existing != null) {
             playbackRecordDao.upsert(
                 existing.copy(
                     position = position,
                     duration = duration,
-                    lastPlayedTime = System.currentTimeMillis(),
+                    lastPlayedTime = now,
                     isCompleted = isCompleted
                 )
             )
@@ -46,7 +49,7 @@ class PlaybackRepository @Inject constructor(
                     videoItemId = videoItemId,
                     position = position,
                     duration = duration,
-                    lastPlayedTime = System.currentTimeMillis(),
+                    lastPlayedTime = now,
                     isCompleted = isCompleted,
                     isTrashed = false
                 )
@@ -84,24 +87,24 @@ class PlaybackRepository @Inject constructor(
 
     // Phase 2: ensure folder has corresponding playback records and mark all as completed/uncompleted
     suspend fun markFolderCompleted(folderPath: String, completed: Boolean) {
-        // First ensure all videos in folder have playback records
-        val dao = playbackRecordDao
-        val videoIdsWithoutRecord = dao.getVideoIdsWithoutRecord(folderPath)
-        if (videoIdsWithoutRecord.isNotEmpty()) {
-            val now = System.currentTimeMillis()
-            val records = videoIdsWithoutRecord.map { videoId ->
-                PlaybackRecordEntity(
-                    videoItemId = videoId,
-                    position = 0,
-                    duration = 0,
-                    lastPlayedTime = now,
-                    isCompleted = completed,
-                    isTrashed = false
-                )
+        appDatabase.withTransaction {
+            val dao = playbackRecordDao
+            val videoIdsWithoutRecord = dao.getVideoIdsWithoutRecord(folderPath)
+            if (videoIdsWithoutRecord.isNotEmpty()) {
+                val now = System.currentTimeMillis()
+                val records = videoIdsWithoutRecord.map { videoId ->
+                    PlaybackRecordEntity(
+                        videoItemId = videoId,
+                        position = 0,
+                        duration = 0,
+                        lastPlayedTime = now,
+                        isCompleted = completed,
+                        isTrashed = false
+                    )
+                }
+                dao.upsertAllBatch(records)
             }
-            dao.upsertAllBatch(records)
+            dao.updateCompletedByFolder(folderPath, completed)
         }
-        // Then update existing records
-        dao.updateCompletedByFolder(folderPath, completed)
     }
 }

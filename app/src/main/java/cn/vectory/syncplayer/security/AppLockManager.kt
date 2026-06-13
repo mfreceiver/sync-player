@@ -25,6 +25,8 @@ class AppLockManager @Inject constructor(
     private val _isLocked = MutableStateFlow(false)
     val isLocked: StateFlow<Boolean> = _isLocked.asStateFlow()
 
+    @Volatile private var cachedSecureLockEnabled = false
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var hasBeenInBackground = false
@@ -40,6 +42,9 @@ class AppLockManager @Inject constructor(
 
     fun register() {
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+        scope.launch {
+            cachedSecureLockEnabled = userPrefs.getSecureLockEnabled()
+        }
     }
 
     override fun onStateChanged(source: LifecycleOwner, event: androidx.lifecycle.Lifecycle.Event) {
@@ -50,10 +55,8 @@ class AppLockManager @Inject constructor(
             androidx.lifecycle.Lifecycle.Event.ON_START -> {
                 if (hasBeenInBackground || isFirstStart) {
                     isFirstStart = false
-                    scope.launch {
-                        if (userPrefs.getSecureLockEnabled()) {
-                            _isLocked.value = true
-                        }
+                    if (cachedSecureLockEnabled) {
+                        _isLocked.value = true
                     }
                 }
             }

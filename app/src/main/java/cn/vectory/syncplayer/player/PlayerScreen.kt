@@ -122,11 +122,6 @@ fun PlayerScreen(
         }
     }
 
-    SideEffect {
-        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-        insetsController.hide(WindowInsetsCompat.Type.systemBars())
-    }
-
     LaunchedEffect(Unit) {
         viewModel.loadVideo(videoItemId)
     }
@@ -165,6 +160,7 @@ fun PlayerScreen(
         }
     }
 
+    val currentOnExit by rememberUpdatedState(onExit)
     val playerListener = remember {
         object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -181,7 +177,7 @@ fun PlayerScreen(
                     } else {
                         if (!isExiting) {
                             isExiting = true
-                            onExit()
+                            currentOnExit()
                         }
                     }
                 }
@@ -355,6 +351,11 @@ fun PlayerScreen(
     var progressBarHeightPx by remember { mutableIntStateOf(0) }
 
     val previewExtractor = remember { SeekPreviewExtractor() }
+    DisposableEffect(previewExtractor) {
+        onDispose {
+            previewExtractor.endSession()
+        }
+    }
     var seekPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var seekPreviewPosition by remember { mutableLongStateOf(0L) }
     var lastExtractedPosMs by remember { mutableLongStateOf(-1L) }

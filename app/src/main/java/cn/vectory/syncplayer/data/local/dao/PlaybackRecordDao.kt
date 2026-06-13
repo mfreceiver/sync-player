@@ -24,6 +24,9 @@ interface PlaybackRecordDao {
     @Upsert
     suspend fun upsert(record: PlaybackRecordEntity)
 
+    @Upsert
+    suspend fun upsertAll(records: List<PlaybackRecordEntity>)
+
     @Query("DELETE FROM playback_record WHERE videoItemId = :videoItemId")
     suspend fun deleteByVideoId(videoItemId: Long)
 
@@ -78,6 +81,6 @@ interface PlaybackRecordDao {
 
     @Transaction
     suspend fun upsertAllBatch(records: List<PlaybackRecordEntity>) {
-        records.forEach { upsert(it) }
+        upsertAll(records)
     }
 }

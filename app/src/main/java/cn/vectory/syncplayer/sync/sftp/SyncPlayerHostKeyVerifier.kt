@@ -48,7 +48,11 @@ class SyncPlayerHostKeyVerifier(context: Context) : HostKeyVerifier {
 
     private fun saveProps() {
         try {
-            hostsFile.outputStream().use { props.store(it, "SyncPlayer SFTP Known Hosts") }
+            val tmpFile = File(hostsFile.parentFile, "${hostsFile.name}.tmp")
+            tmpFile.outputStream().use { props.store(it, "SyncPlayer SFTP Known Hosts") }
+            if (!tmpFile.renameTo(hostsFile)) {
+                Log.e("HostKeyVerifier", "Failed to rename known_hosts.tmp to known_hosts")
+            }
         } catch (e: Exception) {
             Log.e("HostKeyVerifier", "Failed to save known_hosts", e)
         }

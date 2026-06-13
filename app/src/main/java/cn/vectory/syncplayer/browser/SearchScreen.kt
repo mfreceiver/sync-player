@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.ui.components.FileContextMenuDialog
 import cn.vectory.syncplayer.ui.components.FileStatusIcon
@@ -51,10 +52,10 @@ fun SearchScreen(
     onNavigateToImageViewer: (Long, List<Long>) -> Unit = { _, _ -> },
     onBack: () -> Unit,
 ) {
-    val query by viewModel.query.collectAsState()
-    val searchScope by viewModel.searchScope.collectAsState()
-    val searchResults by viewModel.searchResults.collectAsState()
-    val error by viewModel.error.collectAsState()
+    val query by viewModel.query.collectAsStateWithLifecycle()
+    val searchScope by viewModel.searchScope.collectAsStateWithLifecycle()
+    val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
 
     val focusRequester = remember { FocusRequester() }
     val context = LocalContext.current

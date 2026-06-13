@@ -80,7 +80,7 @@ internal fun VideoGridItem(
         width.toFloat() / height.toFloat()
     } else null
 
-    val thumbnailModifier = if (isImage && imageAspectRatio != null) {
+    val thumbnailModifier = if (staggeredMode && isImage && imageAspectRatio != null) {
         Modifier.fillMaxWidth().aspectRatio(imageAspectRatio)
     } else {
         Modifier.fillMaxWidth().aspectRatio(4f / 3f)

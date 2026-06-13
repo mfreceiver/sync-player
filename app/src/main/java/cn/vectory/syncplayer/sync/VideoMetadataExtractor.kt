@@ -48,11 +48,21 @@ class VideoMetadataExtractor @Inject constructor(
             var thumbnailPath: String? = videoItem.thumbnailPath
             val frame = retriever.getFrameAtTime(0)
             if (frame != null) {
-                val thumbFile = File(thumbnailDir, "${videoItem.id}.jpg")
-                FileOutputStream(thumbFile).use { fos ->
-                    frame.compress(Bitmap.CompressFormat.JPEG, 70, fos)
+                try {
+                    val scaled = if (frame.width > 640) {
+                        Bitmap.createScaledBitmap(frame, 640, (frame.height * 640f / frame.width).toInt(), true)
+                    } else {
+                        frame
+                    }
+                    val thumbFile = File(thumbnailDir, "${videoItem.id}.jpg")
+                    FileOutputStream(thumbFile).use { fos ->
+                        scaled.compress(Bitmap.CompressFormat.JPEG, 70, fos)
+                    }
+                    thumbnailPath = thumbFile.absolutePath
+                    if (scaled !== frame) scaled.recycle()
+                } finally {
+                    frame.recycle()
                 }
-                thumbnailPath = thumbFile.absolutePath
             }
 
             val updated = videoItem.copy(
@@ -69,7 +79,7 @@ class VideoMetadataExtractor @Inject constructor(
             Log.w(TAG, "Failed to extract metadata for ${videoItem.fileName}", e)
             return videoItem
         } finally {
-            try { retriever.release() } catch (_: Exception) {}
+            try { retriever.release() } catch (e: Exception) { Log.w(TAG, "retriever release failed", e) }
         }
     }
 

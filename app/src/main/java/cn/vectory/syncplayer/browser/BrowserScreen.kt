@@ -67,6 +67,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import cn.vectory.syncplayer.data.model.BrowseItem
@@ -98,21 +99,21 @@ fun BrowserScreen(
     onNavigateToPlaybackSettings: () -> Unit,
     onNavigateToSyncPreview: (relationId: Long) -> Unit,
 ) {
-    val browseItems by viewModel.browseItems.collectAsState()
-    val browseItemsFolder by viewModel.browseItemsFolder.collectAsState()
-    val hiddenByFilterCount by viewModel.hiddenByFilterCount.collectAsState()
-    val hasConfig by viewModel.hasConfig.collectAsState()
-    val sortMode by viewModel.sortMode.collectAsState()
-    val filter by viewModel.filter.collectAsState()
+    val browseItems by viewModel.browseItems.collectAsStateWithLifecycle()
+    val browseItemsFolder by viewModel.browseItemsFolder.collectAsStateWithLifecycle()
+    val hiddenByFilterCount by viewModel.hiddenByFilterCount.collectAsStateWithLifecycle()
+    val hasConfig by viewModel.hasConfig.collectAsStateWithLifecycle()
+    val sortMode by viewModel.sortMode.collectAsStateWithLifecycle()
+    val filter by viewModel.filter.collectAsStateWithLifecycle()
     // Additional UI state expected by the advanced sorting/filtering UI
-    val browseMode by viewModel.browseMode.collectAsState()
-    val starFilterValue by viewModel.starFilterValue.collectAsState()
-    val starFilterMode by viewModel.starFilterMode.collectAsState()
-    val folder by viewModel.currentFolder.collectAsState()
-    val error by viewModel.error.collectAsState()
-    val currentRelationId by viewModel.currentRelationId.collectAsState()
-    val viewMode by viewModel.viewMode.collectAsState()
-    val gridColumns by viewModel.gridColumns.collectAsState()
+    val browseMode by viewModel.browseMode.collectAsStateWithLifecycle()
+    val starFilterValue by viewModel.starFilterValue.collectAsStateWithLifecycle()
+    val starFilterMode by viewModel.starFilterMode.collectAsStateWithLifecycle()
+    val folder by viewModel.currentFolder.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
+    val currentRelationId by viewModel.currentRelationId.collectAsStateWithLifecycle()
+    val viewMode by viewModel.viewMode.collectAsStateWithLifecycle()
+    val gridColumns by viewModel.gridColumns.collectAsStateWithLifecycle()
 
     var showContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
     var showSortMenu by remember { mutableStateOf(false) }

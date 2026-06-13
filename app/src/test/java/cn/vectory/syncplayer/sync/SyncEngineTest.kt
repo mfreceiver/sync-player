@@ -3,8 +3,6 @@ package cn.vectory.syncplayer.sync
 import cn.vectory.syncplayer.data.local.dao.PendingSyncActionDao
 import cn.vectory.syncplayer.data.repository.*
 import cn.vectory.syncplayer.storage.StoragePaths
-import cn.vectory.syncplayer.sync.sftp.SftpFileClient
-import cn.vectory.syncplayer.sync.smb.SmbFileClient
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -23,10 +21,10 @@ class SyncEngineTest {
     private val syncRelationRepository = mockk<SyncRelationRepository>()
     private val syncLogRepository = mockk<SyncLogRepository>()
     private val pendingSyncActionDao = mockk<PendingSyncActionDao>()
-    private val smbFileClient = mockk<SmbFileClient>()
-    private val sftpFileClient = mockk<SftpFileClient>()
+    private val remoteFileClientFactory = mockk<RemoteFileClientFactory>()
     private val storagePaths = mockk<StoragePaths>()
     private val videoMetadataExtractor = mockk<VideoMetadataExtractor>()
+    private val imageMetadataExtractor = mockk<ImageMetadataExtractor>()
 
     private lateinit var syncEngine: SyncEngine
     private val testDispatcher = StandardTestDispatcher()
@@ -42,10 +40,10 @@ class SyncEngineTest {
             syncRelationRepository = syncRelationRepository,
             syncLogRepository = syncLogRepository,
             pendingSyncActionDao = pendingSyncActionDao,
-            smbFileClient = smbFileClient,
-            sftpFileClient = sftpFileClient,
+            remoteFileClientFactory = remoteFileClientFactory,
             storagePaths = storagePaths,
-            videoMetadataExtractor = videoMetadataExtractor
+            videoMetadataExtractor = videoMetadataExtractor,
+            imageMetadataExtractor = imageMetadataExtractor
         )
     }
 

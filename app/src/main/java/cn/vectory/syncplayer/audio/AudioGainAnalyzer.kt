@@ -117,12 +117,21 @@ class AudioGainAnalyzer @Inject constructor() {
                         val shortBuf = outBuf.order(java.nio.ByteOrder.LITTLE_ENDIAN)
                             .asShortBuffer()
                         val samplesToRead = (info.size / 2).coerceAtMost(shortBuf.remaining())
-                        for (i in 0 until samplesToRead) {
-                            val s = shortBuf.get().toFloat()
-                            sumSquared += (s * s).toDouble()
-                            val abs = kotlin.math.abs(s).toDouble()
-                            if (abs > peakSample) peakSample = abs
-                            totalSamples++
+                        val batchSize = minOf(samplesToRead, 8192)
+                        val tmp = ShortArray(batchSize)
+                        var remaining = samplesToRead
+                        while (remaining > 0) {
+                            val toRead = minOf(remaining, tmp.size)
+                            if (shortBuf.remaining() < toRead) break
+                            shortBuf.get(tmp, 0, toRead)
+                            for (i in 0 until toRead) {
+                                val s = tmp[i].toFloat()
+                                sumSquared += (s * s).toDouble()
+                                val abs = kotlin.math.abs(s).toDouble()
+                                if (abs > peakSample) peakSample = abs
+                                totalSamples++
+                            }
+                            remaining -= toRead
                         }
                     }
                     codec.releaseOutputBuffer(outputIndex, false)

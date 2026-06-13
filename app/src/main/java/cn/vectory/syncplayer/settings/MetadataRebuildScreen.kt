@@ -13,6 +13,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.ui.components.FullScreenError
 
@@ -22,14 +23,14 @@ fun MetadataRebuildScreen(
     onBack: () -> Unit,
     viewModel: MetadataRebuildViewModel = hiltViewModel()
 ) {
-    val discoveryResult by viewModel.discoveryResult.collectAsState()
-    val isDiscovering by viewModel.isDiscovering.collectAsState()
-    val isRebuilding by viewModel.isRebuilding.collectAsState()
-    val isComplete by viewModel.isComplete.collectAsState()
-    val error by viewModel.error.collectAsState()
-    val completedCount by viewModel.completedCount.collectAsState()
-    val totalCount by viewModel.totalCount.collectAsState()
-    val currentFile by viewModel.currentFile.collectAsState()
+    val discoveryResult by viewModel.discoveryResult.collectAsStateWithLifecycle()
+    val isDiscovering by viewModel.isDiscovering.collectAsStateWithLifecycle()
+    val isRebuilding by viewModel.isRebuilding.collectAsStateWithLifecycle()
+    val isComplete by viewModel.isComplete.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
+    val completedCount by viewModel.completedCount.collectAsStateWithLifecycle()
+    val totalCount by viewModel.totalCount.collectAsStateWithLifecycle()
+    val currentFile by viewModel.currentFile.collectAsStateWithLifecycle()
     var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(

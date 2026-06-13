@@ -195,20 +195,27 @@ class BrowserViewModel @Inject constructor(
         val browseModeVal: BrowseMode
     )
 
+    private data class FolderFilterBundle(
+        val folder: String,
+        val mode: SortMode,
+        val filterVal: BrowseFilter,
+        val starMode: StarFilterMode,
+        val starValue: Int
+    )
+
     @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
     val browseItems: StateFlow<List<BrowseItem>> = combine(
-        combine(effectiveFolder, _sortMode, _filter) { folder, mode, filterVal ->
-            Triple(folder, mode, filterVal)
+        combine(effectiveFolder, _sortMode, _filter, _starFilterMode, _starFilterValue) { folder, mode, filterVal, starMode, starValue ->
+            FolderFilterBundle(folder, mode, filterVal, starMode, starValue)
         },
         // include allPlaybackRecords as an additional trigger source
         combine(folderPlaybackRecords, allPlaybackRecords, basePaths, _browseMode) { records, allRecords, relations, browseModeVal ->
             PlaybackBundle(records, allRecords, relations, browseModeVal)
         }
-    ) { (folder, mode, filterVal), bundle ->
+    ) { folderBundle, bundle ->
+        val (folder, mode, filterVal, starMode, starValue) = folderBundle
         val (records, allRecords, relations, browseModeVal) = bundle
         val baseDirSet = relations.map { it.relation.localBasePath }.toSet()
-        val starMode = _starFilterMode.value
-        val starValue = _starFilterValue.value
         buildBrowseItems(folder, mode, filterVal, starMode, starValue, browseModeVal, records, allRecords, baseDirSet)
     }
     .debounce(300)

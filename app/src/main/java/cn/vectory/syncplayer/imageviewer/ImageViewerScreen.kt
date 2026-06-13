@@ -2,8 +2,9 @@ package cn.vectory.syncplayer.imageviewer
 
 import android.app.Activity
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,6 +26,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -36,6 +38,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import kotlin.math.abs
 import java.io.File
 
 private val GradientHeight = 80.dp
@@ -118,6 +121,24 @@ fun ImageViewerScreen(
                 viewModel.showOverlay(ImageOverlay.TrashAction(!wasTrashed))
                 viewModel.toggleTrashed()
             },
+            onSwipeLeft = {
+                val nextId = viewModel.getNextImageId()
+                if (nextId != null) {
+                    viewModel.showOverlay(ImageOverlay.Next)
+                    viewModel.loadImage(nextId)
+                } else {
+                    viewModel.showOverlay(ImageOverlay.NoNext)
+                }
+            },
+            onSwipeRight = {
+                val prevId = viewModel.getPrevImageId()
+                if (prevId != null) {
+                    viewModel.showOverlay(ImageOverlay.Previous)
+                    viewModel.loadImage(prevId)
+                } else {
+                    viewModel.showOverlay(ImageOverlay.NoPrevious)
+                }
+            },
             modifier = Modifier.fillMaxSize()
         )
 
@@ -142,18 +163,146 @@ private fun ZoomableImage(
     onDoubleTapLeft: () -> Unit,
     onDoubleTapRight: () -> Unit,
     onDoubleTapCenter: () -> Unit,
+    onSwipeLeft: () -> Unit,
+    onSwipeRight: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
+    var canSwipeHorizontal by remember { mutableStateOf(true) }
+
+    LaunchedEffect(scale) {
+        if (scale <= 1f) {
+            canSwipeHorizontal = true
+        }
+    }
 
     Box(
         modifier = modifier
             .pointerInput(Unit) {
-                detectTransformGestures { _, _, zoom, _ ->
-                    scale = (scale * zoom).coerceIn(1f, 5f)
-                    if (scale == 1f) {
+                val swipeThreshold = 60f
+
+                awaitEachGesture {
+                    val firstDown = awaitFirstDown(requireUnconsumed = false)
+                    var totalDragX = 0f
+                    var previousCenter: Offset? = null
+                    var previousDistance: Float? = null
+                    var pointerCount = 1
+
+                    firstDown.consume()
+
+                    do {
+                        val event = awaitPointerEvent()
+                        val activeChanges = event.changes
+                        pointerCount = event.changes.size
+
+                        if (pointerCount >= 2) {
+                            val ptrs = event.changes.filter { it.pressed }
+                            if (ptrs.size >= 2) {
+                                val currentCenter = (ptrs[0].position + ptrs[1].position) / 2f
+                                val currentDist = (ptrs[0].position - ptrs[1].position).getDistance()
+
+                                if (previousDistance != null && previousCenter != null && previousDistance > 0f) {
+                                    val zoom = currentDist / previousDistance
+                                    val pan = currentCenter - previousCenter
+                                    val newScale = (scale * zoom).coerceIn(1f, 5f)
+
+                                    if (newScale > 1f) {
+                                        val maxOffX = (newScale - 1f) * size.width / 2f
+                                        val maxOffY = (newScale - 1f) * size.height / 2f
+                                        offsetX = (offsetX + pan.x).coerceIn(-maxOffX, maxOffX)
+                                        offsetY = (offsetY + pan.y).coerceIn(-maxOffY, maxOffY)
+                                    }
+                                    scale = newScale
+                                    if (scale <= 1f) {
+                                        offsetX = 0f
+                                        offsetY = 0f
+                                    }
+                                }
+                                previousCenter = currentCenter
+                                previousDistance = currentDist
+                                totalDragX = 0f
+                            }
+                        } else if (pointerCount == 1) {
+                            val change = event.changes.firstOrNull { it.id == firstDown.id } ?: continue
+                            if (!change.pressed) {
+                                change.consume()
+                                break
+                            }
+                            val dragX = change.position.x - change.previousPosition.x
+                            val dragY = change.position.y - change.previousPosition.y
+                            totalDragX += dragX
+
+                            if (scale > 1f) {
+                                val maxOffX = (scale - 1f) * size.width / 2f
+                                val maxOffY = (scale - 1f) * size.height / 2f
+                                val atLeftEdge = offsetX <= -maxOffX + 1f
+                                val atRightEdge = offsetX >= maxOffX - 1f
+                                canSwipeHorizontal = (atRightEdge && dragX < 0f) || (atLeftEdge && dragX > 0f)
+                                offsetX = (offsetX + dragX).coerceIn(-maxOffX, maxOffX)
+                                offsetY = (offsetY + dragY).coerceIn(-maxOffY, maxOffY)
+                            }
+                            previousCenter = null
+                            previousDistance = null
+                            change.consume()
+                        }
+                    } while (true)
+
+                    if (abs(totalDragX) > swipeThreshold) {
+                        if (scale <= 1f || canSwipeHorizontal) {
+                            if (totalDragX > 0f) onSwipeRight() else onSwipeLeft()
+                        }
+                    }
+                    if (scale <= 1f) {
+                        offsetX = 0f
+                        offsetY = 0f
+                    }
+                }
+            }
+            .pointerInput(Unit) {
+                val swipeThreshold = 60f
+                var totalDragX = 0f
+
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    totalDragX = 0f
+                    val startScale = scale
+                    val startOffsetX = offsetX
+
+                    do {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+
+                        val dragX = change.position.x - change.previousPosition.x
+                        val dragY = change.position.y - change.previousPosition.y
+                        totalDragX += dragX
+
+                        if (scale > 1f) {
+                            val maxOffX = (scale - 1f) * size.width / 2f
+                            val maxOffY = (scale - 1f) * size.height / 2f
+                            val newOffsetX = (offsetX + dragX).coerceIn(-maxOffX, maxOffX)
+                            val newOffsetY = (offsetY + dragY).coerceIn(-maxOffY, maxOffY)
+
+                            // Detect if we're hitting an edge
+                            val atLeftEdge = offsetX <= -maxOffX + 1f
+                            val atRightEdge = offsetX >= maxOffX - 1f
+                            canSwipeHorizontal = (atRightEdge && dragX < 0f) || (atLeftEdge && dragX > 0f)
+
+                            offsetX = newOffsetX
+                            offsetY = newOffsetY
+                        }
+
+                        change.consume()
+                    } while (event.changes.any { it.id == down.id && it.pressed })
+
+                    if (abs(totalDragX) > swipeThreshold) {
+                        if (scale <= 1f || canSwipeHorizontal) {
+                            if (totalDragX > 0f) onSwipeRight() else onSwipeLeft()
+                        }
+                    }
+
+                    if (scale <= 1f) {
                         offsetX = 0f
                         offsetY = 0f
                     }
@@ -161,9 +310,7 @@ private fun ZoomableImage(
             }
             .pointerInput(Unit) {
                 detectTapGestures(
-                    onTap = { offset ->
-                        onSingleTap()
-                    },
+                    onTap = { onSingleTap() },
                     onDoubleTap = { offset ->
                         if (scale > 1f) {
                             scale = 1f

@@ -12,8 +12,7 @@ import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.storage.StoragePaths
-import cn.vectory.syncplayer.sync.smb.SmbFileClient
-import cn.vectory.syncplayer.sync.sftp.SftpFileClient
+import cn.vectory.syncplayer.sync.RemoteFileClientFactory
 import cn.vectory.syncplayer.sync.classifyRemoteError
 import cn.vectory.syncplayer.sync.RemoteBrowseError
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -28,8 +27,7 @@ import javax.inject.Inject
 class SyncRelationEditViewModel @Inject constructor(
     private val syncRelationRepository: SyncRelationRepository,
     private val syncSourceRepository: SyncSourceRepository,
-    private val smbFileClient: SmbFileClient,
-    private val sftpFileClient: SftpFileClient,
+    private val remoteFileClientFactory: RemoteFileClientFactory,
     private val storagePaths: StoragePaths,
     @ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle
@@ -168,10 +166,7 @@ class SyncRelationEditViewModel @Inject constructor(
             _error.value = null
             _browseError.value = null
             _isBrowsing.value = true
-            val client = when (source.protocol) {
-                SyncProtocol.SMB -> smbFileClient
-                SyncProtocol.SFTP -> sftpFileClient
-            }
+            val client = remoteFileClientFactory.create(source.protocol)
             try {
                 client.connect(source, _currentRemoteBrowsePath.value)
                 _remoteDirectories.value = client.listDirectories(_currentRemoteBrowsePath.value)
@@ -204,10 +199,7 @@ class SyncRelationEditViewModel @Inject constructor(
             }
             _isTesting.value = true
             _testResult.value = null
-            val client = when (source.protocol) {
-                SyncProtocol.SMB -> smbFileClient
-                SyncProtocol.SFTP -> sftpFileClient
-            }
+            val client = remoteFileClientFactory.create(source.protocol)
             try {
                 client.connect(source, path)
                 client.listDirectories(path)

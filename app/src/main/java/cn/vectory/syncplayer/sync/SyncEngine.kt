@@ -21,12 +21,11 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.ui.util.extractParentPath
 import cn.vectory.syncplayer.ui.util.isImageFile
-import cn.vectory.syncplayer.sync.smb.SmbFileClient
-import cn.vectory.syncplayer.sync.sftp.SftpFileClient
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -60,8 +59,7 @@ class SyncEngine @Inject constructor(
     private val videoMetadataExtractor: VideoMetadataExtractor,
     private val imageMetadataExtractor: ImageMetadataExtractor,
     private val pendingSyncActionDao: PendingSyncActionDao,
-    private val smbFileClient: SmbFileClient,
-    private val sftpFileClient: SftpFileClient,
+    private val remoteFileClientFactory: RemoteFileClientFactory,
     private val storagePaths: StoragePaths,
     @ApplicationContext private val context: Context
 ) {
@@ -156,10 +154,7 @@ class SyncEngine @Inject constructor(
             }
         }
 
-    private fun getClient(protocol: SyncProtocol): RemoteFileClient = when (protocol) {
-        SyncProtocol.SMB -> smbFileClient
-        SyncProtocol.SFTP -> sftpFileClient
-    }
+    private fun getClient(protocol: SyncProtocol): RemoteFileClient = remoteFileClientFactory.create(protocol)
 
     private fun cleanupTempFiles(root: File) {
         root.walkTopDown().filter { it.name.endsWith(".sync_tmp") }.forEach {
@@ -186,7 +181,6 @@ class SyncEngine @Inject constructor(
     }
 
     suspend fun dryRun(relationId: Long): Pair<List<SyncAction>, List<SyncAction>> = getMutexForRelation(relationId).withLock {
-        try {
             val relation = syncRelationRepository.getById(relationId) ?: return Pair(emptyList(), emptyList())
             val source = syncSourceRepository.getById(relation.syncSourceId) ?: return Pair(emptyList(), emptyList())
             val client = getClient(source.protocol)
@@ -310,9 +304,6 @@ class SyncEngine @Inject constructor(
             }
 
             return Pair(toDownload, toDelete)
-        } finally {
-            syncMutexMap.remove(relationId)
-        }
     }
 
     suspend fun executeSync(
@@ -472,6 +463,7 @@ class SyncEngine @Inject constructor(
                                             }
                                         }
                                         if (!downloadSuccess && attempts < 3) {
+                                            delay(1000L * attempts)
                                             if (tmpFile.exists() && !tmpFile.delete()) {
                                                 Log.w(TAG, "Failed to delete temp file on retry: ${tmpFile.absolutePath}")
                                             }
@@ -504,7 +496,7 @@ class SyncEngine @Inject constructor(
                                             syncRelationId = relationId
                                         )
                                         videoRepository.upsert(entity)
-                                        val savedEntity = videoRepository.getByRelativePath(localRelPath)
+                                        val savedEntity = videoRepository.getByRelativePathAndRelationId(localRelPath, relationId)
                                         if (savedEntity != null) {
                                             try {
                                                 extractMetadata(savedEntity)
@@ -652,7 +644,6 @@ class SyncEngine @Inject constructor(
             return false
         } finally {
             client.disconnect()
-            syncMutexMap.remove(relationId)
         }
     }
 
@@ -683,7 +674,6 @@ class SyncEngine @Inject constructor(
     }
 
     suspend fun dryRunDelete(relationId: Long): Pair<List<SyncAction>, String?> = getMutexForRelation(relationId).withLock {
-        try {
             val relation = syncRelationRepository.getById(relationId) ?: return Pair(emptyList(), context.getString(R.string.sync_relation_not_found))
             val source = syncSourceRepository.getById(relation.syncSourceId) ?: return Pair(emptyList(), context.getString(R.string.sync_source_not_found))
             val client = getClient(source.protocol)
@@ -725,9 +715,6 @@ class SyncEngine @Inject constructor(
             } finally {
                 client.disconnect()
             }
-        } finally {
-            syncMutexMap.remove(relationId)
-        }
     }
 
     suspend fun executeDelete(relationId: Long, actions: List<SyncAction>): Boolean = getMutexForRelation(relationId).withLock {
@@ -756,7 +743,7 @@ class SyncEngine @Inject constructor(
                     completedFiles = completedActions
                 )
 
-                val videoItem = videoRepository.getByRelativePath(action.relativePath)
+                val videoItem = videoRepository.getByRelativePathAndRelationId(action.relativePath, relationId)
                 if (videoItem != null) {
                     val localFile = File(videoItem.localAbsolutePath)
                     if (localFile.exists() && !localFile.delete()) {
@@ -770,7 +757,6 @@ class SyncEngine @Inject constructor(
                         }
                     }
 
-                    playbackRepository.deleteByVideoId(videoItem.id)
                     videoRepository.deleteByRelativePathAndRelationId(action.relativePath, relationId)
                 }
 
@@ -824,7 +810,6 @@ class SyncEngine @Inject constructor(
             return false
         } finally {
             client.disconnect()
-            syncMutexMap.remove(relationId)
         }
     }
 }

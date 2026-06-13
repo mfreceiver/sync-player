@@ -7,6 +7,7 @@ import android.util.LruCache
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToLong
@@ -40,8 +41,8 @@ class SeekPreviewExtractor {
     @Volatile private var activeFilePath: String? = null
     private val retrieverLock = Any()
 
-    private var lastExtractedPositionMs: Long = -1L
-    private var lastDirection: Int = 0
+    @Volatile private var lastExtractedPositionMs: Long = -1L
+    @Volatile private var lastDirection: Int = 0
     private var prefetchJob: Job? = null
     private val prefetchScope = CoroutineScope(Dispatchers.IO)
 
@@ -68,6 +69,7 @@ class SeekPreviewExtractor {
             activeFilePath = null
         }
         prefetchJob?.cancel()
+        prefetchScope.cancel()
         prefetchJob = null
     }
 

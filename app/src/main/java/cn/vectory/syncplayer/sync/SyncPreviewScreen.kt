@@ -18,6 +18,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.ActiveDownload
 import cn.vectory.syncplayer.data.model.SyncAction
@@ -31,18 +32,18 @@ fun SyncPreviewScreen(
     onBack: () -> Unit,
     onNavigateToRelation: (relationId: Long, initialTab: String) -> Unit = { _, _ -> }
 ) {
-    val toDownload by viewModel.toDownload.collectAsState()
-    val toDelete by viewModel.toDelete.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
-    val error by viewModel.error.collectAsState()
-    val isSyncing by viewModel.isSyncing.collectAsState()
-    val isDeleting by viewModel.isDeleting.collectAsState()
-    val syncMode by viewModel.syncMode.collectAsState()
-    val previewLoaded by viewModel.previewLoaded.collectAsState()
-    val syncComplete by viewModel.syncComplete.collectAsState()
-    val progress by viewModel.progress.collectAsState()
-    val allRelations by viewModel.allRelations.collectAsState()
-    val currentRelationName by viewModel.currentRelationName.collectAsState()
+    val toDownload by viewModel.toDownload.collectAsStateWithLifecycle()
+    val toDelete by viewModel.toDelete.collectAsStateWithLifecycle()
+    val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
+    val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
+    val isDeleting by viewModel.isDeleting.collectAsStateWithLifecycle()
+    val syncMode by viewModel.syncMode.collectAsStateWithLifecycle()
+    val previewLoaded by viewModel.previewLoaded.collectAsStateWithLifecycle()
+    val syncComplete by viewModel.syncComplete.collectAsStateWithLifecycle()
+    val progress by viewModel.progress.collectAsStateWithLifecycle()
+    val allRelations by viewModel.allRelations.collectAsStateWithLifecycle()
+    val currentRelationName by viewModel.currentRelationName.collectAsStateWithLifecycle()
     var isNavigatingBack by remember { mutableStateOf(false) }
     var showRelationDropdown by remember { mutableStateOf(false) }
 

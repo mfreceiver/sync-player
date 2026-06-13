@@ -8,8 +8,7 @@ import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
-import cn.vectory.syncplayer.sync.smb.SmbFileClient
-import cn.vectory.syncplayer.sync.sftp.SftpFileClient
+import cn.vectory.syncplayer.sync.RemoteFileClientFactory
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,8 +20,7 @@ import javax.inject.Inject
 @HiltViewModel
 class SyncSourceEditViewModel @Inject constructor(
     private val syncSourceRepository: SyncSourceRepository,
-    private val smbFileClient: SmbFileClient,
-    private val sftpFileClient: SftpFileClient,
+    private val remoteFileClientFactory: RemoteFileClientFactory,
     @ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
@@ -89,10 +87,7 @@ class SyncSourceEditViewModel @Inject constructor(
             _testResult.value = null
             try {
                 val source = buildSource()
-                val client = when (source.protocol) {
-                    SyncProtocol.SMB -> smbFileClient
-                    SyncProtocol.SFTP -> sftpFileClient
-                }
+                val client = remoteFileClientFactory.create(source.protocol)
                 client.testConnection(source, "/")
                 _testResult.value = context.getString(R.string.source_connect_success)
             } catch (e: Exception) {
