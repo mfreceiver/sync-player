@@ -43,7 +43,7 @@ class AppLockManager @Inject constructor(
     fun register() {
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
         scope.launch {
-            cachedSecureLockEnabled = userPrefs.getSecureLockEnabled()
+            userPrefs.secureLockEnabled.collect { cachedSecureLockEnabled = it }
         }
     }
 
