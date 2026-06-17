@@ -168,6 +168,7 @@
     <string name="relation_access_failed">无法访问: %s</string>
     <string name="relation_complete_fields">请完善所有字段</string>
     <string name="relation_base_dir_conflict">本地基目录与现有同步关系冲突，基目录不能互相嵌套</string>
+    <string name="relation_invalid_base_path">本地基目录路径无效</string>
     <string name="relation_save_success">保存成功</string>
     <string name="relation_save_failed">保存失败: %s</string>
     <string name="relation_delete_success">删除成功</string>

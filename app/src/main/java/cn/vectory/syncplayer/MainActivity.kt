@@ -8,14 +8,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
@@ -26,6 +21,7 @@ import cn.vectory.syncplayer.security.BiometricAuthManager
 import cn.vectory.syncplayer.security.LockScreenOverlay
 import cn.vectory.syncplayer.ui.theme.SyncPlayerTheme
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.flow.MutableStateFlow
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -34,9 +30,12 @@ class MainActivity : AppCompatActivity() {
     @Inject lateinit var appLockManager: AppLockManager
     @Inject lateinit var biometricAuthManager: BiometricAuthManager
 
+    private val pendingIntent = MutableStateFlow<Intent?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (savedInstanceState == null) pendingIntent.value = intent
         setContent {
             SyncPlayerTheme {
                 Surface(
@@ -44,19 +43,14 @@ class MainActivity : AppCompatActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val navController = rememberNavController()
-                    var notificationIntent by remember { mutableStateOf(intent) }
-
-                    LaunchedEffect(intent) {
-                        notificationIntent = intent
-                    }
+                    val notificationIntent by pendingIntent.collectAsStateWithLifecycle()
 
                     LaunchedEffect(notificationIntent) {
-                        handleNotificationNavigation(notificationIntent, navController)
+                        notificationIntent?.let { handleNotificationNavigation(it, navController) }
                     }
 
                     AppNavHost(navController = navController)
 
-                    // Overlay lock screen when needed
                     val isLocked by appLockManager.isLocked.collectAsStateWithLifecycle()
                     if (isLocked) {
                         LockScreenOverlay(
@@ -72,6 +66,7 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        pendingIntent.value = intent
     }
 }
 

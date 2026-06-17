@@ -7,6 +7,7 @@ import java.io.File
 interface RemoteFileClient {
     suspend fun connect(source: SyncSource, remotePath: String)
     suspend fun disconnect()
+    suspend fun close()
     suspend fun testConnection(source: SyncSource, remotePath: String): Boolean
     suspend fun listFiles(path: String): List<RemoteFile>
     suspend fun listDirectories(path: String): List<RemoteFile>

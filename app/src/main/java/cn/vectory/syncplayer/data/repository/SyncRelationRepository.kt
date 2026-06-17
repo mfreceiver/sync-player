@@ -59,6 +59,11 @@ class SyncRelationRepository @Inject constructor(
     suspend fun getByLocalBasePath(path: String): SyncRelation? =
         syncRelationDao.getByLocalBasePath(path)?.toDomain()
 
+    /**
+     * Check for base-path conflicts including exact matches and ancestor/descendant nesting.
+     * Returns relations whose [localBasePath] equals [path] or is a parent/child of [path].
+     * Excludes the relation identified by [excludeRelationId] (0 = no exclusion).
+     */
     suspend fun checkBasePathConflict(path: String, excludeRelationId: Long = 0): List<SyncRelation> {
         val excludePath = if (excludeRelationId > 0) {
             syncRelationDao.getById(excludeRelationId)?.localBasePath ?: ""

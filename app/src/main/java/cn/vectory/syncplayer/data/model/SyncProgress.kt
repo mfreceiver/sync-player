@@ -14,6 +14,7 @@ data class SyncProgress(
     val isRunning: Boolean = false,
     val totalFiles: Int = 0,
     val completedFiles: Int = 0,
+    val failedFiles: Int = 0,
     val totalBytes: Long = 0,
     val transferredBytes: Long = 0,
     val currentFileName: String = "",
@@ -58,6 +59,7 @@ enum class SyncPhase {
     DOWNLOADING,    // Downloading files
     DELETING,       // Deleting local files
     COMPLETED,
+    PARTIAL_FAILED, // Some files completed, some failed
     FAILED,
     CANCELLED
 }

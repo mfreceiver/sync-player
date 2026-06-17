@@ -247,8 +247,14 @@ class SyncRelationEditViewModel @Inject constructor(
                 _error.value = context.getString(R.string.relation_complete_fields)
                 return@launch
             }
+            val normalizedBasePath = try {
+                storagePaths.normalizeAndValidateRelativePath(_localBasePath.value)
+            } catch (e: SecurityException) {
+                _error.value = context.getString(R.string.relation_invalid_base_path)
+                return@launch
+            }
             val conflicts = syncRelationRepository.checkBasePathConflict(
-                _localBasePath.value, if (relationId > 0) relationId else 0
+                normalizedBasePath, if (relationId > 0) relationId else 0
             )
             if (conflicts.isNotEmpty()) {
                 _error.value = context.getString(R.string.relation_base_dir_conflict)
@@ -262,7 +268,7 @@ class SyncRelationEditViewModel @Inject constructor(
                         name = _name.value.trim(),
                         syncSourceId = _selectedSourceId.value,
                         remotePath = _remotePath.value.trim(),
-                        localBasePath = _localBasePath.value.trim()
+                        localBasePath = normalizedBasePath
                     )
                 )
                 _saveResult.value = context.getString(R.string.relation_save_success)

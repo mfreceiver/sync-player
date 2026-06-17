@@ -98,6 +98,10 @@ class SmbFileClient(
         cifsContext = null
     }
 
+    override suspend fun close() {
+        disconnect()
+    }
+
     override suspend fun testConnection(source: SyncSource, remotePath: String): Boolean {
         try {
             connect(source, remotePath)
@@ -276,6 +280,9 @@ class SmbFileClient(
                         transferred += read
                         onProgress?.invoke(transferred, totalSize)
                         currentCoroutineContext().ensureActive()
+                    }
+                    if (transferred < totalSize) {
+                        throw java.io.IOException("Download truncated: $remotePath — expected $totalSize bytes, got $transferred")
                     }
                 }
             }

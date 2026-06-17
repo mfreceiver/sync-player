@@ -17,5 +17,6 @@ data class PendingSyncActionEntity(
     val actionType: String,
     val relativePath: String,
     val fileSize: Long = 0,
-    val remoteModifiedTime: Long = 0
+    val remoteModifiedTime: Long = 0,
+    val status: String = "PENDING"
 )

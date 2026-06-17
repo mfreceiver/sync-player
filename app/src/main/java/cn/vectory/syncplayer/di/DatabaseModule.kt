@@ -33,7 +33,7 @@ object DatabaseModule {
             AppDatabase::class.java,
             "sync-player.db"
         )
-            .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
+            .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
             .build()
     }
 
@@ -210,6 +210,12 @@ object DatabaseModule {
             )
             val videoNotMatch = videoConditions.joinToString(" AND ")
             db.execSQL("UPDATE video_item SET mediaType = 'OTHER' WHERE mediaType = 'VIDEO' AND $videoNotMatch")
+        }
+    }
+
+    private val MIGRATION_16_17 = object : Migration(16, 17) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE pending_sync_action ADD COLUMN status TEXT NOT NULL DEFAULT 'PENDING'")
         }
     }
 }

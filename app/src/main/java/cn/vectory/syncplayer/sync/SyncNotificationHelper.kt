@@ -97,9 +97,46 @@ object SyncNotificationHelper {
         if (progress.phase == SyncPhase.COMPLETED) {
             manager.notify(COMPLETE_NOTIFICATION_ID, createCompleteNotification(context, progress))
             manager.cancel(NOTIFICATION_ID)
+        } else if (isTerminalFailurePhase(progress.phase)) {
+            manager.notify(COMPLETE_NOTIFICATION_ID, createPartialFailedNotification(context, progress))
+            manager.cancel(NOTIFICATION_ID)
         } else {
             manager.notify(NOTIFICATION_ID, createOngoingNotification(context, progress))
         }
+    }
+
+    private fun isTerminalFailurePhase(phase: SyncPhase): Boolean =
+        phase == SyncPhase.PARTIAL_FAILED || phase == SyncPhase.FAILED || phase == SyncPhase.CANCELLED
+
+    private fun createPartialFailedNotification(context: Context, progress: SyncProgress): android.app.Notification {
+        val name = progress.relationName.ifEmpty { "同步" }
+        val title = when (progress.phase) {
+            SyncPhase.PARTIAL_FAILED -> "$name 同步完成(部分失败)"
+            SyncPhase.FAILED -> "$name 同步失败"
+            SyncPhase.CANCELLED -> "$name 同步已取消"
+            else -> "$name 已结束"
+        }
+
+        val content = buildString {
+            if (progress.phase == SyncPhase.PARTIAL_FAILED) {
+                append("成功 ${progress.completedFiles - progress.failedFiles}")
+                append(" / 失败 ${progress.failedFiles}")
+                append(" / 共 ${progress.totalFiles}")
+            } else {
+                append("共处理 ${progress.completedFiles} 个文件")
+            }
+        }
+
+        val pendingIntent = createSyncPendingIntent(context, progress.relationId)
+
+        return NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle(title)
+            .setContentText(content)
+            .setAutoCancel(true)
+            .setOngoing(false)
+            .setContentIntent(pendingIntent)
+            .build()
     }
 
     private fun createSyncPendingIntent(context: Context, relationId: Long): PendingIntent {

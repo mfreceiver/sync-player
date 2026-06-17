@@ -353,7 +353,7 @@ fun PlayerScreen(
     val previewExtractor = remember { SeekPreviewExtractor() }
     DisposableEffect(previewExtractor) {
         onDispose {
-            previewExtractor.endSession()
+            previewExtractor.release()
         }
     }
     var seekPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }

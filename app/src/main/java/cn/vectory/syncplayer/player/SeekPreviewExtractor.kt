@@ -61,7 +61,8 @@ class SeekPreviewExtractor {
         }
     }
 
-    /** Call when seek gesture ends */
+    /** Call when seek gesture ends. Releases the active retriever and pending prefetch,
+     *  but keeps the prefetch scope alive so subsequent [beginSession] calls can prefetch again. */
     fun endSession() {
         synchronized(retrieverLock) {
             activeRetriever?.release()
@@ -69,8 +70,14 @@ class SeekPreviewExtractor {
             activeFilePath = null
         }
         prefetchJob?.cancel()
-        prefetchScope.cancel()
         prefetchJob = null
+    }
+
+    /** Final teardown. Call from DisposableEffect.onDispose when the player leaves composition. */
+    fun release() {
+        endSession()
+        prefetchScope.cancel()
+        cache.evictAll()
     }
 
     fun getCachedFrame(filePath: String, positionMs: Long): Bitmap? {

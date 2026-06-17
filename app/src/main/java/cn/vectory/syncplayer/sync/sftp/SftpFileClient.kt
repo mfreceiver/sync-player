@@ -69,6 +69,10 @@ class SftpFileClient(
         sshClient = null
     }
 
+    override suspend fun close() {
+        disconnect()
+    }
+
     override suspend fun testConnection(source: SyncSource, remotePath: String): Boolean {
         try {
             connect(source, remotePath)
@@ -177,6 +181,9 @@ class SftpFileClient(
                         onProgress?.invoke(transferred, totalSize)
                         // Cooperative cancellation check after each chunk read
                         currentCoroutineContext().ensureActive()
+                    }
+                    if (offset < totalSize) {
+                        throw java.io.IOException("Download truncated: $remotePath — expected $totalSize bytes, got $offset")
                     }
                 }
             }

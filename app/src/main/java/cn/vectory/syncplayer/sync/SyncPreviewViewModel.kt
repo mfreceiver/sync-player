@@ -170,12 +170,14 @@ class SyncPreviewViewModel @Inject constructor(
             try {
                 val result = syncEngine.progress.first { p ->
                     (p.relationId == relationId || p.relationId == 0L) &&
-                        (p.phase == SyncPhase.COMPLETED || p.phase == SyncPhase.FAILED || p.phase == SyncPhase.CANCELLED)
+                        (p.phase == SyncPhase.COMPLETED || p.phase == SyncPhase.PARTIAL_FAILED || p.phase == SyncPhase.FAILED || p.phase == SyncPhase.CANCELLED)
                 }
                 _isSyncing.value = false
                 if (result.phase == SyncPhase.COMPLETED) {
                     _toDownload.value = emptyList()
                     _toDelete.value = emptyList()
+                } else if (result.phase == SyncPhase.PARTIAL_FAILED) {
+                    _error.value = "同步部分失败，${result.failedFiles} 个文件未成功"
                 } else if (result.phase == SyncPhase.FAILED) {
                     _error.value = "同步失败，请检查网络连接后重试"
                 } else if (result.phase == SyncPhase.CANCELLED) {

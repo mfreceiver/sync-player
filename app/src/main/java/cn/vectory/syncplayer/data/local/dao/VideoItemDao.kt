@@ -9,6 +9,10 @@ interface VideoItemDao {
     @Query("SELECT * FROM video_item WHERE parentPath = :folderPath")
     fun getItemsInFolder(folderPath: String): Flow<List<VideoItemEntity>>
 
+    /** Synchronous variant for DocumentsProvider binder-thread use (no coroutine overhead). */
+    @Query("SELECT * FROM video_item WHERE parentPath = :folderPath ORDER BY fileName COLLATE NOCASE ASC")
+    fun getItemsInFolderSync(folderPath: String): List<VideoItemEntity>
+
     @Query("""
         SELECT DISTINCT SUBSTR(
             CASE WHEN :folderPath = '' THEN parentPath
@@ -29,6 +33,28 @@ interface VideoItemDao {
         END
     """)
     fun getSubFolders(folderPath: String): Flow<List<String>>
+
+    /** Synchronous variant for DocumentsProvider binder-thread use (no coroutine overhead). */
+    @Query("""
+        SELECT DISTINCT SUBSTR(
+            CASE WHEN :folderPath = '' THEN parentPath
+            ELSE SUBSTR(parentPath, LENGTH(:folderPath) + 2)
+            END,
+            1,
+            INSTR(
+                CASE WHEN :folderPath = '' THEN parentPath
+                ELSE SUBSTR(parentPath, LENGTH(:folderPath) + 2)
+                END || '/',
+                '/'
+            ) - 1
+        )
+        FROM video_item
+        WHERE CASE
+            WHEN :folderPath = '' THEN parentPath != ''
+            ELSE parentPath LIKE :folderPath || '/%'
+        END
+    """)
+    fun getSubFoldersSync(folderPath: String): List<String>
 
     @Query("""
         SELECT DISTINCT SUBSTR(
@@ -53,6 +79,10 @@ interface VideoItemDao {
 
     @Query("SELECT * FROM video_item WHERE id = :id")
     suspend fun getById(id: Long): VideoItemEntity?
+
+    /** Synchronous variant for DocumentsProvider binder-thread use (no coroutine overhead). */
+    @Query("SELECT * FROM video_item WHERE id = :id")
+    fun getByIdSync(id: Long): VideoItemEntity?
 
     @Query("SELECT * FROM video_item WHERE relativePath = :relativePath")
     suspend fun getByRelativePath(relativePath: String): VideoItemEntity?
@@ -92,6 +122,10 @@ interface VideoItemDao {
 
     @Query("SELECT * FROM video_item WHERE fileName LIKE '%' || :query || '%' COLLATE NOCASE")
     fun searchByFileName(query: String): Flow<List<VideoItemEntity>>
+
+    /** Synchronous variant for DocumentsProvider binder-thread use (no coroutine overhead). */
+    @Query("SELECT * FROM video_item WHERE fileName LIKE '%' || :query || '%' COLLATE NOCASE")
+    fun searchByFileNameSync(query: String): List<VideoItemEntity>
 
     @Query("""
         SELECT * FROM video_item 

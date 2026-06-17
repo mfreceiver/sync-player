@@ -31,4 +31,22 @@ interface PendingSyncActionDao {
         }
         return entities
     }
+
+    @Query("SELECT * FROM pending_sync_action WHERE relationId = :relationId AND status = 'PENDING' ORDER BY id ASC")
+    suspend fun getPendingByRelationId(relationId: Long): List<PendingSyncActionEntity>
+
+    @Query("UPDATE pending_sync_action SET status = 'PENDING' WHERE relationId = :relationId AND status = 'RUNNING'")
+    suspend fun resetRunningToPending(relationId: Long)
+
+    @Query("UPDATE pending_sync_action SET status = 'RUNNING' WHERE relationId = :relationId AND status = 'PENDING'")
+    suspend fun markRunning(relationId: Long)
+
+    @Query("UPDATE pending_sync_action SET status = 'COMPLETED' WHERE relationId = :relationId")
+    suspend fun markCompleted(relationId: Long)
+
+    @Query("UPDATE pending_sync_action SET status = 'FAILED' WHERE relationId = :relationId")
+    suspend fun markFailed(relationId: Long)
+
+    @Query("UPDATE pending_sync_action SET status = 'CANCELLED' WHERE relationId = :relationId")
+    suspend fun markCancelled(relationId: Long)
 }

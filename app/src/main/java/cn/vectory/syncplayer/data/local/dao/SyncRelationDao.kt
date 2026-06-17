@@ -14,8 +14,16 @@ interface SyncRelationDao {
     @Query("SELECT * FROM sync_relation ORDER BY name ASC")
     suspend fun getAll(): List<SyncRelationEntity>
 
+    /** Synchronous variant for DocumentsProvider binder-thread use (no coroutine overhead). */
+    @Query("SELECT * FROM sync_relation ORDER BY name ASC")
+    fun getAllSync(): List<SyncRelationEntity>
+
     @Query("SELECT * FROM sync_relation WHERE id = :id")
     suspend fun getById(id: Long): SyncRelationEntity?
+
+    /** Synchronous variant for DocumentsProvider binder-thread use (no coroutine overhead). */
+    @Query("SELECT * FROM sync_relation WHERE id = :id")
+    fun getByIdSync(id: Long): SyncRelationEntity?
 
     @Query("SELECT * FROM sync_relation WHERE localBasePath = :path")
     suspend fun getByLocalBasePath(path: String): SyncRelationEntity?
@@ -23,7 +31,7 @@ interface SyncRelationDao {
     @Query("""
         SELECT * FROM sync_relation
         WHERE localBasePath != :excludePath
-        AND (:checkPath LIKE localBasePath || '/%' OR localBasePath LIKE :checkPath || '/%')
+        AND (:checkPath = localBasePath OR :checkPath LIKE localBasePath || '/%' OR localBasePath LIKE :checkPath || '/%')
     """)
     suspend fun findConflictingBasePaths(checkPath: String, excludePath: String = ""): List<SyncRelationEntity>
 

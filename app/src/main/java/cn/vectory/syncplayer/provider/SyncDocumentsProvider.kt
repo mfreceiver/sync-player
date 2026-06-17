@@ -1,29 +1,25 @@
 package cn.vectory.syncplayer.provider
 
 import android.content.Context
+import android.content.res.AssetFileDescriptor
+import android.database.Cursor
+import android.database.MatrixCursor
+import android.graphics.Point
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.DocumentsProvider
-import android.database.Cursor
-import android.database.MatrixCursor
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.flow.first
-import android.graphics.Point
-import android.content.res.AssetFileDescriptor
-import java.io.File
-import java.io.FileNotFoundException
-import cn.vectory.syncplayer.data.local.dao.VideoItemDao
 import cn.vectory.syncplayer.data.local.dao.SyncRelationDao
+import cn.vectory.syncplayer.data.local.dao.VideoItemDao
 import cn.vectory.syncplayer.storage.StoragePaths
-import java.lang.IllegalArgumentException
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
+import java.io.File
+import java.io.FileNotFoundException
 
-/** SAF DocumentsProvider exposing synced video files to third-party players. */
+/** SAF DocumentsProvider exposing synced video and image files to third-party players (read-only). */
 class SyncDocumentsProvider : DocumentsProvider() {
 
     @EntryPoint
@@ -83,7 +79,7 @@ class SyncDocumentsProvider : DocumentsProvider() {
                 DocumentsContract.Root.COLUMN_ICON -> row.add(icon)
                 DocumentsContract.Root.COLUMN_TITLE -> row.add("SyncPlayer")
                 DocumentsContract.Root.COLUMN_DOCUMENT_ID -> row.add(rootDocId)
-                DocumentsContract.Root.COLUMN_MIME_TYPES -> row.add("video/*")
+                DocumentsContract.Root.COLUMN_MIME_TYPES -> row.add("video/*\nimage/*")
                 else -> row.add(null)
             }
         }
@@ -97,7 +93,8 @@ class SyncDocumentsProvider : DocumentsProvider() {
         val projectionUsed = projection ?: DEFAULT_DOCUMENT_PROJECTION
         val cursor = MatrixCursor(projectionUsed)
 
-        when (val id = DocumentId.decode(documentId)) {
+        val decoded = DocumentId.decode(documentId) ?: return null
+        when (decoded) {
             DocumentId.Root -> {
                 val mime = DocumentsContract.Document.MIME_TYPE_DIR
                 val name = "SyncPlayer"
@@ -116,11 +113,11 @@ class SyncDocumentsProvider : DocumentsProvider() {
                 cursor.addRow(row.toArray())
             }
             is DocumentId.Relation -> {
-                val rel = runBlocking(Dispatchers.IO) { syncRelationDao(ctx).getById(id.relationId) }
+                val rel = syncRelationDao(ctx).getByIdSync(decoded.relationId)
                 val mime = DocumentsContract.Document.MIME_TYPE_DIR
                 val display = rel?.name ?: "Relation"
                 val lastMod = rel?.lastSyncTime ?: 0
-                val docId = DocumentId.encode(id)
+                val docId = DocumentId.encode(decoded)
                 val row = ArrayList<Any?>(projectionUsed.size)
                 for (col in projectionUsed) {
                     when (col) {
@@ -136,11 +133,11 @@ class SyncDocumentsProvider : DocumentsProvider() {
                 cursor.addRow(row.toArray())
             }
             is DocumentId.Directory -> {
-                val rel = runBlocking(Dispatchers.IO) { syncRelationDao(ctx).getById(id.relationId) }
+                val rel = syncRelationDao(ctx).getByIdSync(decoded.relationId)
                 val mimeDir = DocumentsContract.Document.MIME_TYPE_DIR
-                val displayName = if (id.relativePath.isEmpty()) rel?.name ?: "Directory" else id.relativePath.substringAfterLast('/')
+                val displayName = if (decoded.relativePath.isEmpty()) rel?.name ?: "Directory" else decoded.relativePath.substringAfterLast('/')
                 val lastMod = rel?.lastSyncTime ?: 0
-                val docId = DocumentId.encode(id)
+                val docId = DocumentId.encode(decoded)
                 val row = ArrayList<Any?>(projectionUsed.size)
                 for (col in projectionUsed) {
                     when (col) {
@@ -156,10 +153,10 @@ class SyncDocumentsProvider : DocumentsProvider() {
                 cursor.addRow(row.toArray())
             }
             is DocumentId.Video -> {
-                val video = runBlocking(Dispatchers.IO) { videoItemDao(ctx).getById(id.videoItemId) }
+                val video = videoItemDao(ctx).getByIdSync(decoded.videoItemId)
                 if (video == null) return null
                 val mime = getMimeType(video.fileName)
-                val docId = DocumentId.encode(id)
+                val docId = DocumentId.encode(decoded)
                 val row = ArrayList<Any?>(projectionUsed.size)
                 for (col in projectionUsed) {
                     when (col) {
@@ -183,9 +180,10 @@ class SyncDocumentsProvider : DocumentsProvider() {
         val ctx = context ?: return null
         val projectionUsed = projection ?: DEFAULT_DOCUMENT_PROJECTION
         val cursor = MatrixCursor(projectionUsed)
-        when (val parent = DocumentId.decode(parentDocumentId)) {
+        val parent = DocumentId.decode(parentDocumentId) ?: return cursor
+        when (parent) {
             DocumentId.Root -> {
-                val relations = runBlocking(Dispatchers.IO) { syncRelationDao(ctx).getAll() }
+                val relations = syncRelationDao(ctx).getAllSync()
                 for (rel in relations) {
                     val id = DocumentId.Relation(rel.id)
                     val docId = DocumentId.encode(id)
@@ -207,11 +205,11 @@ class SyncDocumentsProvider : DocumentsProvider() {
                 }
             }
             is DocumentId.Relation -> {
-                val rel = runBlocking(Dispatchers.IO) { syncRelationDao(ctx).getById(parent.relationId) }
+                val rel = syncRelationDao(ctx).getByIdSync(parent.relationId)
                 if (rel != null) {
                     val basePath = rel.localBasePath
-                    val items = runBlocking(Dispatchers.IO) { videoItemDao(ctx).getItemsInFolder(basePath).first() }
-                    val subFolders = runBlocking(Dispatchers.IO) { videoItemDao(ctx).getSubFolders(basePath).first() }
+                    val items = videoItemDao(ctx).getItemsInFolderSync(basePath)
+                    val subFolders = videoItemDao(ctx).getSubFoldersSync(basePath)
                     // subfolders
                     for (sub in subFolders) {
                         val id = DocumentId.Directory(rel.id, sub)
@@ -253,11 +251,11 @@ class SyncDocumentsProvider : DocumentsProvider() {
                 }
             }
             is DocumentId.Directory -> {
-                val rel = runBlocking(Dispatchers.IO) { syncRelationDao(ctx).getById(parent.relationId) }
+                val rel = syncRelationDao(ctx).getByIdSync(parent.relationId)
                 if (rel != null) {
                     val basePath = if (parent.relativePath.isEmpty()) rel.localBasePath else rel.localBasePath + "/" + parent.relativePath
-                    val items = runBlocking(Dispatchers.IO) { videoItemDao(ctx).getItemsInFolder(basePath).first() }
-                    val subFolders = runBlocking(Dispatchers.IO) { videoItemDao(ctx).getSubFolders(basePath).first() }
+                    val items = videoItemDao(ctx).getItemsInFolderSync(basePath)
+                    val subFolders = videoItemDao(ctx).getSubFoldersSync(basePath)
                     for (sub in subFolders) {
                         val id = DocumentId.Directory(rel.id, sub)
                         val docId = DocumentId.encode(id)
@@ -303,16 +301,22 @@ class SyncDocumentsProvider : DocumentsProvider() {
     }
 
     override fun openDocument(documentId: String, mode: String, signal: CancellationSignal?): ParcelFileDescriptor? {
+        // Enforce read-only: this provider only exposes synced media for playback.
+        // Write or truncate modes could corrupt local files while the DB still
+        // records the remote size/metadata.
+        if (mode != "r") {
+            throw UnsupportedOperationException("SyncDocumentsProvider is read-only: mode '$mode' rejected")
+        }
         val ctx = context ?: throw FileNotFoundException("Provider not initialized")
-        val id = DocumentId.decode(documentId)
+        val id = DocumentId.decode(documentId) ?: throw FileNotFoundException("Invalid document ID: $documentId")
         val videoId = when (id) {
             is DocumentId.Video -> id.videoItemId
             else -> throw FileNotFoundException("Unsupported document for openDocument: $documentId")
         }
-        val video = runBlocking(Dispatchers.IO) { videoItemDao(ctx).getById(videoId) } ?: throw FileNotFoundException("Video not found: $videoId")
+        val video = videoItemDao(ctx).getByIdSync(videoId) ?: throw FileNotFoundException("Video not found: $videoId")
         val file = File(video.localAbsolutePath)
         if (!file.exists()) throw FileNotFoundException("File does not exist: ${video.localAbsolutePath}")
-        return ParcelFileDescriptor.open(file, ParcelFileDescriptor.parseMode(mode))
+        return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
     }
 
     override fun openDocumentThumbnail(documentId: String, sizeHint: Point, signal: CancellationSignal?): AssetFileDescriptor? {
@@ -323,7 +327,7 @@ class SyncDocumentsProvider : DocumentsProvider() {
         val ctx = context ?: return null
         val projectionUsed = projection ?: DEFAULT_DOCUMENT_PROJECTION
         val cursor = MatrixCursor(projectionUsed)
-        val results = runBlocking(Dispatchers.IO) { videoItemDao(ctx).searchByFileName(query).first() }
+        val results = videoItemDao(ctx).searchByFileNameSync(query)
         for (video in results) {
             val docId = DocumentId.encode(DocumentId.Video(video.id))
             val mime = getMimeType(video.fileName)
@@ -358,7 +362,13 @@ class SyncDocumentsProvider : DocumentsProvider() {
             "ts" -> "video/mp2t"
             "3gp", "3g2" -> "video/3gpp"
             "mpeg", "mpg" -> "video/mpeg"
-            else -> "video/*"
+            "jpg", "jpeg" -> "image/jpeg"
+            "png" -> "image/png"
+            "gif" -> "image/gif"
+            "bmp" -> "image/bmp"
+            "webp" -> "image/webp"
+            "heic", "heif" -> "image/heif"
+            else -> "application/octet-stream"
         }
     }
 }

@@ -55,6 +55,65 @@ class StoragePaths @Inject constructor(
         }
     }
 
+    // --- Safe path API (canonical confinement) ---
+
+    /**
+     * Resolve [relativePath] under [userdataRoot], throwing if the resolved location
+     * escapes userdata via traversal (..), absolute paths, or symlinks.
+     *
+     * Normalizes the path (collapses .. and .), then verifies the canonical result
+     * is located at or under [userdataRoot]. Throws [SecurityException] otherwise.
+     *
+     * Empty/blank input returns [userdataRoot].
+     */
+    fun safeResolveUserData(relativePath: String): File {
+        val root = userdataRoot.canonicalFile
+        if (relativePath.isBlank()) return root
+        val resolved = canonicalOrAbsolute(File(root, relativePath.trimStart('/')))
+        if (resolved != root && !resolved.path.startsWith(root.path + File.separator)) {
+            throw SecurityException("Path escapes userdata root: $relativePath -> ${resolved.path}")
+        }
+        return resolved
+    }
+
+    /**
+     * Validate a sync-relation localBasePath-style relative path. Rejects traversal
+     * that escapes root after normalization. Returns normalized POSIX-style relative
+     * path on success; throws [SecurityException] otherwise. Empty input returns "".
+     */
+    fun normalizeAndValidateRelativePath(relativePath: String): String {
+        val input = relativePath.trim().trim('/')
+        if (input.isEmpty()) return ""
+        val root = userdataRoot.canonicalFile
+        val resolved = canonicalOrAbsolute(File(root, input))
+        if (resolved != root && !resolved.path.startsWith(root.path + File.separator)) {
+            throw SecurityException("Path escapes userdata root: $relativePath")
+        }
+        return resolved.relativeTo(root).path.replace(File.separatorChar, '/')
+    }
+
+    /**
+     * Non-throwing variant of [normalizeAndValidateRelativePath] for UI pre-checks.
+     * Returns true if the path is safe, false otherwise.
+     */
+    fun isPathSafe(relativePath: String): Boolean = try {
+        normalizeAndValidateRelativePath(relativePath)
+        true
+    } catch (_: Exception) {
+        false
+    }
+
+    /**
+     * Returns [file.canonicalFile], falling back to [file.absoluteFile] on [java.io.IOException].
+     * Canonical resolution may throw IOException on broken filesystem entries;
+     * absolute path is a safe fallback since the starts-with containment check still works.
+     */
+    private fun canonicalOrAbsolute(file: File): File = try {
+        file.canonicalFile
+    } catch (_: java.io.IOException) {
+        file.absoluteFile
+    }
+
     companion object {
         const val USERDATA_DIR = "userdata"
         const val THUMBNAILS_DIR = "thumbnails"

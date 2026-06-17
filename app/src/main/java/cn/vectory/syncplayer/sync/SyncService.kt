@@ -4,6 +4,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.IBinder
+import cn.vectory.syncplayer.data.local.dao.PendingSyncActionDao
 import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProgress
 import dagger.hilt.android.AndroidEntryPoint
@@ -16,6 +17,7 @@ import javax.inject.Inject
 class SyncService : Service() {
 
     @Inject lateinit var syncEngine: SyncEngine
+    @Inject lateinit var pendingSyncActionDao: PendingSyncActionDao
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var syncJob: Job? = null
@@ -54,33 +56,47 @@ class SyncService : Service() {
 
         syncJob = serviceScope.launch {
             val task = withContext(Dispatchers.IO) { syncEngine.consumePendingTask(relationId) }
-            if (task != null) {
-                _syncProgress.value = SyncProgress(
-                    isRunning = true,
-                    phase = SyncPhase.DOWNLOADING,
-                    totalFiles = task.toDownload.size + task.toDelete.size,
-                    relationId = relationId,
-                    relationName = task.relationName,
-                    localBasePath = task.localBasePath
-                )
-                SyncNotificationHelper.updateNotification(this@SyncService, _syncProgress.value)
+            if (task == null) {
+                delay(500)
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                return@launch
+            }
 
-                syncEngine.executeSync(
+            _syncProgress.value = SyncProgress(
+                isRunning = true,
+                phase = SyncPhase.DOWNLOADING,
+                totalFiles = task.toDownload.size + task.toDelete.size,
+                relationId = relationId,
+                relationName = task.relationName,
+                localBasePath = task.localBasePath
+            )
+            SyncNotificationHelper.updateNotification(this@SyncService, _syncProgress.value)
+
+            var success = false
+            try {
+                success = syncEngine.executeSync(
                     relationId,
                     task.toDownload,
                     task.toDelete,
                     task.relationName,
                     task.localBasePath
                 )
-            } else {
-                val (toDownload, toDelete) = withContext(Dispatchers.IO) { syncEngine.dryRun(relationId) }
-                _syncProgress.value = SyncProgress(
-                    isRunning = true,
-                    phase = SyncPhase.DOWNLOADING,
-                    totalFiles = toDownload.size + toDelete.size,
-                    relationId = relationId
-                )
-                syncEngine.executeSync(relationId, toDownload, toDelete)
+            } catch (e: CancellationException) {
+                withContext(Dispatchers.IO) {
+                    pendingSyncActionDao.markCancelled(relationId)
+                    pendingSyncActionDao.deleteByRelationId(relationId)
+                }
+                throw e
+            }
+
+            withContext(Dispatchers.IO) {
+                if (success) {
+                    pendingSyncActionDao.markCompleted(relationId)
+                } else {
+                    pendingSyncActionDao.markFailed(relationId)
+                }
+                pendingSyncActionDao.deleteByRelationId(relationId)
             }
 
             val finalProgress = syncEngine.progress.value
