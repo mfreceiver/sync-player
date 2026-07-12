@@ -2,6 +2,7 @@ package cn.vectory.syncplayer.data.repository
 
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao.ChildVideoStat
+import cn.vectory.syncplayer.data.local.dao.VideoItemDao.VideoItemWithPlayback
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.model.FolderStats
 import kotlinx.coroutines.flow.Flow
@@ -54,10 +55,10 @@ class VideoRepository @Inject constructor(
 
     suspend fun getAllIdsSorted(): List<Long> = videoItemDao.getAllIdsSorted()
 
-    fun searchByFileName(query: String): Flow<List<VideoItemEntity>> =
+    fun searchByFileName(query: String): Flow<List<VideoItemWithPlayback>> =
         videoItemDao.searchByFileName(query)
 
-    fun searchByFileNameInFolder(query: String, folder: String): Flow<List<VideoItemEntity>> =
+    fun searchByFileNameInFolder(query: String, folder: String): Flow<List<VideoItemWithPlayback>> =
         if (folder.isEmpty()) videoItemDao.searchByFileName(query)
         else videoItemDao.searchByFileNameInFolder(query, folder)
 
@@ -95,9 +96,6 @@ class VideoRepository @Inject constructor(
 
     suspend fun updateStarByPath(relativePath: String, star: Int) = videoItemDao.updateStarByPath(relativePath, star)
 
-    suspend fun getFlatItemsPaged(limit: Int, offset: Int): List<VideoItemEntity> =
-        videoItemDao.getFlatItemsPaged(limit, offset)
-
     fun getFlatItemsFlow(): Flow<List<VideoItemEntity>> = videoItemDao.getFlatItemsFlow()
 
     suspend fun getDirectChildThumbnails(folderPath: String, limit: Int = 4): List<String> =
@@ -105,4 +103,19 @@ class VideoRepository @Inject constructor(
 
     suspend fun getDirectChildThumbnailsBatch(parentFolder: String): List<VideoItemDao.FolderThumbnailRow> =
         videoItemDao.getDirectChildThumbnailsBatch(parentFolder)
+
+    suspend fun getFlatItemsFiltered(
+        mediaOnly: Boolean,
+        unwatchedOnly: Boolean,
+        starMode: String,
+        starValue: Int,
+        sortCol: String
+    ): List<VideoItemDao.FlatItemWithPlayback> =
+        videoItemDao.getFlatItemsFiltered(
+            mediaOnly = if (mediaOnly) 1 else 0,
+            unwatchedOnly = if (unwatchedOnly) 1 else 0,
+            starMode = starMode,
+            starValue = starValue,
+            sortCol = sortCol
+        )
 }

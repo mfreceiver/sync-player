@@ -11,7 +11,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import cn.vectory.syncplayer.R
 
 @Composable
 internal fun FileStatusIcon(
@@ -32,7 +34,7 @@ internal fun FileStatusIcon(
                 if (isTrashed) {
                     Icon(
                         imageVector = Icons.Default.Delete,
-                        contentDescription = "回收站",
+                        contentDescription = stringResource(R.string.trash_status),
                         tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier
                             .size(14.dp)
@@ -52,7 +54,7 @@ internal fun FileStatusIcon(
                 if (isTrashed) {
                     Icon(
                         imageVector = Icons.Default.Delete,
-                        contentDescription = "回收站",
+                        contentDescription = stringResource(R.string.trash_status),
                         tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier
                             .size(14.dp)
@@ -65,9 +67,9 @@ internal fun FileStatusIcon(
             Spacer(modifier = Modifier.width(8.dp))
             Icon(
                 imageVector = Icons.Default.Delete,
-                contentDescription = "回收站",
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(24.dp)
+            contentDescription = stringResource(R.string.trash_status),
+            tint = MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(24.dp)
             )
         }
     }

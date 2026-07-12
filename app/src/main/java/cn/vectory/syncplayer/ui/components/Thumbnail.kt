@@ -13,7 +13,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import cn.vectory.syncplayer.R
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
@@ -34,7 +36,7 @@ internal fun Thumbnail(
                 .data(File(thumbnailPath))
                 .size(320)
                 .build(),
-            contentDescription = "缩略图",
+            contentDescription = stringResource(R.string.thumbnail),
             modifier = modifier,
             contentScale = ContentScale.Crop
         )
@@ -50,9 +52,9 @@ internal fun Thumbnail(
                     else -> Icons.AutoMirrored.Filled.InsertDriveFile
                 },
                 contentDescription = when {
-                    isVideo -> "视频"
-                    isImage -> "图片"
-                    else -> "文件"
+                    isVideo -> stringResource(R.string.media_type_video)
+                    isImage -> stringResource(R.string.media_type_image)
+                    else -> stringResource(R.string.media_type_file)
                 },
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                 modifier = Modifier.size(32.dp)

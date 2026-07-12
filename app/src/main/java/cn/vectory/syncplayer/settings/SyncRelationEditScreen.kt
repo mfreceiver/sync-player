@@ -5,6 +5,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CreateNewFolder
@@ -96,6 +98,8 @@ fun SyncRelationEditScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -295,6 +299,16 @@ fun SyncRelationEditScreen(
                                     }
                                 }
                             }
+                            if (remoteDirs.isEmpty()) {
+                                item {
+                                    Text(
+                                        stringResource(R.string.relation_no_subdirs),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -356,29 +370,39 @@ fun SyncRelationEditScreen(
                                 Text(dirName)
                             }
                         }
-                    }
-
-                    Spacer(Modifier.height(4.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Start
-                    ) {
-                        IconButton(onClick = { showCreateFolderDialog = true }) {
-                            Icon(
-                                Icons.Filled.CreateNewFolder,
-                                contentDescription = stringResource(R.string.relation_new_folder),
-                                modifier = Modifier.size(20.dp)
-                            )
+                        if (localDirs.isEmpty()) {
+                            item {
+                                Text(
+                                    stringResource(R.string.relation_no_subdirs),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp)
+                                )
+                            }
                         }
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    viewModel.confirmLocalSelection()
-                    showLocalBrowser = false
-                }) {
-                    Text(stringResource(R.string.relation_select_dir))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = { showCreateFolderDialog = true }) {
+                        Icon(
+                            Icons.Filled.CreateNewFolder,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(stringResource(R.string.relation_new_folder))
+                    }
+                    TextButton(onClick = {
+                        viewModel.confirmLocalSelection()
+                        showLocalBrowser = false
+                    }) {
+                        Text(stringResource(R.string.relation_select_dir))
+                    }
                 }
             },
             dismissButton = {

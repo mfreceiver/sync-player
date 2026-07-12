@@ -6,13 +6,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.data.model.FolderStats
-import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.ui.components.FileContextMenuActions
 import cn.vectory.syncplayer.ui.components.FolderContextMenuActions
 import cn.vectory.syncplayer.ui.util.fileNameComparator
 import cn.vectory.syncplayer.ui.util.isImageFile
+import cn.vectory.syncplayer.ui.util.isVideoFile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -23,7 +23,6 @@ import javax.inject.Inject
 class SearchViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val videoRepository: VideoRepository,
-    private val playbackRepository: PlaybackRepository,
     private val syncRelationRepository: SyncRelationRepository,
     private val fileOps: FileOperationsUseCase
 ) : ViewModel(), FileContextMenuActions, FolderContextMenuActions {
@@ -40,9 +39,6 @@ class SearchViewModel @Inject constructor(
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
-
-    private val playbackRecords = playbackRepository.getAllFlow()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val basePaths = syncRelationRepository.getAllWithSourceFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -71,20 +67,17 @@ class SearchViewModel @Inject constructor(
             if (q.isBlank()) flowOf(emptyList())
             else videoRepository.searchByFileNameInFolder(q, searchFolder)
         },
-        scopedFolderPaths,
-        playbackRecords
-    ) { query: String, scope: SearchScope, fileResults: List<cn.vectory.syncplayer.data.local.entity.VideoItemEntity>, folders: List<String>, records: List<cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity> ->
+        scopedFolderPaths
+    ) { query: String, scope: SearchScope, fileResults: List<cn.vectory.syncplayer.data.local.dao.VideoItemDao.VideoItemWithPlayback>, folders: List<String> ->
         if (query.isBlank()) return@combine emptyList<BrowseItem>()
-        val recordMap = records.associateBy { it.videoItemId }
-        buildSearchResults(query, scope, fileResults, folders, recordMap)
+        buildSearchResults(query, scope, fileResults, folders)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private fun buildSearchResults(
         query: String,
         scope: SearchScope,
-        fileResults: List<cn.vectory.syncplayer.data.local.entity.VideoItemEntity>,
-        folders: List<String>,
-        recordMap: Map<Long, cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity>
+        fileResults: List<cn.vectory.syncplayer.data.local.dao.VideoItemDao.VideoItemWithPlayback>,
+        folders: List<String>
     ): List<BrowseItem> {
         val result = mutableListOf<BrowseItem>()
 
@@ -106,7 +99,6 @@ class SearchViewModel @Inject constructor(
 
         if (scope != SearchScope.FOLDERS_ONLY) {
             val matchingFiles = fileResults.map { video ->
-                val record = recordMap[video.id]
                 BrowseItem(
                     videoItemId = video.id,
                     name = video.fileName,
@@ -119,11 +111,14 @@ class SearchViewModel @Inject constructor(
                     bitrate = video.bitrate,
                     frameRate = video.frameRate,
                     thumbnailPath = video.thumbnailPath,
-                    playbackPosition = record?.position ?: 0,
-                    playbackDuration = record?.duration ?: 0,
-                    isCompleted = record?.isCompleted ?: false,
-                    isTrashed = record?.isTrashed ?: false,
-                    star = video.star
+                    playbackPosition = video.playbackPosition,
+                    playbackDuration = video.playbackDuration,
+                    isCompleted = video.isCompleted,
+                    isTrashed = video.isTrashed,
+                    hasGainAdjusted = video.audioGainDb != null,
+                    star = video.star,
+                    mediaType = video.mediaType,
+                    dateTaken = video.dateTaken
                 )
             }.sortedWith(compareBy(fileNameComparator) { it.name })
             result.addAll(matchingFiles)
@@ -138,7 +133,7 @@ class SearchViewModel @Inject constructor(
 
     fun getSearchResultVideoIds(): List<Long> {
         return searchResults.value
-            .filter { !it.isDirectory && it.videoItemId != null }
+            .filter { !it.isDirectory && it.videoItemId != null && isVideoFile(it.name) }
             .mapNotNull { it.videoItemId }
     }
 

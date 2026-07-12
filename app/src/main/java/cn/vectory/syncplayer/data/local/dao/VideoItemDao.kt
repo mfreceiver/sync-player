@@ -120,19 +120,57 @@ interface VideoItemDao {
     @Query("SELECT id FROM video_item ORDER BY fileName ASC")
     suspend fun getAllIdsSorted(): List<Long>
 
-    @Query("SELECT * FROM video_item WHERE fileName LIKE '%' || :query || '%' COLLATE NOCASE")
-    fun searchByFileName(query: String): Flow<List<VideoItemEntity>>
+    data class VideoItemWithPlayback(
+        val id: Long,
+        val relativePath: String,
+        val fileName: String,
+        val fileSize: Long,
+        val duration: Long?,
+        val width: Int?,
+        val height: Int?,
+        val bitrate: Long?,
+        val frameRate: Float?,
+        val thumbnailPath: String?,
+        val audioGainDb: Float?,
+        val star: Int,
+        val mediaType: String,
+        val dateTaken: Long?,
+        val playbackPosition: Long,
+        val playbackDuration: Long,
+        val isCompleted: Boolean,
+        val isTrashed: Boolean
+    )
+
+    @Query("""
+        SELECT v.id, v.fileName, v.relativePath, v.fileSize, v.duration, v.width, v.height,
+               v.bitrate, v.frameRate, v.thumbnailPath, v.audioGainDb, v.star, v.mediaType, v.dateTaken,
+               COALESCE(pr.position, 0) as playbackPosition,
+               COALESCE(pr.duration, 0) as playbackDuration,
+               COALESCE(pr.isCompleted, 0) as isCompleted,
+               COALESCE(pr.isTrashed, 0) as isTrashed
+        FROM video_item v
+        LEFT JOIN playback_record pr ON pr.videoItemId = v.id
+        WHERE v.fileName LIKE '%' || :query || '%' COLLATE NOCASE
+    """)
+    fun searchByFileName(query: String): Flow<List<VideoItemWithPlayback>>
 
     /** Synchronous variant for DocumentsProvider binder-thread use (no coroutine overhead). */
     @Query("SELECT * FROM video_item WHERE fileName LIKE '%' || :query || '%' COLLATE NOCASE")
     fun searchByFileNameSync(query: String): List<VideoItemEntity>
 
     @Query("""
-        SELECT * FROM video_item 
-        WHERE fileName LIKE '%' || :query || '%' COLLATE NOCASE 
-        AND (parentPath = :folder OR parentPath LIKE :folder || '/%')
+        SELECT v.id, v.fileName, v.relativePath, v.fileSize, v.duration, v.width, v.height,
+               v.bitrate, v.frameRate, v.thumbnailPath, v.audioGainDb, v.star, v.mediaType, v.dateTaken,
+               COALESCE(pr.position, 0) as playbackPosition,
+               COALESCE(pr.duration, 0) as playbackDuration,
+               COALESCE(pr.isCompleted, 0) as isCompleted,
+               COALESCE(pr.isTrashed, 0) as isTrashed
+        FROM video_item v
+        LEFT JOIN playback_record pr ON pr.videoItemId = v.id
+        WHERE v.fileName LIKE '%' || :query || '%' COLLATE NOCASE
+        AND (v.parentPath = :folder OR v.parentPath LIKE :folder || '/%')
     """)
-    fun searchByFileNameInFolder(query: String, folder: String): Flow<List<VideoItemEntity>>
+    fun searchByFileNameInFolder(query: String, folder: String): Flow<List<VideoItemWithPlayback>>
 
     @Query("SELECT DISTINCT relativePath FROM video_item")
     fun getAllRelativePaths(): Flow<List<String>>
@@ -185,10 +223,6 @@ interface VideoItemDao {
     // Update star rating by relative path (for non-DB files that get a record)
     @Query("UPDATE video_item SET star = :star WHERE relativePath = :relativePath")
     suspend fun updateStarByPath(relativePath: String, star: Int)
-
-    // Get flat items with pagination for file mode
-    @Query("SELECT * FROM video_item ORDER BY fileName ASC LIMIT :limit OFFSET :offset")
-    suspend fun getFlatItemsPaged(limit: Int, offset: Int): List<VideoItemEntity>
 
     @Query("SELECT * FROM video_item ORDER BY fileName ASC")
     fun getFlatItemsFlow(): Flow<List<VideoItemEntity>>
@@ -246,4 +280,54 @@ interface VideoItemDao {
         ORDER BY relativePath
     """)
     suspend fun getDirectChildThumbnailsBatch(parentFolder: String): List<FolderThumbnailRow>
+
+    data class FlatItemWithPlayback(
+        val id: Long,
+        val fileName: String,
+        val relativePath: String,
+        val fileSize: Long,
+        val duration: Long?,
+        val width: Int?,
+        val height: Int?,
+        val bitrate: Long?,
+        val frameRate: Float?,
+        val thumbnailPath: String?,
+        val audioGainDb: Float?,
+        val star: Int,
+        val mediaType: String,
+        val dateTaken: Long?,
+        val playbackPosition: Long,
+        val playbackDuration: Long,
+        val isCompleted: Boolean,
+        val isTrashed: Boolean
+    )
+
+    @Query("""
+        SELECT vi.id, vi.fileName, vi.relativePath, vi.fileSize, vi.duration, vi.width, vi.height,
+               vi.bitrate, vi.frameRate, vi.thumbnailPath, vi.audioGainDb, vi.star, vi.mediaType, vi.dateTaken,
+               COALESCE(pr.position, 0) AS playbackPosition,
+               COALESCE(pr.duration, 0) AS playbackDuration,
+               COALESCE(pr.isCompleted, 0) AS isCompleted,
+               COALESCE(pr.isTrashed, 0) AS isTrashed
+        FROM video_item vi
+        LEFT JOIN playback_record pr ON pr.videoItemId = vi.id
+        WHERE (:mediaOnly = 0 OR vi.mediaType IN ('VIDEO', 'IMAGE'))
+          AND (:unwatchedOnly = 0 OR (pr.position IS NULL OR (pr.position = 0 AND COALESCE(pr.duration, 0) = 0 AND COALESCE(pr.isCompleted, 0) = 0)))
+          AND (:starMode = 'OFF' OR
+               (:starMode = 'EQ' AND vi.star = :starValue) OR
+               (:starMode = 'GT' AND vi.star > :starValue) OR
+               (:starMode = 'LT' AND vi.star < :starValue))
+        ORDER BY
+          CASE WHEN :sortCol = 'duration_asc' THEN CASE WHEN vi.mediaType = 'IMAGE' THEN vi.dateTaken ELSE vi.duration END END ASC,
+          CASE WHEN :sortCol = 'duration_desc' THEN CASE WHEN vi.mediaType = 'IMAGE' THEN vi.dateTaken ELSE vi.duration END END DESC,
+          CASE WHEN :sortCol = 'fileSize_asc' THEN vi.fileSize END ASC,
+          CASE WHEN :sortCol = 'fileSize_desc' THEN vi.fileSize END DESC
+    """)
+    suspend fun getFlatItemsFiltered(
+        mediaOnly: Int,
+        unwatchedOnly: Int,
+        starMode: String,
+        starValue: Int,
+        sortCol: String
+    ): List<FlatItemWithPlayback>
 }

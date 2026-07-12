@@ -12,8 +12,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 
 @Composable
@@ -32,7 +34,7 @@ internal fun StarRatingInput(
             val isFilled = i < rating
             Icon(
                 imageVector = if (isFilled) Icons.Filled.Star else Icons.Filled.StarBorder,
-                contentDescription = if (isFilled) "已评分" else "未评分",
+                contentDescription = if (isFilled) stringResource(R.string.star_rated) else stringResource(R.string.star_unrated),
                 tint = if (isFilled) starGold else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .alpha(contentAlpha)

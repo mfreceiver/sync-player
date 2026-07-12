@@ -35,6 +35,17 @@
     <string name="browser_advanced_filter">高级筛选</string>
     <string name="browser_star_rating">星级</string>
     <string name="browser_clear_filter">清除</string>
+    <string name="browser_sort_filename">按文件名排序</string>
+    <string name="browser_sort_duration">按时长排序</string>
+    <string name="browser_sort_size">按大小排序</string>
+    <string name="browser_filter_all">全部</string>
+    <string name="browser_filter_media_only">仅媒体</string>
+    <string name="browser_filter_unwatched">未观看</string>
+    <string name="browser_browse_directory">目录浏览</string>
+    <string name="browser_browse_file">文件浏览</string>
+    <string name="browser_view_list">列表视图</string>
+    <string name="browser_view_grid">宫格视图</string>
+    <string name="browser_view_staggered">瀑布流视图</string>
     <string name="browser_cannot_play">该文件无法播放</string>
     <string name="browser_no_viewer">该文件类型不支持预览</string>
     <string name="browser_empty_dir">当前目录为空</string>
@@ -82,6 +93,10 @@
 
     <!-- Settings -->
     <string name="settings_title">设置</string>
+    <string name="settings_section_sync">同步</string>
+    <string name="settings_section_playback">播放</string>
+    <string name="settings_section_system">系统集成</string>
+    <string name="settings_section_maintenance">维护与关于</string>
     <string name="settings_configure_source">配置数据源</string>
     <string name="settings_configure_sync">配置同步关系</string>
     <string name="settings_quick_recycle">快捷回收</string>
@@ -158,6 +173,7 @@
     <string name="relation_select_local_base">选择本地基目录</string>
     <string name="relation_new_folder">新建文件夹</string>
     <string name="relation_folder_name">文件夹名称</string>
+    <string name="relation_no_subdirs">没有子目录</string>
 
     <!-- Sync Relation Edit ViewModel -->
     <string name="relation_select_source_first">请先选择数据源</string>
@@ -255,4 +271,21 @@
     <string name="error_unknown_host">无法解析主机地址: %s</string>
     <string name="error_connection_refused">连接被拒绝，请检查主机地址 %s 是否可达</string>
     <string name="error_connection_timeout">连接超时，请检查网络连接和主机地址 %s</string>
+
+    <!-- Content Descriptions -->
+    <string name="player_exit">退出</string>
+    <string name="player_restore">恢复</string>
+    <string name="player_trash">回收</string>
+    <string name="player_pause">暂停</string>
+    <string name="player_play">播放</string>
+    <string name="player_settings">设置</string>
+    <string name="folder">文件夹</string>
+    <string name="sync_base_dir">同步基目录</string>
+    <string name="thumbnail">缩略图</string>
+    <string name="media_type_video">视频</string>
+    <string name="media_type_image">图片</string>
+    <string name="media_type_file">文件</string>
+    <string name="trash_status">回收站</string>
+    <string name="star_rated">已评分</string>
+    <string name="star_unrated">未评分</string>
 </resources>

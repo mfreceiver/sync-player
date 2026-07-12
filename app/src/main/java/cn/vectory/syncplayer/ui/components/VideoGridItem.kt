@@ -39,10 +39,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import cn.vectory.syncplayer.ui.util.formatDuration
 import cn.vectory.syncplayer.ui.util.isVideoFile
@@ -215,7 +217,7 @@ internal fun VideoGridItem(
             ) {
                 Icon(
                     imageVector = Icons.Default.Delete,
-                    contentDescription = "回收站",
+                    contentDescription = stringResource(R.string.trash_status),
                     tint = extendedColors.trashRed,
                     modifier = Modifier.size(12.dp)
                 )
@@ -262,7 +264,7 @@ private fun GridThumbnail(
                     .data(File(thumbnailPath!!))
                     .size(640)
                     .build(),
-                contentDescription = "缩略图",
+                contentDescription = stringResource(R.string.thumbnail),
                 modifier = Modifier.fillMaxSize(),
                 contentScale = if (isImage) ContentScale.Fit else ContentScale.Crop
             )
@@ -275,9 +277,9 @@ private fun GridThumbnail(
                         else -> Icons.AutoMirrored.Filled.InsertDriveFile
                     },
                     contentDescription = when {
-                        isVideo -> "视频"
-                        isImage -> "图片"
-                        else -> "文件"
+                        isVideo -> stringResource(R.string.media_type_video)
+                        isImage -> stringResource(R.string.media_type_image)
+                        else -> stringResource(R.string.media_type_file)
                     },
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                     modifier = Modifier.size(32.dp)

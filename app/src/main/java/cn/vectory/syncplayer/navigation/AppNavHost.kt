@@ -78,7 +78,7 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                     navController.navigate(Route.Settings.route, drawerNavOptions)
                 },
                 onNavigateToSyncPreview = { relationId ->
-                    navController.navigate(Route.SyncPreview.create(relationId, "delete"))
+                    navController.navigate(Route.SyncPreview.create(relationId, "download"))
                 }
             )
         }

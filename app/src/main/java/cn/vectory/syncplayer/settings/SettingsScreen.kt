@@ -80,6 +80,12 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
+            Text(
+                stringResource(R.string.settings_section_sync),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp)
+            )
             ListItem(
                 headlineContent = { Text(stringResource(R.string.settings_configure_source)) },
                 leadingContent = { Icon(Icons.Default.Cloud, contentDescription = null) },
@@ -90,6 +96,14 @@ fun SettingsScreen(
                 headlineContent = { Text(stringResource(R.string.settings_configure_sync)) },
                 leadingContent = { Icon(Icons.Default.Sync, contentDescription = null) },
                 modifier = Modifier.clickable { onNavigateToSyncRelationList() }
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            Text(
+                stringResource(R.string.settings_section_playback),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp)
             )
 
             ListItem(
@@ -115,6 +129,14 @@ fun SettingsScreen(
                     )
                 },
                 modifier = Modifier.clickable { onNavigateToGainAnalysis() }
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            Text(
+                stringResource(R.string.settings_section_system),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp)
             )
 
             ListItem(
@@ -151,6 +173,14 @@ fun SettingsScreen(
                         enabled = viewModel.authCapabilityInfo.canAuthenticate
                     )
                 }
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            Text(
+                stringResource(R.string.settings_section_maintenance),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp)
             )
 
             ListItem(

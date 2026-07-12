@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FilterList
@@ -61,6 +62,8 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -317,7 +320,7 @@ fun BrowserScreen(
                                             } else {
                                                 scope.launch {
                                                     val newId = viewModel.ensureVideoRecord(item)
-                                                    if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds())
+                                                    if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds(item, newId))
                                                 }
                                             }
                                         }
@@ -329,7 +332,7 @@ fun BrowserScreen(
                                             } else {
                                                 scope.launch {
                                                     val newId = viewModel.ensureVideoRecord(item)
-                                                    if (newId > 0) onNavigateToImageViewer(newId, viewModel.getFolderImageIds())
+                                                    if (newId > 0) onNavigateToImageViewer(newId, viewModel.getFolderImageIds(item, newId))
                                                 }
                                             }
                                         }
@@ -364,6 +367,15 @@ fun BrowserScreen(
                 }
             } else if (viewMode == BrowserViewModel.ViewMode.STAGGERED_GRID) {
                 val staggeredState = rememberLazyStaggeredGridState()
+                BrowseScrollTracker(
+                    folder = folder,
+                    browseItemsFolder = browseItemsFolder,
+                    browseItemsNotEmpty = browseItems.isNotEmpty(),
+                    currentScrollPosition = { staggeredState.firstVisibleItemIndex to staggeredState.firstVisibleItemScrollOffset },
+                    saveScrollPosition = { f, i, o -> viewModel.saveScrollPosition(f, i, o) },
+                    getSavedScrollPosition = { f -> viewModel.getScrollPosition(f) },
+                    scrollToPosition = { i, o -> staggeredState.scrollToItem(i, o) }
+                )
                 LazyVerticalStaggeredGrid(
                     columns = StaggeredGridCells.Fixed(gridColumns),
                     state = staggeredState,
@@ -411,7 +423,7 @@ fun BrowserScreen(
                                             } else {
                                                 scope.launch {
                                                     val newId = viewModel.ensureVideoRecord(item)
-                                                    if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds())
+                                                    if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds(item, newId))
                                                 }
                                             }
                                         }
@@ -422,7 +434,7 @@ fun BrowserScreen(
                                             } else {
                                                 scope.launch {
                                                     val newId = viewModel.ensureVideoRecord(item)
-                                                    if (newId > 0) onNavigateToImageViewer(newId, viewModel.getFolderImageIds())
+                                                    if (newId > 0) onNavigateToImageViewer(newId, viewModel.getFolderImageIds(item, newId))
                                                 }
                                             }
                                         }
@@ -479,7 +491,7 @@ fun BrowserScreen(
                                             } else {
                                                 scope.launch {
                                                     val newId = viewModel.ensureVideoRecord(item)
-                                                    if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds())
+                                                    if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds(item, newId))
                                                 }
                                             }
                                         }
@@ -491,7 +503,7 @@ fun BrowserScreen(
                                             } else {
                                                 scope.launch {
                                                     val newId = viewModel.ensureVideoRecord(item)
-                                                    if (newId > 0) onNavigateToImageViewer(newId, viewModel.getFolderImageIds())
+                                                    if (newId > 0) onNavigateToImageViewer(newId, viewModel.getFolderImageIds(item, newId))
                                                 }
                                             }
                                         }
@@ -685,7 +697,8 @@ private fun SortFilterDropdown(
                         else -> BrowserViewModel.SortMode.FILENAME_ASC
                     }
                     onSortChange(next)
-                }
+                },
+                contentDescription = stringResource(R.string.browser_sort_filename)
             )
             SortFieldChip(
                 selected = sortMode == BrowserViewModel.SortMode.DURATION_ASC || sortMode == BrowserViewModel.SortMode.DURATION_DESC,
@@ -697,7 +710,8 @@ private fun SortFilterDropdown(
                         else -> BrowserViewModel.SortMode.DURATION_ASC
                     }
                     onSortChange(next)
-                }
+                },
+                contentDescription = stringResource(R.string.browser_sort_duration)
             )
             SortFieldChip(
                 selected = sortMode == BrowserViewModel.SortMode.FILE_SIZE_ASC || sortMode == BrowserViewModel.SortMode.FILE_SIZE_DESC,
@@ -709,7 +723,8 @@ private fun SortFilterDropdown(
                         else -> BrowserViewModel.SortMode.FILE_SIZE_ASC
                     }
                     onSortChange(next)
-                }
+                },
+                contentDescription = stringResource(R.string.browser_sort_size)
             )
         }
         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
@@ -725,15 +740,18 @@ private fun SortFilterDropdown(
         ) {
             IconOptionChip(
                 selected = filter == BrowserViewModel.BrowseFilter.ALL,
-                onClick = { onFilterChange(BrowserViewModel.BrowseFilter.ALL); onDismiss() }
+                onClick = { onFilterChange(BrowserViewModel.BrowseFilter.ALL); onDismiss() },
+                contentDescription = stringResource(R.string.browser_filter_all)
             ) { Icon(Icons.AutoMirrored.Filled.InsertDriveFile, null, modifier = Modifier.size(20.dp)) }
             IconOptionChip(
-                selected = filter == BrowserViewModel.BrowseFilter.VIDEO_ONLY,
-                onClick = { onFilterChange(BrowserViewModel.BrowseFilter.VIDEO_ONLY); onDismiss() }
-            ) { Icon(Icons.Default.VideoFile, null, modifier = Modifier.size(20.dp)) }
+                selected = filter == BrowserViewModel.BrowseFilter.MEDIA_ONLY,
+                onClick = { onFilterChange(BrowserViewModel.BrowseFilter.MEDIA_ONLY); onDismiss() },
+                contentDescription = stringResource(R.string.browser_filter_media_only)
+            ) { Icon(Icons.Default.Collections, null, modifier = Modifier.size(20.dp)) }
             IconOptionChip(
                 selected = filter == BrowserViewModel.BrowseFilter.UNWATCHED,
-                onClick = { onFilterChange(BrowserViewModel.BrowseFilter.UNWATCHED); onDismiss() }
+                onClick = { onFilterChange(BrowserViewModel.BrowseFilter.UNWATCHED); onDismiss() },
+                contentDescription = stringResource(R.string.browser_filter_unwatched)
             ) { Icon(Icons.Default.PlayCircleOutline, null, modifier = Modifier.size(20.dp)) }
         }
         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
@@ -750,11 +768,13 @@ private fun SortFilterDropdown(
             ) {
                 IconOptionChip(
                     selected = browseMode == BrowserViewModel.BrowseMode.DIRECTORY,
-                    onClick = { onBrowseModeChange(BrowserViewModel.BrowseMode.DIRECTORY); onDismiss() }
+                    onClick = { onBrowseModeChange(BrowserViewModel.BrowseMode.DIRECTORY); onDismiss() },
+                    contentDescription = stringResource(R.string.browser_browse_directory)
                 ) { Icon(Icons.Default.FolderOpen, null, modifier = Modifier.size(20.dp)) }
                 IconOptionChip(
                     selected = browseMode == BrowserViewModel.BrowseMode.FILE,
-                    onClick = { onBrowseModeChange(BrowserViewModel.BrowseMode.FILE); onDismiss() }
+                    onClick = { onBrowseModeChange(BrowserViewModel.BrowseMode.FILE); onDismiss() },
+                    contentDescription = stringResource(R.string.browser_browse_file)
                 ) { Icon(Icons.Default.VideoFile, null, modifier = Modifier.size(20.dp)) }
             }
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
@@ -771,15 +791,18 @@ private fun SortFilterDropdown(
         ) {
             IconOptionChip(
                 selected = viewMode == BrowserViewModel.ViewMode.LIST,
-                onClick = { onViewModeChange(BrowserViewModel.ViewMode.LIST); onDismiss() }
+                onClick = { onViewModeChange(BrowserViewModel.ViewMode.LIST); onDismiss() },
+                contentDescription = stringResource(R.string.browser_view_list)
             ) { Icon(Icons.AutoMirrored.Filled.ViewList, null, modifier = Modifier.size(20.dp)) }
             IconOptionChip(
                 selected = viewMode == BrowserViewModel.ViewMode.GRID,
-                onClick = { onViewModeChange(BrowserViewModel.ViewMode.GRID); onDismiss() }
+                onClick = { onViewModeChange(BrowserViewModel.ViewMode.GRID); onDismiss() },
+                contentDescription = stringResource(R.string.browser_view_grid)
             ) { Icon(Icons.Default.Apps, null, modifier = Modifier.size(20.dp)) }
             IconOptionChip(
                 selected = viewMode == BrowserViewModel.ViewMode.STAGGERED_GRID,
-                onClick = { onViewModeChange(BrowserViewModel.ViewMode.STAGGERED_GRID); onDismiss() }
+                onClick = { onViewModeChange(BrowserViewModel.ViewMode.STAGGERED_GRID); onDismiss() },
+                contentDescription = stringResource(R.string.browser_view_staggered)
             ) {
                 Canvas(modifier = Modifier.size(20.dp)) {
                     val barWidth = size.width / 5f
@@ -1039,10 +1062,13 @@ private fun IconOptionChip(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    contentDescription: String,
     icon: @Composable () -> Unit
 ) {
     Surface(
-        modifier = modifier.size(40.dp),
+        modifier = modifier
+            .size(40.dp)
+            .semantics { this.contentDescription = contentDescription },
         shape = RoundedCornerShape(8.dp),
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
         contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1060,9 +1086,10 @@ private fun SortFieldChip(
     ascending: Boolean,
     mainIcon: ImageVector,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    contentDescription: String
 ) {
-    IconOptionChip(selected = selected, onClick = onClick, modifier = modifier) {
+    IconOptionChip(selected = selected, onClick = onClick, modifier = modifier, contentDescription = contentDescription) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center

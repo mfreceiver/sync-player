@@ -30,6 +30,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -38,6 +39,9 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.size.Precision
+import cn.vectory.syncplayer.R
 import kotlin.math.abs
 import java.io.File
 
@@ -261,54 +265,6 @@ private fun ZoomableImage(
                 }
             }
             .pointerInput(Unit) {
-                val swipeThreshold = 60f
-                var totalDragX = 0f
-
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    totalDragX = 0f
-                    val startScale = scale
-                    val startOffsetX = offsetX
-
-                    do {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-
-                        val dragX = change.position.x - change.previousPosition.x
-                        val dragY = change.position.y - change.previousPosition.y
-                        totalDragX += dragX
-
-                        if (scale > 1f) {
-                            val maxOffX = (scale - 1f) * size.width / 2f
-                            val maxOffY = (scale - 1f) * size.height / 2f
-                            val newOffsetX = (offsetX + dragX).coerceIn(-maxOffX, maxOffX)
-                            val newOffsetY = (offsetY + dragY).coerceIn(-maxOffY, maxOffY)
-
-                            // Detect if we're hitting an edge
-                            val atLeftEdge = offsetX <= -maxOffX + 1f
-                            val atRightEdge = offsetX >= maxOffX - 1f
-                            canSwipeHorizontal = (atRightEdge && dragX < 0f) || (atLeftEdge && dragX > 0f)
-
-                            offsetX = newOffsetX
-                            offsetY = newOffsetY
-                        }
-
-                        change.consume()
-                    } while (event.changes.any { it.id == down.id && it.pressed })
-
-                    if (abs(totalDragX) > swipeThreshold) {
-                        if (scale <= 1f || canSwipeHorizontal) {
-                            if (totalDragX > 0f) onSwipeRight() else onSwipeLeft()
-                        }
-                    }
-
-                    if (scale <= 1f) {
-                        offsetX = 0f
-                        offsetY = 0f
-                    }
-                }
-            }
-            .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = { onSingleTap() },
                     onDoubleTap = { offset ->
@@ -329,8 +285,15 @@ private fun ZoomableImage(
             }
     ) {
         if (entity != null) {
+            val ctx = LocalContext.current
+            val widthPx = ctx.resources.displayMetrics.widthPixels
+            val heightPx = ctx.resources.displayMetrics.heightPixels
             AsyncImage(
-                model = File(entity.localAbsolutePath),
+                model = ImageRequest.Builder(ctx)
+                    .data(File(entity.localAbsolutePath))
+                    .size(widthPx, heightPx)
+                    .precision(Precision.AUTOMATIC)
+                    .build(),
                 contentDescription = entity.fileName,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
@@ -376,7 +339,7 @@ private fun ImageTopBar(
             ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
-                    contentDescription = "Exit",
+                    contentDescription = stringResource(R.string.player_exit),
                     tint = Color.White,
                     modifier = Modifier.size(24.dp)
                 )
@@ -397,7 +360,7 @@ private fun ImageTopBar(
             ) {
                 Icon(
                     imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
-                    contentDescription = if (isTrashed) "Restore" else "Trash",
+                    contentDescription = if (isTrashed) stringResource(R.string.player_restore) else stringResource(R.string.player_trash),
                     tint = Color.White,
                     modifier = Modifier.size(24.dp)
                 )

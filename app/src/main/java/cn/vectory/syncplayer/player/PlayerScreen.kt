@@ -449,7 +449,7 @@ fun PlayerScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Close,
-                            contentDescription = "Exit",
+                            contentDescription = stringResource(R.string.player_exit),
                             tint = Color.White,
                             modifier = Modifier.size(24.dp)
                         )
@@ -471,7 +471,7 @@ fun PlayerScreen(
                     ) {
                         Icon(
                             imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
-                            contentDescription = if (isTrashed) "Restore" else "Trash",
+                            contentDescription = if (isTrashed) stringResource(R.string.player_restore) else stringResource(R.string.player_trash),
                             tint = Color.White,
                             modifier = Modifier.size(24.dp)
                         )
@@ -685,7 +685,7 @@ private fun PlaybackControlRow(
         ) {
             Icon(
                 imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                contentDescription = if (isPlaying) "Pause" else "Play",
+                contentDescription = if (isPlaying) stringResource(R.string.player_pause) else stringResource(R.string.player_play),
                 tint = Color.White,
                 modifier = Modifier.size(32.dp)
             )
@@ -707,7 +707,7 @@ private fun PlaybackControlRow(
             ) {
                 Icon(
                     imageVector = Icons.Filled.Settings,
-                    contentDescription = "Settings",
+                    contentDescription = stringResource(R.string.player_settings),
                     tint = Color.White,
                     modifier = Modifier.size(24.dp)
                 )

@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -68,9 +69,11 @@ class MetadataRebuildViewModel @Inject constructor(
     val error = _error.asStateFlow()
 
     private var rebuildJob: Job? = null
+    private var discoverJob: Job? = null
 
     fun discover() {
-        viewModelScope.launch {
+        if (_isDiscovering.value) return
+        discoverJob = viewModelScope.launch {
             _isDiscovering.value = true
             _error.value = null
             _isComplete.value = false
@@ -90,6 +93,7 @@ class MetadataRebuildViewModel @Inject constructor(
                             .filter { it.isFile }
                             .filter { !it.name.startsWith(".") && !it.name.endsWith(".sync_tmp") }
                             .forEach { file ->
+                                ensureActive()
                                 val relPath = file.relativeTo(userdataRoot).path
                                 if (relPath !in dbPathSet) {
                                     newFiles.add(FileDiscovery(
@@ -134,10 +138,13 @@ class MetadataRebuildViewModel @Inject constructor(
                         }
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _error.value = "扫描失败: ${e.message}"
             } finally {
                 _isDiscovering.value = false
+                discoverJob = null
             }
         }
     }
@@ -209,7 +216,10 @@ class MetadataRebuildViewModel @Inject constructor(
     fun cancelRebuild() {
         rebuildJob?.cancel()
         rebuildJob = null
+        discoverJob?.cancel()
+        discoverJob = null
         _isRebuilding.value = false
+        _isDiscovering.value = false
         _currentFile.value = null
     }
 

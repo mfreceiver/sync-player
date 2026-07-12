@@ -55,7 +55,7 @@ class BrowserViewModel @Inject constructor(
 ) : ViewModel(), FileContextMenuActions, FolderContextMenuActions {
 
     enum class SortMode { FILENAME_ASC, FILENAME_DESC, DURATION_ASC, DURATION_DESC, FILE_SIZE_ASC, FILE_SIZE_DESC }
-    enum class BrowseFilter { ALL, VIDEO_ONLY, UNWATCHED }
+    enum class BrowseFilter { ALL, MEDIA_ONLY, UNWATCHED }
     enum class ViewMode { LIST, GRID, STAGGERED_GRID }
     // Star-based filtering for videos
     enum class StarFilterMode { OFF, EQ, GT, LT }
@@ -123,7 +123,7 @@ class BrowserViewModel @Inject constructor(
                 SortMode.FILENAME_ASC
             }
             _filter.value = try {
-                BrowseFilter.valueOf(userPrefs.getDefaultFilter())
+                BrowseFilter.valueOf(userPrefs.getDefaultFilter().replace("VIDEO_ONLY", "MEDIA_ONLY"))
             } catch (_: Exception) {
                 BrowseFilter.ALL
             }
@@ -166,14 +166,6 @@ class BrowserViewModel @Inject constructor(
     // Playback records will be loaded on-demand per-folder to avoid loading all into memory
     // private val playbackRecords removed in favor of per-folder queries
 
-    private val folderPlaybackRecords = effectiveFolder.flatMapLatest { folder ->
-        playbackRepository.getByFolderFlow(folder)
-    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-
-    // Task A: observe all playback records
-    private val allPlaybackRecords = playbackRepository.getAllFlow()
-        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-
     private val basePaths = syncRelationRepository.getAllWithSourceFlow()
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
@@ -187,40 +179,71 @@ class BrowserViewModel @Inject constructor(
         }?.value
     }.stateIn(viewModelScope, SharingStarted.Lazily, null)
 
-    // Helper data wrapper for combined playback records + relations
-    private data class PlaybackBundle(
-        val records: List<PlaybackRecordEntity>,
-        val allRecords: List<PlaybackRecordEntity>,
-        val relations: List<SyncRelationWithSource>,
-        val browseModeVal: BrowseMode
-    )
-
-    private data class FolderFilterBundle(
-        val folder: String,
+    // Debounce only sort/filter/star (rapid user input). Folder switches are discrete events
+    // and must pass through, otherwise every navigation pays a fixed 300ms latency floor.
+    private data class FilterBundle(
         val mode: SortMode,
         val filterVal: BrowseFilter,
         val starMode: StarFilterMode,
         val starValue: Int
     )
 
+    @OptIn(FlowPreview::class)
+    private val debouncedFilters: Flow<FilterBundle> = combine(
+        _sortMode, _filter, _starFilterMode, _starFilterValue
+    ) { mode, filterVal, starMode, starValue ->
+        FilterBundle(mode, filterVal, starMode, starValue)
+    }.debounce(300)
+
+    // flatMapLatest ties records+relations to each folder emission, preventing the
+    // "new folder + stale records" race that used to trigger two builds per switch.
+    private data class FolderData(
+        val folder: String,
+        val records: List<PlaybackRecordEntity>,
+        val relations: List<SyncRelationWithSource>
+    )
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val folderData: Flow<FolderData> = effectiveFolder.flatMapLatest { folder ->
+        combine(
+            playbackRepository.getByFolderFlow(folder),
+            basePaths
+        ) { records, relations ->
+            FolderData(folder, records, relations)
+        }
+    }
+
     @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
     val browseItems: StateFlow<List<BrowseItem>> = combine(
-        combine(effectiveFolder, _sortMode, _filter, _starFilterMode, _starFilterValue) { folder, mode, filterVal, starMode, starValue ->
-            FolderFilterBundle(folder, mode, filterVal, starMode, starValue)
-        },
-        // include allPlaybackRecords as an additional trigger source
-        combine(folderPlaybackRecords, allPlaybackRecords, basePaths, _browseMode) { records, allRecords, relations, browseModeVal ->
-            PlaybackBundle(records, allRecords, relations, browseModeVal)
-        }
-    ) { folderBundle, bundle ->
-        val (folder, mode, filterVal, starMode, starValue) = folderBundle
-        val (records, allRecords, relations, browseModeVal) = bundle
-        val baseDirSet = relations.map { it.relation.localBasePath }.toSet()
-        buildBrowseItems(folder, mode, filterVal, starMode, starValue, browseModeVal, records, allRecords, baseDirSet)
+        folderData,
+        debouncedFilters,
+        _browseMode
+    ) { data, filters, browseModeVal ->
+        BuildRequest(data, filters, browseModeVal)
     }
-    .debounce(300)
-    .onEach { _browseItemsFolder.value = _currentFolder.value }
+    // mapLatest cancels the previous build when a new folder switch arrives, freeing IO and
+    // preventing stale results from overwriting fresher ones during rapid navigation.
+    .mapLatest { req ->
+        val baseDirSet = req.data.relations.map { it.relation.localBasePath }.toSet()
+        val items = buildBrowseItems(
+            req.data.folder, req.filters.mode, req.filters.filterVal, req.filters.starMode, req.filters.starValue,
+            req.browseModeVal, req.data.records, baseDirSet
+        )
+        BrowseResult(req.data.folder, items)
+    }
+    // Stamp the folder that produced this list (NOT _currentFolder.value) to avoid scroll-restore
+    // misattribution when a slow build completes after the user has already navigated away.
+    .onEach { _browseItemsFolder.value = it.folder }
+    .map { it.items }
     .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    private data class BuildRequest(
+        val data: FolderData,
+        val filters: FilterBundle,
+        val browseModeVal: BrowseMode
+    )
+
+    private data class BrowseResult(val folder: String, val items: List<BrowseItem>)
 
     private suspend fun buildBrowseItems(
         folder: String,
@@ -230,70 +253,64 @@ class BrowserViewModel @Inject constructor(
         starValue: Int,
         browseModeVal: BrowseMode,
         records: List<PlaybackRecordEntity>,
-        allRecords: List<PlaybackRecordEntity>,
         baseDirSet: Set<String>
     ): List<BrowseItem> = withContext(Dispatchers.IO) {
         // === FILE MODE: flat list, no folders ===
         if (browseModeVal == BrowseMode.FILE) {
-            _flatTotalCount.value = videoRepository.getTotalItemCount()
-            val videoEntities = videoRepository.getFlatItemsFlow().first()
-            // use provided allRecords instead of re-reading from repo
-            val recordMap = allRecords.associateBy { it.videoItemId }
+            val totalCount = videoRepository.getTotalItemCount()
+            _flatTotalCount.value = totalCount
 
-            val allVideos = videoEntities.map { video ->
-                val record = recordMap[video.id]
+            val mediaOnly = filterVal == BrowseFilter.MEDIA_ONLY || filterVal == BrowseFilter.UNWATCHED
+            val unwatchedOnly = filterVal == BrowseFilter.UNWATCHED
+            val sortCol = when (mode) {
+                SortMode.DURATION_ASC -> "duration_asc"
+                SortMode.DURATION_DESC -> "duration_desc"
+                SortMode.FILE_SIZE_ASC -> "fileSize_asc"
+                SortMode.FILE_SIZE_DESC -> "fileSize_desc"
+                else -> ""
+            }
+
+            val dbItems = videoRepository.getFlatItemsFiltered(
+                mediaOnly = mediaOnly,
+                unwatchedOnly = unwatchedOnly,
+                starMode = starMode.name,
+                starValue = starValue,
+                sortCol = sortCol
+            )
+
+            val result = dbItems.map { item ->
                 BrowseItem(
-                    videoItemId = video.id,
-                    name = video.fileName,
-                    relativePath = video.relativePath,
+                    videoItemId = item.id,
+                    name = item.fileName,
+                    relativePath = item.relativePath,
                     isDirectory = false,
-                    fileSize = video.fileSize,
-                    duration = video.duration,
-                    width = video.width,
-                    height = video.height,
-                    bitrate = video.bitrate,
-                    frameRate = video.frameRate,
-                    thumbnailPath = video.thumbnailPath,
-                    playbackPosition = record?.position ?: 0,
-                    playbackDuration = record?.duration ?: 0,
-                    isCompleted = record?.isCompleted ?: false,
-                    isTrashed = record?.isTrashed ?: false,
-                    hasGainAdjusted = video.audioGainDb != null,
-                    star = video.star,
-                    mediaType = video.mediaType,
-                    dateTaken = video.dateTaken
+                    fileSize = item.fileSize,
+                    duration = item.duration,
+                    width = item.width,
+                    height = item.height,
+                    bitrate = item.bitrate,
+                    frameRate = item.frameRate,
+                    thumbnailPath = item.thumbnailPath,
+                    playbackPosition = item.playbackPosition,
+                    playbackDuration = item.playbackDuration,
+                    isCompleted = item.isCompleted,
+                    isTrashed = item.isTrashed,
+                    hasGainAdjusted = item.audioGainDb != null,
+                    star = item.star,
+                    mediaType = item.mediaType,
+                    dateTaken = item.dateTaken
                 )
             }
 
-            val filtered = when (filterVal) {
-                BrowseFilter.ALL -> allVideos
-                BrowseFilter.VIDEO_ONLY -> allVideos.filter { isVideoFile(it.name) || isImageFile(it.name) }
-                BrowseFilter.UNWATCHED -> allVideos.filter {
-                    (isVideoFile(it.name) || isImageFile(it.name)) && it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
-                }
+            val sorted = when (mode) {
+                SortMode.FILENAME_ASC -> result.sortedWith(compareBy(fileNameComparator) { it.name })
+                SortMode.FILENAME_DESC -> result.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
+                else -> result
             }
 
-            val starFiltered = when (starMode) {
-                StarFilterMode.OFF -> filtered
-                StarFilterMode.EQ -> filtered.filter { it.star == starValue }
-                StarFilterMode.GT -> filtered.filter { it.star > starValue }
-                StarFilterMode.LT -> filtered.filter { it.star < starValue }
-            }
+            _hiddenByFilterCount.value = (totalCount - sorted.size).coerceAtLeast(0)
 
-            _hiddenByFilterCount.value = (allVideos.size - starFiltered.size).coerceAtLeast(0)
-
-            return@withContext when (mode) {
-                SortMode.FILENAME_ASC -> starFiltered.sortedWith(compareBy(fileNameComparator) { it.name })
-                SortMode.FILENAME_DESC -> starFiltered.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
-                SortMode.DURATION_ASC -> starFiltered.sortedBy {
-                    if (isVideoFile(it.name)) it.duration ?: 0L else it.dateTaken ?: 0L
-                }
-                SortMode.DURATION_DESC -> starFiltered.sortedByDescending {
-                    if (isVideoFile(it.name)) it.duration ?: 0L else it.dateTaken ?: 0L
-                }
-                SortMode.FILE_SIZE_ASC -> starFiltered.sortedBy { it.fileSize }
-                SortMode.FILE_SIZE_DESC -> starFiltered.sortedByDescending { it.fileSize }
-            }
+            return@withContext sorted
         }
 
         // === DIRECTORY MODE: original logic with star filtering added ===
@@ -408,14 +425,14 @@ class BrowserViewModel @Inject constructor(
 
         val filteredVideos = when (filterVal) {
             BrowseFilter.ALL -> videoFiles
-            BrowseFilter.VIDEO_ONLY -> videoFiles
+            BrowseFilter.MEDIA_ONLY -> videoFiles
             BrowseFilter.UNWATCHED -> videoFiles.filter {
                 it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
             }
         }
         val filteredImages = when (filterVal) {
             BrowseFilter.ALL -> imageFiles
-            BrowseFilter.VIDEO_ONLY -> imageFiles
+            BrowseFilter.MEDIA_ONLY -> imageFiles
             BrowseFilter.UNWATCHED -> imageFiles.filter {
                 it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
             }
@@ -468,12 +485,13 @@ class BrowserViewModel @Inject constructor(
         }
         val finalNonVideos = when (filterVal) {
             BrowseFilter.ALL -> sortedNonVideos
-            BrowseFilter.VIDEO_ONLY -> emptyList()
+            BrowseFilter.MEDIA_ONLY -> emptyList()
             BrowseFilter.UNWATCHED -> emptyList()
         }
+
         val finalImages = when (filterVal) {
             BrowseFilter.ALL -> sortedImages
-            BrowseFilter.VIDEO_ONLY -> sortedImages
+            BrowseFilter.MEDIA_ONLY -> sortedImages
             BrowseFilter.UNWATCHED -> sortedImages
         }
         _hiddenByFilterCount.value = (totalBeforeFilter - filteredFolders.size - finalNonVideos.size - finalImages.size - sortedVideos.size).coerceAtLeast(0)
@@ -681,16 +699,29 @@ class BrowserViewModel @Inject constructor(
         return id
     }
 
-    fun getFolderVideoIds(): List<Long> {
+    /** [includeId] lets the caller include a just-created record before [browseItems] re-emits. */
+    fun getFolderVideoIds(includeItem: BrowseItem? = null, includeId: Long = -1L): List<Long> {
         return browseItems.value
-            .filter { !it.isDirectory && it.videoItemId != null && isVideoFile(it.name) }
-            .mapNotNull { it.videoItemId }
+            .filter { !it.isDirectory && isVideoFile(it.name) }
+            .mapNotNull { item ->
+                when {
+                    item.videoItemId != null -> item.videoItemId
+                    includeItem != null && item.relativePath == includeItem.relativePath && includeId > 0L -> includeId
+                    else -> null
+                }
+            }
     }
 
-    fun getFolderImageIds(): List<Long> {
+    fun getFolderImageIds(includeItem: BrowseItem? = null, includeId: Long = -1L): List<Long> {
         return browseItems.value
-            .filter { !it.isDirectory && it.videoItemId != null && isImageFile(it.name) }
-            .mapNotNull { it.videoItemId }
+            .filter { !it.isDirectory && isImageFile(it.name) }
+            .mapNotNull { item ->
+                when {
+                    item.videoItemId != null -> item.videoItemId
+                    includeItem != null && item.relativePath == includeItem.relativePath && includeId > 0L -> includeId
+                    else -> null
+                }
+            }
     }
 
     override fun toggleTrashed(videoItemId: Long) {
