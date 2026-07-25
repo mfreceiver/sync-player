@@ -33,7 +33,7 @@ Always run a build after code changes to verify compilation — there is no LSP 
 **Package**: `cn.vectory.syncplayer`
 **Repo**: `https://git.vectory.cn:18443/mfreceiver/sync-player.git` (branch: `master`)
 **Target**: Android 14+ (minSdk 34, targetSdk 35), personal use, sideloaded
-**Current version**: see `versionName` in `app/build.gradle.kts`
+**Current version**: `git describe --tags`（git 派生，见 Conventions · Versioning）
 
 ### Tech Stack
 
@@ -195,39 +195,39 @@ app/src/main/java/cn/vectory/syncplayer/
 - **Performance**:
   - **Debounce**: Use at least 300ms debounce for heavy UI merging flows (e.g., file browsing).
   - **I/O Safety**: All blocking I/O (Retriever, File operations) MUST run in `Dispatchers.IO`.
-- **Versioning**: bump versionCode + versionName in `app/build.gradle.kts` after every commit+push
+  - **Versioning**: git 派生 —— `versionCode` = `git rev-list --count HEAD`，`versionName` = `git describe`（见 `app/build.gradle.kts` 的 `gitVersionCode` / `gitVersionName`）。发版用 `./scripts/release.sh <x.y.z>`（打 tag + push → `release.yml`）。不要手改 versionCode/versionName。
 
 ## Release & Upload
 
-Gitea API 用于创建 Release 并上传 APK。凭证存储在 `~/.git-credentials`（`credential.helper = store`）。
+**自动发版（推荐）**：`release.yml` 在 push `v*` tag 时触发，CI 出签名 APK 并上传到 Gitea Release。版本号由 git 派生（见 Conventions · Versioning），无需手动 bump。
 
 ```bash
-# 1. 提取 API token
-TOKEN=$(cat ~/.git-credentials | grep 'git.vectory.cn' | sed 's|https://[^:]*:\([^@]*\)@.*|\1|')
+# 前置: 4 个 RELEASE_* Secrets 已建（./scripts/gitea/setup-secrets.sh），改动已在 main
+./scripts/release.sh 12.1.0
+# → 打注解 tag（notes 取自上次 tag 以来的 commits）+ push
+# → release.yml 自动 clean + lintRelease + testRelease + assembleRelease（签名）
+#   → 上传 APK/mapping/SHA256SUMS 到 Gitea Release
+```
 
-# 2. 构建 Release APK
+Actions: `https://git.vectory.cn:18443/mfreceiver/sync-player/actions`
+Release: `https://git.vectory.cn:18443/mfreceiver/sync-player/releases/tag/v<VERSION>`
+
+---
+
+**手动发版（fallback，CI 不可用时）**：本地构建 + Gitea API 建 Release + 上传 asset。凭证在 `~/.git-credentials`（`credential.helper = store`）。
+
+```bash
+TOKEN=$(cat ~/.git-credentials | grep 'git.vectory.cn' | sed 's|https://[^:]*:\([^@]*\)@.*|\1|')
 JAVA_HOME=/home/mar/android-studio/jbr ./gradlew assembleRelease --no-daemon
 # → app/build/outputs/apk/release/app-release.apk
 
-# 3. 创建 Release（VERSION 替换为实际版本号，如 v10.9.5）
+VERSION=12.1.0
 curl -s -X POST "https://git.vectory.cn:18443/api/v1/repos/mfreceiver/sync-player/releases" \
-  -H "Authorization: token $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tag_name": "VERSION",
-    "target_commitish": "master",
-    "name": "VERSION",
-    "body": "## 修复\n- ...\n\n## 新功能\n- ...",
-    "draft": false,
-    "prerelease": false
-  }'
+  -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"tag_name\":\"v$VERSION\",\"target_commitish\":\"main\",\"name\":\"v$VERSION\",\"body\":\"## 修复\n- ...\n\n## 新功能\n- ...\",\"draft\":false,\"prerelease\":false}"
 # 返回 JSON 中 "id" 即 RELEASE_ID
 
-# 4. 上传 APK 作为 Release Asset
 curl -s -X POST "https://git.vectory.cn:18443/api/v1/repos/mfreceiver/sync-player/releases/RELEASE_ID/assets" \
   -H "Authorization: token $TOKEN" \
-  -F "attachment=@app/build/outputs/apk/release/app-release.apk" \
-  -F "name=app-release.apk"
+  -F "attachment=@app/build/outputs/apk/release/app-release.apk" -F "name=app-release.apk"
 ```
-
-Release 页面: `https://git.vectory.cn:18443/mfreceiver/sync-player/releases/tag/VERSION`

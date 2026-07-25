@@ -8,6 +8,39 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+// === Version from git (go-around pattern, aligns with ocdroid) ===
+// No hand-maintained version fields. Both values derived from git at config time:
+//   versionName = <nearest-tag>-<short-hash>[-dirty]  (leading "v" stripped)
+//     → always carries the commit anchor. release.sh / release-check.sh override
+//     only the tag portion via -PreleaseVersion=<tag>; the hash always reflects HEAD.
+//   versionCode = git rev-list --count HEAD  (monotonic int, auto-increments per
+//     commit; 228 at adoption, strictly greater than every historical hand-bumped
+//     code which maxed at 123 — so installable as upgrade).
+// Do NOT hand-edit versionCode/versionName; tag a release via scripts/release.sh.
+fun gitOut(vararg args: String): String = try {
+    val proc = ProcessBuilder("git", *args)
+        .directory(rootProject.projectDir)
+        .redirectError(ProcessBuilder.Redirect.DISCARD)
+        .start()
+    val out = proc.inputStream.bufferedReader().readText().trim()
+    proc.waitFor()
+    out
+} catch (e: Exception) { "" }
+
+val releaseVersionOverride = providers.gradleProperty("releaseVersion").orNull?.trim()?.orEmpty()
+val gitVersionName: String = run {
+    val nearestTag = gitOut("describe", "--tags", "--abbrev=0").removePrefix("v")
+    val tagPart = releaseVersionOverride?.takeIf { it.isNotEmpty() } ?: nearestTag
+    val shortHash = gitOut("rev-parse", "--short", "HEAD")
+    val dirty = if (gitOut("status", "--porcelain").isEmpty()) "" else "-dirty"
+    when {
+        tagPart.isEmpty() && shortHash.isEmpty() -> "dev"
+        tagPart.isEmpty() -> "$shortHash$dirty"
+        else -> "$tagPart-$shortHash$dirty"
+    }
+}
+val gitVersionCode: Int = gitOut("rev-list", "--count", "HEAD").toIntOrNull()?.coerceAtLeast(1) ?: 1
+
 android {
     namespace = "cn.vectory.syncplayer"
     compileSdk = 35
@@ -30,8 +63,8 @@ android {
         applicationId = "cn.vectory.syncplayer"
         minSdk = 34
         targetSdk = 35
-        versionCode = 123
-        versionName = "12.0.0"
+        versionCode = gitVersionCode
+        versionName = gitVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
