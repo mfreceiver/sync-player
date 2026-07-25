@@ -31,6 +31,18 @@ KEY_PW=$(get_prop release.keyPassword); [[ -z "$KEY_PW" ]] && KEY_PW="$STORE_PW"
 [[ -n "$STORE_FILE" && -f "$STORE_FILE" ]] || { echo "❌ keystore 不存在: '${STORE_FILE:-未设}'(检查 $lp 的 release.storeFile)"; exit 1; }
 [[ -n "$STORE_PW" ]] || { echo "❌ $lp 的 release.storePassword 为空"; exit 1; }
 
+# Validate before uploading: avoid replacing working Gitea secrets with a
+# password/file combination that only fails later in packageRelease.
+KEYTOOL="${JAVA_HOME:-/home/mar/android-studio/jbr}/bin/keytool"
+if [[ ! -x "$KEYTOOL" ]]; then KEYTOOL="$(command -v keytool || true)"; fi
+[[ -n "$KEYTOOL" && -x "$KEYTOOL" ]] || { echo "❌ 找不到 keytool（设置 JAVA_HOME 后重试）"; exit 1; }
+"$KEYTOOL" -list -keystore "$STORE_FILE" -storepass "$STORE_PW" >/dev/null 2>&1 || {
+  echo "❌ release.storePassword 无法打开 keystore；未写入任何 Gitea Secret"; exit 1;
+}
+"$KEYTOOL" -list -keystore "$STORE_FILE" -storepass "$STORE_PW" -alias "$KEY_ALIAS" >/dev/null 2>&1 || {
+  echo "❌ release.keyAlias='$KEY_ALIAS' 不存在于 keystore；未写入任何 Gitea Secret"; exit 1;
+}
+
 echo "==> 源: keystore=$STORE_FILE  repo=$REPO"
 echo "==> 计算 keystore base64..."
 KS_B64=$(base64 -w0 "$STORE_FILE")

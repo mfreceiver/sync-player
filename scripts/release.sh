@@ -50,6 +50,6 @@ git push origin "$TAG"
 
 echo ""
 echo "✅ tag $TAG 已推送。release.yml 将自动："
-echo "   clean + lintRelease + testRelease + assembleRelease（签名）→ 上传 APK/mapping/SHA256SUMS 到 Gitea Release"
+echo "   clean + lintRelease + testDebugUnitTest + assembleRelease（签名）→ 上传 APK/mapping/SHA256SUMS 到 Gitea Release"
 echo "   Actions: https://git.vectory.cn:18443/mfreceiver/sync-player/actions"
 echo "   Release: https://git.vectory.cn:18443/mfreceiver/sync-player/releases/tag/$TAG"

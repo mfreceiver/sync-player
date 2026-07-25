@@ -46,7 +46,7 @@ jobs:
           } > local.properties
           chmod 600 local.properties "$KS"
 
-      - name: release-check（clean + lintRelease + testRelease + assembleRelease）
+      - name: release-check（clean + lintRelease + testDebugUnitTest + assembleRelease）
         env:
           # Release may overlap integration-check; isolate Gradle journal locks.
           GRADLE_USER_HOME: /root/.gradle/release

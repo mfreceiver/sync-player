@@ -205,7 +205,7 @@ app/src/main/java/cn/vectory/syncplayer/
 # 前置: 4 个 RELEASE_* Secrets 已建（./scripts/gitea/setup-secrets.sh），改动已在 main
 ./scripts/release.sh 12.1.0
 # → 打注解 tag（notes 取自上次 tag 以来的 commits）+ push
-# → release.yml 自动 clean + lintRelease + testRelease + assembleRelease（签名）
+# → release.yml 自动 clean + lintRelease + testDebugUnitTest + assembleRelease（签名）
 #   → 上传 APK/mapping/SHA256SUMS 到 Gitea Release
 ```
 

@@ -26,7 +26,7 @@
 | 本机 | `./scripts/check.sh [--full]` | 同上 + 可选 lintDebug |
 | 远端分支 | `branch-check.yml` → `remote-check.sh`（`lintDebug + testDebugUnitTest + assembleDebug`） | 干净容器验证任务分支可构建 |
 | 远端整合 | `integration-check.yml`（`clean + lint + test + assembleDebug`） | 验证与主干组合（无覆盖率门控） |
-| 远端 Release | `release.yml` → `release-check.sh`（`clean + lintRelease + testRelease + assembleRelease`） | CI 签名出 APK + mapping + SHA256SUMS |
+| 远端 Release | `release.yml` → `release-check.sh`（`clean + lintRelease + testDebugUnitTest + assembleRelease`） | CI 签名出 APK + mapping + SHA256SUMS |
 
 ---
 
