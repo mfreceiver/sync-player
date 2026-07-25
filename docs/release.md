@@ -65,9 +65,11 @@ val gitVersionCode: Int = gitOut("rev-list", "--count", "HEAD").toIntOrNull()?.c
 | `RELEASE_STORE_PASSWORD` | keystore 密码 |
 | `RELEASE_KEY_ALIAS` | key alias（缺省 `release`） |
 | `RELEASE_KEY_PASSWORD` | key 密码（缺省同 store 密码） |
+| `WECOM_WEBHOOK`（可选） | 企业微信群机器人 webhook 完整 URL（发版完成/失败时通知） |
 
-`setup-secrets.sh` 上传前用 **keytool 校验** store 密码与 alias：任一不通即拒绝写入 Secret，
-杜绝把无效凭据推进 Gitea 导致 `packageRelease` 才失败。
+5 个 Secret（4 签名 + 1 可选通知）均由 [`scripts/gitea/setup-secrets.sh`](../scripts/gitea/setup-secrets.sh)
+一次性注入（轮换签名时重跑，幂等）。`WECOM_WEBHOOK` 从 `pass` 的 `sync-player/wecom-webhook` 取，
+缺失则跳过（不影响签名 secrets）。
 
 ### 3.2 本地签名（开发机）
 
@@ -131,6 +133,7 @@ JAVA_HOME=/home/mar/android-studio/jbr   # Android Studio bundled JBR (OpenJDK 2
 | release-check | `GRADLE_USER_HOME=/root/.gradle/release` 下跑 `clean + lintRelease + testDebugUnitTest + assembleRelease -PreleaseVersion=<v>` → 归档到 `artifacts/` |
 | 上传 | `publish-release.sh <tag>`：幂等（既有 release 先 DELETE 再 POST）→ **body 取自 annotated tag 注解的分类 changelog**（POSIX awk JSON-escape，无 python3/jq）→ 上传 3 个 asset（APK + mapping.txt + SHA256SUMS） |
 | 清理 | `if: always()` 删临时 keystore / `local.properties` / `~/.git-credentials` |
+| 通知企业微信 | `if: always()` → `notify-wecom.sh`：成功发绿色（版本 + 下载/Changelog 链接），失败发红色（Actions 链接）。best-effort——`WECOM_WEBHOOK` 缺失或 qyapi 不可达只警告，不影响发版结果 |
 
 ### 4.3 端到端命令序列
 
