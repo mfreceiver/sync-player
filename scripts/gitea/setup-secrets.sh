@@ -64,12 +64,10 @@ put_secret RELEASE_STORE_PASSWORD "$STORE_PW"
 put_secret RELEASE_KEY_ALIAS "$KEY_ALIAS"
 put_secret RELEASE_KEY_PASSWORD "$KEY_PW"
 
-# 可选：企业微信通知 webhook（发版完成/失败时 ping 群；来源 pass sync-player/wecom-webhook，
-# 缺失则跳过，不影响签名 secrets 上传）
-if command -v pass >/dev/null 2>&1 && pass show sync-player/wecom-webhook >/dev/null 2>&1; then
-  echo "==> 注入 WECOM_WEBHOOK（发版结果通知，来源: pass）..."
-  put_secret WECOM_WEBHOOK "$(pass show sync-player/wecom-webhook | tr -d '\n')"
-fi
+# 注：WECOM_WEBHOOK 已改为站点级 Actions Variable（管理后台→管理设置→工作流→变量），
+# 全实例仓库继承，workflow 里引用 vars.WECOM_WEBHOOK（非 secrets.*）。本脚本不再推送它
+# （签名 secrets 仍在此）。轮换 webhook 时去管理后台改该 Variable；本地 pass 里
+# sync-player/wecom-webhook 仍是 source of truth（备忘）。
 
 echo ""
 echo "==> 验证(仅名称,不回显值):"

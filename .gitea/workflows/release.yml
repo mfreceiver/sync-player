@@ -72,10 +72,11 @@ jobs:
 
       - name: 通知企业微信（发版结果）
         # if: always() → 成功（绿色，附下载/Changelog 链接）与失败（红色，附 Actions 链接）都通知。
-        # best-effort：WECOM_WEBHOOK 缺失或 qyapi 不可达时只警告，不影响发版结果。
+        # WECOM_WEBHOOK 是站点级 Actions Variable（管理后台→管理设置→工作流→变量），全实例仓库继承，
+        # 引用 vars.*（非 secrets.*）。best-effort：缺失或 qyapi 不可达只警告，不影响发版结果。
         if: always()
         env:
-          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          WECOM_WEBHOOK: ${{ vars.WECOM_WEBHOOK }}
           TAG: ${{ github.ref_name }}
           OUTCOME: ${{ job.status }}
         run: |

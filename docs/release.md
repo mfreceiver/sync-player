@@ -65,11 +65,14 @@ val gitVersionCode: Int = gitOut("rev-list", "--count", "HEAD").toIntOrNull()?.c
 | `RELEASE_STORE_PASSWORD` | keystore 密码 |
 | `RELEASE_KEY_ALIAS` | key alias（缺省 `release`） |
 | `RELEASE_KEY_PASSWORD` | key 密码（缺省同 store 密码） |
-| `WECOM_WEBHOOK`（可选） | 企业微信群机器人 webhook 完整 URL（发版完成/失败时通知） |
 
-5 个 Secret（4 签名 + 1 可选通知）均由 [`scripts/gitea/setup-secrets.sh`](../scripts/gitea/setup-secrets.sh)
-一次性注入（轮换签名时重跑，幂等）。`WECOM_WEBHOOK` 从 `pass` 的 `sync-player/wecom-webhook` 取，
-缺失则跳过（不影响签名 secrets）。
+4 个签名 Secret 由 [`scripts/gitea/setup-secrets.sh`](../scripts/gitea/setup-secrets.sh) 一次性注入
+（轮换签名时重跑，幂等），上传前用 keytool 校验。
+
+> **WECOM_WEBHOOK 不是 repo Secret，是站点级 Actions Variable**（管理后台 → 管理设置 → 工作流 →
+> 变量），全实例仓库（sync-player / ocdroid / x-liker …）继承，workflow 里引用 `${{ vars.WECOM_WEBHOOK }}`。
+> 已验证：sync-player workflow 能解析到（89 字符），且 Gitea 在日志里自动 mask 为 `***`。
+> 轮换 webhook 去管理后台改该 Variable（本地 `pass` 的 `sync-player/wecom-webhook` 仍是 source of truth 备忘）。
 
 ### 3.2 本地签名（开发机）
 
