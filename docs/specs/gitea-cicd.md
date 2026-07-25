@@ -93,3 +93,10 @@ git tag v12.0.0-ci-test && git push origin v12.0.0-ci-test
 - **收紧 lint**：~~偿还 lint 债务后，把 `lint { abortOnError = false }` 改回 `true`~~——**已偿清** lint 债务，`app/build.gradle.kts` 现为 `lint { abortOnError = true }`（lint-clean）。新增 lint 问题时 CI 会直接红。
 - **升级 CI 镜像**：SDK/AGP 升级时同步改 Unraid 上的 `universal-ci-android` 镜像（与 ocdroid 共享）。
 - **加速 CI（Gradle 缓存）**：每个 job 是全新容器，且镜像不含 Gradle（`./gradlew` wrapper 自带），默认每次重新下载 distribution + 依赖。为避免重复下载，在 act_runner `config.yaml` 的 `container.options` 加 `-v /mnt/cache/appdata/gradle-cache:/root/.gradle`（并确保 `valid_volumes: ["**"]`），首次下完后续 job 复用。由于 integration/release 可能并发，三个 workflow 分别使用 `/root/.gradle/{branch,integration,release}`，避免共享 journal lock；`gradle-wrapper.properties` 的 `networkTimeout=120000` 已为 services.gradle.org 慢响应留 2 分钟窗口。
+- **宿主机维护：Gradle 缓存 TTL 淘汰**（可选）：三个 namespaced `GRADLE_USER_HOME` 在共享卷下无界增长。**不要在 workflow 末尾清理**（会抵消缓存复用——隔离的目的就是跨 run 复用）。增长源是 `caches/`（依赖），`wrapper/dists/`（Gradle 发行包 ~150MB/版本）应保留。建议 Unraid 宿主机 cron 周期淘汰 `caches/`：
+  ```bash
+  # /etc/cron.d/gradle-cache-evict — 每周清理 30 天未触碰的依赖缓存（保留 wrapper/dists）
+  0 4 * * 0 root find /mnt/cache/appdata/gradle-cache/*/caches -type f -mtime +30 -delete 2>/dev/null
+  15 4 * * 0 root find /mnt/cache/appdata/gradle-cache -type d -empty -delete 2>/dev/null
+  ```
+  cron 落在 Unraid（不在 repo）；此项目依赖稳定，增长慢，清理为可选低优先维护。

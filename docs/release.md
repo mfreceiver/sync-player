@@ -239,8 +239,10 @@ release:         发版元提交（自动跳过）
 ### 7.2 CI（4 Gitea Secrets）
 
 `release.yml` 把 4 个 Secret 解出，写 `$RUNNER_TEMP/release.keystore`（base64 解码）+
-`local.properties`（4 个 `release.*` + `sdk.dir=$ANDROID_HOME`），`chmod 600`，job 结束
-`if: always()` 清理。
+`local.properties`（4 个 `release.*` + `sdk.dir=$ANDROID_HOME`），`chmod 600`。随后跑一道
+**fail-fast keytool 校验**（`keytool -list` 验 store 密码 + alias，~1s）——坏凭据立即在「恢复 keystore」
+step 红，省掉 6 分钟构建后 `packageRelease` 才炸（与 §7.3 本机校验互补：本机挡「推坏 Secret」，CI 挡
+「Secret 推上去后漂移/过期」）。job 结束 `if: always()` 清理。
 
 ### 7.3 keytool 预校验
 

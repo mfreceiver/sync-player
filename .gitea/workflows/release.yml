@@ -45,6 +45,12 @@ jobs:
             printf 'release.keyPassword=%s\n' "$RELEASE_KEY_PASSWORD"
           } > local.properties
           chmod 600 local.properties "$KS"
+          # fail-fast keytool 校验：~1s 内挡坏凭据，省掉 6 分钟构建后 packageRelease 才炸。
+          # 与 setup-secrets.sh 本机校验互补：本机挡「推坏 Secret」，CI 挡「Secret 推上去后漂移/过期」。
+          keytool -list -keystore "$KS" -storepass "$RELEASE_STORE_PASSWORD" >/dev/null \
+            || { echo "❌ CI 解出的 keystore/storePassword 不匹配（Secret 可能过期，本机重跑 setup-secrets.sh）"; exit 1; }
+          keytool -list -keystore "$KS" -storepass "$RELEASE_STORE_PASSWORD" -alias "$RELEASE_KEY_ALIAS" >/dev/null \
+            || { echo "❌ keyAlias='$RELEASE_KEY_ALIAS' 不存在于 CI keystore（本机重跑 setup-secrets.sh）"; exit 1; }
 
       - name: release-check（clean + lintRelease + testDebugUnitTest + assembleRelease）
         env:
