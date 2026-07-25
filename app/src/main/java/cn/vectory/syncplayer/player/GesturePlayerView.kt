@@ -10,6 +10,7 @@ import androidx.media3.ui.PlayerView
 import kotlin.math.abs
 
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class GesturePlayerView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null

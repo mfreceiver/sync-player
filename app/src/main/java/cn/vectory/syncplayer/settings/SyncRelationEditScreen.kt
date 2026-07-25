@@ -17,7 +17,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import cn.vectory.syncplayer.sync.RemoteBrowseError
 import cn.vectory.syncplayer.R
@@ -57,14 +56,19 @@ fun SyncRelationEditScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isNavigatingBack by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
-    val context = LocalContext.current
+    val pathNotFoundStr = stringResource(R.string.relation_remote_path_not_found)
+    val remoteTimeoutStr = stringResource(R.string.relation_remote_timeout)
+    val remoteBrowseFailedStr = stringResource(R.string.relation_remote_browse_failed)
+    val dirAccessibleStr = stringResource(R.string.relation_dir_accessible)
+    val sourceSaveSuccessStr = stringResource(R.string.source_save_success)
+    val relationSaveSuccessStr = stringResource(R.string.relation_save_success)
 
     LaunchedEffect(browseError) {
         val err = browseError ?: return@LaunchedEffect
         val msg = when (err) {
-            RemoteBrowseError.PATH_NOT_FOUND -> context.getString(R.string.relation_remote_path_not_found)
-            RemoteBrowseError.TIMEOUT -> context.getString(R.string.relation_remote_timeout)
-            RemoteBrowseError.OTHER -> context.getString(R.string.relation_remote_browse_failed)
+            RemoteBrowseError.PATH_NOT_FOUND -> pathNotFoundStr
+            RemoteBrowseError.TIMEOUT -> remoteTimeoutStr
+            RemoteBrowseError.OTHER -> remoteBrowseFailedStr
         }
         snackbarHostState.showSnackbar(msg)
         viewModel.clearBrowseError()
@@ -120,7 +124,7 @@ fun SyncRelationEditScreen(
                     readOnly = true,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
                     trailingIcon = {
                         Icon(Icons.Filled.ArrowDropDown, contentDescription = stringResource(R.string.relation_expand))
                     }
@@ -206,7 +210,7 @@ fun SyncRelationEditScreen(
             }
 
             testResult?.let {
-                FormResultText(message = it, isSuccess = it.contains(context.getString(R.string.relation_dir_accessible)))
+                FormResultText(message = it, isSuccess = it.contains(dirAccessibleStr))
             }
             error?.let {
                 FormResultText(message = it, isSuccess = false)
@@ -218,7 +222,7 @@ fun SyncRelationEditScreen(
     }
 
     LaunchedEffect(saveResult) {
-        if (saveResult?.contains(context.getString(R.string.source_save_success)) == true || saveResult?.contains(context.getString(R.string.relation_save_success)) == true) {
+        if (saveResult?.contains(sourceSaveSuccessStr) == true || saveResult?.contains(relationSaveSuccessStr) == true) {
             onNavigateToRelationList()
         }
     }

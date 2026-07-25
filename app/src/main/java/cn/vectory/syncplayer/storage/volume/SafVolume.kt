@@ -38,9 +38,9 @@ class SafVolume(
         val projection = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME)
         context.contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
             while (cursor.moveToNext()) {
-                val name = cursor.getString(cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME))
+                val name = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME))
                 if (name == displayName) {
-                    return cursor.getString(cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID))
+                    return cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID))
                 }
             }
         }
@@ -116,7 +116,7 @@ class SafVolume(
         val names = mutableListOf<String>()
         context.contentResolver.query(childrenUri, null, null, null, null)?.use { cursor ->
             while (cursor.moveToNext()) {
-                val name = cursor.getString(cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)) ?: continue
+                val name = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)) ?: continue
                 names.add(name)
             }
         }

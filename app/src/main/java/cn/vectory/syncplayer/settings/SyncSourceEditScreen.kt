@@ -14,7 +14,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -35,7 +34,8 @@ fun SyncSourceEditScreen(
     viewModel: SyncSourceEditViewModel = hiltViewModel()
 ) {
     val extendedColors = LocalExtendedColors.current
-    val context = LocalContext.current
+    val connectSuccessStr = stringResource(R.string.source_connect_success)
+    val sourceSaveSuccessStr = stringResource(R.string.source_save_success)
     val name by viewModel.name.collectAsStateWithLifecycle()
     val protocol by viewModel.protocol.collectAsStateWithLifecycle()
     val host by viewModel.host.collectAsStateWithLifecycle()
@@ -192,11 +192,11 @@ fun SyncSourceEditScreen(
 
                     testResult?.let {
                         Spacer(Modifier.height(8.dp))
-                        FormResultText(message = it, isSuccess = it.contains(context.getString(R.string.source_connect_success)) || it.contains(context.getString(R.string.source_save_success)))
+                        FormResultText(message = it, isSuccess = it.contains(connectSuccessStr) || it.contains(sourceSaveSuccessStr))
                     }
                     saveResult?.let {
                         Spacer(Modifier.height(4.dp))
-                        FormResultText(message = it, isSuccess = it.contains(context.getString(R.string.source_connect_success)) || it.contains(context.getString(R.string.source_save_success)))
+                        FormResultText(message = it, isSuccess = it.contains(connectSuccessStr) || it.contains(sourceSaveSuccessStr))
                     }
                 }
         }
@@ -224,7 +224,7 @@ fun SyncSourceEditScreen(
     }
 
     LaunchedEffect(saveResult) {
-        if (saveResult?.contains(context.getString(R.string.source_save_success)) == true) {
+        if (saveResult?.contains(sourceSaveSuccessStr) == true) {
             onNavigateToSourceList()
         }
     }

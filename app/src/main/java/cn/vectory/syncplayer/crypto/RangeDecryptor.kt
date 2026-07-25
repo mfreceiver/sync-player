@@ -41,7 +41,7 @@ class RangeDecryptor(
             totalRead += n
         }
         // Decrypt using the ThreadLocal cipher
-        val cipher = cipherThreadLocal.get()
+        val cipher = requireNotNull(cipherThreadLocal.get()) { "Cipher instance not available for decrypt" }
         cipher.init(javax.crypto.Cipher.DECRYPT_MODE, key, counterBlock(startBlock))
         val plain = cipher.doFinal(cipherBuf, 0, totalRead)
         return plain.copyOfRange(skip, skip + effectiveLen)

@@ -7,7 +7,7 @@ import java.io.File
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class FileVolumeTest {
-    private fun newVol(): FileVolume = FileVolume(File(createTempDir(), "vol").apply { mkdirs() })
+    private fun newVol(): FileVolume = FileVolume(File(kotlin.io.path.createTempDirectory().toFile(), "vol").apply { mkdirs() })
 
     @Test fun pathDerivation() {
         assertEquals("0/42.enc", MediaPaths.mediaRelPath(42))

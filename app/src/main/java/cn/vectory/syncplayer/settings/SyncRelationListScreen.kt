@@ -15,7 +15,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -36,7 +35,6 @@ fun SyncRelationListScreen(
 ) {
     val relations by viewModel.relationsWithSource.collectAsStateWithLifecycle()
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
-    val context = LocalContext.current
     var isNavigatingBack by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -80,7 +78,7 @@ fun SyncRelationListScreen(
                         val extendedColors = LocalExtendedColors.current
                         val lastSync = item.relation.lastSyncTime
                         val lastResult = item.relation.lastSyncResult
-                        val failKeyword = context.getString(R.string.sync_failed).substringBefore(":").substringBefore("：")
+                        val failKeyword = stringResource(R.string.sync_failed).substringBefore(":").substringBefore("：")
                         val isSuccess = lastResult != null && !lastResult.contains(failKeyword)
                         val resultColor = when {
                             lastResult == null -> MaterialTheme.colorScheme.onSurfaceVariant

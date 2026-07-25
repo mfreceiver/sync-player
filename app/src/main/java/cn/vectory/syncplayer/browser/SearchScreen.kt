@@ -59,6 +59,7 @@ fun SearchScreen(
 
     val focusRequester = remember { FocusRequester() }
     val context = LocalContext.current
+    val noRecordStr = stringResource(R.string.context_no_record)
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -253,7 +254,7 @@ fun SearchScreen(
                                                 onNavigateToPlayer(id, viewModel.getSearchResultVideoIds())
                                             } else {
                                                 scope.launch {
-                                                    snackbarHostState.showSnackbar(context.getString(R.string.context_no_record))
+                                                    snackbarHostState.showSnackbar(noRecordStr)
                                                 }
                                             }
                                         }
@@ -263,7 +264,7 @@ fun SearchScreen(
                                                 onNavigateToImageViewer(id, viewModel.getSearchResultImageIds())
                                             } else {
                                                 scope.launch {
-                                                    snackbarHostState.showSnackbar(context.getString(R.string.context_no_record))
+                                                    snackbarHostState.showSnackbar(noRecordStr)
                                                 }
                                             }
                                         }

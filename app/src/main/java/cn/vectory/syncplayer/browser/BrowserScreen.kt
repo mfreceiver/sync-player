@@ -123,6 +123,7 @@ fun BrowserScreen(
     var showDirectoryTree by remember { mutableStateOf(false) }
     var showAdvancedFilter by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val cannotPlayStr = stringResource(R.string.browser_cannot_play)
 
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -317,7 +318,7 @@ fun BrowserScreen(
                                             if (id != null) {
                                                 onNavigateToPlayer(id, viewModel.getFolderVideoIds())
                                             } else {
-                                                scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
+                                                scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
                                             }
                                         }
                                         isImageFile(item.name) -> {
@@ -326,11 +327,11 @@ fun BrowserScreen(
                                             if (id != null) {
                                                 onNavigateToImageViewer(id, viewModel.getFolderImageIds())
                                             } else {
-                                                scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
+                                                scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
                                             }
                                         }
                                         else -> {
-                                            scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
+                                            scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
                                         }
                                     }
                                 },
@@ -414,7 +415,7 @@ fun BrowserScreen(
                                             if (id != null) {
                                                 onNavigateToPlayer(id, viewModel.getFolderVideoIds())
                                             } else {
-                                                scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
+                                                scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
                                             }
                                         }
                                         isImageFile(item.name) -> {
@@ -422,11 +423,11 @@ fun BrowserScreen(
                                             if (id != null) {
                                                 onNavigateToImageViewer(id, viewModel.getFolderImageIds())
                                             } else {
-                                                scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
+                                                scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
                                             }
                                         }
                                         else -> {
-                                            scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
+                                            scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
                                         }
                                     }
                                 },
@@ -476,7 +477,7 @@ fun BrowserScreen(
                                             if (id != null) {
                                                 onNavigateToPlayer(id, viewModel.getFolderVideoIds())
                                             } else {
-                                                scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
+                                                scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
                                             }
                                         }
                                         isImageFile(item.name) -> {
@@ -485,11 +486,11 @@ fun BrowserScreen(
                                             if (id != null) {
                                                 onNavigateToImageViewer(id, viewModel.getFolderImageIds())
                                             } else {
-                                                scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
+                                                scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
                                             }
                                         }
                                         else -> {
-                                            scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
+                                            scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
                                         }
                                     }
                                 },

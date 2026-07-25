@@ -51,6 +51,7 @@ fun SettingsScreen(
     var isNavigatingBack by remember { mutableStateOf(false) }
     var showVolumeSwitchWarning by remember { mutableStateOf(false) }
     var pendingVolumeAction by remember { mutableStateOf<VolumeAction?>(null) }
+    val persistFailedStr = stringResource(R.string.settings_media_storage_persist_failed)
 
     val openDocumentTree = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -64,7 +65,7 @@ fun SettingsScreen(
         } catch (e: SecurityException) {
             scope.launch {
                 snackbarHostState.showSnackbar(
-                    currentContext.getString(R.string.settings_media_storage_persist_failed)
+                    persistFailedStr
                 )
             }
         }

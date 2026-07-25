@@ -62,6 +62,8 @@ fun FileContextMenuDialog(
     context: Context = LocalContext.current,
 ) {
     var localStar by remember { mutableStateOf(item.star) }
+    val noRecordStr = stringResource(R.string.context_no_record)
+    val shareFailedStr = stringResource(R.string.context_share_failed)
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -136,7 +138,7 @@ fun FileContextMenuDialog(
                         if (itemId == null) {
                             onDismiss()
                             scope.launch {
-                                snackbarHostState.showSnackbar(context.getString(R.string.context_no_record))
+                                snackbarHostState.showSnackbar(noRecordStr)
                             }
                             return@TextButton
                         }
@@ -146,7 +148,7 @@ fun FileContextMenuDialog(
                             if (intent != null) {
                                 context.startActivity(intent)
                             } else {
-                                snackbarHostState.showSnackbar(context.getString(R.string.context_share_failed))
+                                snackbarHostState.showSnackbar(shareFailedStr)
                             }
                         }
                     }) {
@@ -169,7 +171,7 @@ fun FileContextMenuDialog(
                             if (delId == null) {
                                 onDismiss()
                                 scope.launch {
-                                    snackbarHostState.showSnackbar(context.getString(R.string.context_no_record))
+                                    snackbarHostState.showSnackbar(noRecordStr)
                                 }
                                 return@TextButton
                             }

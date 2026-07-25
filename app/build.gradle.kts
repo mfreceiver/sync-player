@@ -71,12 +71,12 @@ android {
         unitTests.isReturnDefaultValues = true
     }
 
-    // CI lint gate is informational only: sync-player has pre-existing lint debt
-    // (~31 errors, mostly LocalContextGetResourceValueCall surfaced by compose-bom
-    // 2025.12 + Range/UnsafeOptIn). abortOnError=false lets CI produce lint reports
-    // without blocking. Re-enable (true) once the debt is paid off.
+    // Lint gate blocks on errors. Debt paid off in the CI scaffold round
+    // (LocalContextGetResourceValueCall → stringResource, Range → getColumnIndexOrThrow,
+    // UnsafeOptIn → @OptIn). warningsAsErrors=false keeps warnings informational
+    // (aligns with ocdroid).
     lint {
-        abortOnError = false
+        abortOnError = true
         warningsAsErrors = false
     }
 }
@@ -84,6 +84,7 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
+        freeCompilerArgs.add("-Xannotation-default-target=param-property")
     }
 }
 

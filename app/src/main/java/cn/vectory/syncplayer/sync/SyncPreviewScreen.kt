@@ -107,7 +107,7 @@ fun SyncPreviewScreen(
                         }
                     }
                 )
-                TabRow(selectedTabIndex = if (syncMode == SyncMode.DOWNLOAD) 0 else 1) {
+                PrimaryTabRow(selectedTabIndex = if (syncMode == SyncMode.DOWNLOAD) 0 else 1) {
                     Tab(
                         selected = syncMode == SyncMode.DOWNLOAD,
                         onClick = { viewModel.setSyncMode(SyncMode.DOWNLOAD) },
