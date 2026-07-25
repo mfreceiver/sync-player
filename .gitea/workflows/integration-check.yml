@@ -12,10 +12,6 @@ on:
 jobs:
   full-check:
     runs-on: android
-    env:
-      # Separate namespace from branch/release jobs; runner capacity is not a
-      # sufficient concurrency guard when workflows overlap.
-      GRADLE_USER_HOME: /root/.gradle/integration
     steps:
       - name: Checkout（直连 Gitea）
         env:
@@ -32,4 +28,7 @@ jobs:
       - name: local.properties
         run: printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
       - name: clean + lint + test + assembleDebug
+        env:
+          # Keep integration Gradle locks separate from branch/release jobs.
+          GRADLE_USER_HOME: /root/.gradle/integration
         run: ./gradlew --no-daemon --stacktrace clean lintDebug testDebugUnitTest assembleDebug
