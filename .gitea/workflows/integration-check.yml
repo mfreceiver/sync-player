@@ -12,6 +12,10 @@ on:
 jobs:
   full-check:
     runs-on: android
+    env:
+      # Separate namespace from branch/release jobs; runner capacity is not a
+      # sufficient concurrency guard when workflows overlap.
+      GRADLE_USER_HOME: /root/.gradle/integration
     steps:
       - name: Checkout（直连 Gitea）
         env:

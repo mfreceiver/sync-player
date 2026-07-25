@@ -13,6 +13,10 @@ on:
 jobs:
   release:
     runs-on: android
+    env:
+      # Release may overlap the main-push integration check. Use a dedicated
+      # cache namespace so Gradle journal locks cannot cross workflow jobs.
+      GRADLE_USER_HOME: /root/.gradle/release
     steps:
       - name: Checkout（直连 Gitea，完整历史 + tag）
         env:

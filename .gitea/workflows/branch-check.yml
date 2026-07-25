@@ -18,6 +18,10 @@ on:
 jobs:
   build:
     runs-on: android   # → act_runner label android:docker://universal-ci-android:35-jdk21
+    env:
+      # The host-mounted /root/.gradle cache is shared by concurrent jobs.
+      # Keep branch builds in their own namespace to avoid Gradle journal locks.
+      GRADLE_USER_HOME: /root/.gradle/branch
     steps:
       - name: Checkout（直连 Gitea，无外部 action）
         env:

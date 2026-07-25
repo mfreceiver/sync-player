@@ -90,4 +90,4 @@ git tag v12.0.0-ci-test && git push origin v12.0.0-ci-test
 - **轮换签名**：重新生成 keystore → 覆盖 Gitea Secret `RELEASE_KEYSTORE` + 3 密码。
 - **收紧 lint**：偿还 lint 债务后，把 `app/build.gradle.kts` 的 `lint { abortOnError = false }` 改回 `true`。
 - **升级 CI 镜像**：SDK/AGP 升级时同步改 Unraid 上的 `universal-ci-android` 镜像（与 ocdroid 共享）。
-- **加速 CI（Gradle 缓存）**：每个 job 是全新容器，且镜像不含 Gradle（`./gradlew` wrapper 自带），默认每次重新下载 distribution + 依赖。为避免重复下载，在 act_runner `config.yaml` 的 `container.options` 加 `-v /mnt/cache/appdata/gradle-cache:/root/.gradle`（并确保 `valid_volumes: ["**"]`），首次下完后续 job 复用。`gradle-wrapper.properties` 的 `networkTimeout=120000` 已为 services.gradle.org 慢响应留 2 分钟窗口。
+- **加速 CI（Gradle 缓存）**：每个 job 是全新容器，且镜像不含 Gradle（`./gradlew` wrapper 自带），默认每次重新下载 distribution + 依赖。为避免重复下载，在 act_runner `config.yaml` 的 `container.options` 加 `-v /mnt/cache/appdata/gradle-cache:/root/.gradle`（并确保 `valid_volumes: ["**"]`），首次下完后续 job 复用。由于 integration/release 可能并发，三个 workflow 分别使用 `/root/.gradle/{branch,integration,release}`，避免共享 journal lock；`gradle-wrapper.properties` 的 `networkTimeout=120000` 已为 services.gradle.org 慢响应留 2 分钟窗口。
