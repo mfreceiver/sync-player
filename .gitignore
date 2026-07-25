@@ -21,3 +21,6 @@ local.properties
 .kotlin/
 1
 release.p12
+
+# CI build outputs (remote-check.sh / release-check.sh archive here)
+artifacts/
