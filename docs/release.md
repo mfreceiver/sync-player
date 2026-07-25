@@ -131,7 +131,7 @@ JAVA_HOME=/home/mar/android-studio/jbr   # Android Studio bundled JBR (OpenJDK 2
 | Checkout | 内联 `git clone`（直连 Gitea）+ `fetch --tags` + checkout 触发 commit |
 | 恢复 keystore | 解 `RELEASE_KEYSTORE` base64 → `$RUNNER_TEMP/release.keystore`，写 `local.properties`（含 4 个 `release.*`） |
 | release-check | `GRADLE_USER_HOME=/root/.gradle/release` 下跑 `clean + lintRelease + testDebugUnitTest + assembleRelease -PreleaseVersion=<v>` → 归档到 `artifacts/` |
-| 上传 | `publish-release.sh <tag>`：幂等（既有 release 先 DELETE 再 POST）→ **body 取自 annotated tag 注解的分类 changelog**（POSIX awk JSON-escape，无 python3/jq）→ 上传 3 个 asset（APK + mapping.txt + SHA256SUMS） |
+| 上传 | `publish-release.sh <tag>`：幂等（既有 release 先 DELETE 再 POST）→ **body 取自 annotated tag 注解的分类 changelog**（POSIX awk JSON-escape）→ 上传 3 个 asset（APK + mapping.txt + SHA256SUMS） |
 | 清理 | `if: always()` 删临时 keystore / `local.properties` / `~/.git-credentials` |
 | 通知企业微信 | `if: always()` → `notify-wecom.sh`：成功发绿色（版本 + 下载/Changelog 链接），失败发红色（Actions 链接）。best-effort——`WECOM_WEBHOOK` 缺失或 qyapi 不可达只警告，不影响发版结果 |
 
@@ -269,7 +269,7 @@ keytool -list -keystore <storeFile> -storepass <storePassword> -alias <alias>  #
 | Runner | `runs-on: android`（单共享 runner，与 ocdroid 共用 `universal-ci-android:35-jdk21` 镜像） |
 | Checkout | 内联 `git clone` 直连 Gitea（无外部 action，Unraid 不通 github.com） |
 | Gradle 隔离 | `GRADLE_USER_HOME=/root/.gradle/release`——**按工作流隔离**，避免与 integration / branch 并发时 journal 锁冲突（详见下文） |
-| Publish 解析 | CI 镜像**无 python3 / jq**，故 `publish-release.sh` 仅用 POSIX（`grep` / `cut` / `head`）解析 JSON |
+| Publish 解析 | CI 镜像**现有** python3/jq，但 `publish-release.sh` **故意保持 POSIX**（`grep` / `cut` / `head` + awk JSON-escape）——镜像曾缺过 python3（导致 run #196 `exit 127`），POSIX 工具在所有 base image 永不缺失，避免镜像漂移再次阻塞发版 |
 | 发布幂等 | `publish-release.sh` 先 `DELETE` 既有 release 再 `POST` 重建，重传同名 asset 不报冲突 |
 
 **Gradle 并发隔离**：三个 workflow 各自独占 `GRADLE_USER_HOME`，避免共享 `caches/` 与
@@ -307,9 +307,9 @@ CI 镜像 / runner / `valid_volumes` / 缓存挂载等底层配置见
   → `setup-secrets.sh` 的 keytool 预校验会先红。修正 `local.properties` 的 `release.storePassword` /
     `release.keyAlias` 后重跑 `setup-secrets.sh` 覆盖 4 个 Secret。
 
-- **CI 镜像无 `python3` / `jq`**
-  → `publish-release.sh` 仅用 POSIX（`grep` / `cut` / `head`）解析 JSON，不依赖它们。
-    注意 `setup-secrets.sh` 用了 `python3`——它跑在**本机**（开发机有 python3），**不在 CI**，故无冲突。
+- **`publish-release.sh` / `notify-wecom.sh` 故意保持 POSIX（不用 python3/jq）**
+  → CI 镜像**现有** python3/jq，但镜像曾缺过 python3（导致 run #196 `exit 127`）。POSIX `grep` / `cut` / `head` / `awk` 在所有 base image 永不缺失——故意不绑死镜像工具集，避免镜像漂移再次阻塞发版。
+    （`setup-secrets.sh` 用 python3——它跑在**本机**，开发机有 python3，**不在 CI**。）
 
 - **Gradle journal 锁超时**（release 与 integration 并发）
   → 已由 `release.yml` 的 `GRADLE_USER_HOME=/root/.gradle/release` 隔离解决（§8）。
@@ -347,7 +347,7 @@ CI 镜像 / runner / `valid_volumes` / 缓存挂载等底层配置见
 | 凭据源 | `pass` → `setup-signing.sh` → local.properties → Secrets | `pass`（`ocdroid/release/*`）+ `setup-signing.sh` | `pass`（`x-liker/release/*`）+ `secrets.sh` |
 | **Gradle 并发隔离** | ✓ **按工作流隔离** `GRADLE_USER_HOME`（branch/integration/release） | 无（单 runner capacity=1） | 无（文档警告 journal 锁，靠串行约定） |
 | Secrets 上传校验 | ✓ `setup-secrets.sh` keytool 预校验 | 无 `setup-secrets.sh`（手填 UI/API） | 无（手填） |
-| publish JSON 解析 | POSIX grep/cut + awk（CI 镜像无 python3/jq） | python3 ⚠️（镜像无 python3，潜在 bug） | grep -oP（POSIX-safe） |
+| publish JSON 解析 | POSIX grep/cut + awk（**故意**，免疫镜像 python3 漂移） | python3（镜像现有则可用；但镜像漂移会复现 run #196 类故障） | grep -oP（POSIX-safe） |
 | 发布幂等 | **delete + recreate** | find-or-create | find-or-create |
 | 产物 | APK + mapping + SHA256SUMS（无 AAB） | APK + **AAB** + mapping + SHA256SUMS | APK + mapping + SHA256SUMS（无 AAB） |
 | lint 门控 | `abortOnError=true`（lint-clean） | `abortOnError=true` | （lint 状态未明确） |
