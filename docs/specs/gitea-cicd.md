@@ -3,6 +3,8 @@
 > 本仓库接入 Gitea Actions CI/CD 的落地文档。CI 镜像 / runner 与 ocdroid **共享**
 > （`universal-ci-android:35-jdk21`，act_runner 标签 `android`，部署在 Unraid），
 > runner 部署细节见 ocdroid 的 `docs/specs/gitea-cicd.md` §2。本文只覆盖 sync-player 侧。
+>
+> **发版流程**（维护者如何发一个版本）见 [`docs/release.md`](../release.md)；本文聚焦 CI/CD 落地配置。
 
 ---
 
@@ -10,11 +12,11 @@
 
 | 项 | ocdroid | sync-player |
 |---|---|---|
-| 版本号 | git 派生（tag + short hash） | **硬编码** versionCode/versionName |
+| 版本号 | git 派生（tag + short hash） | **git 派生**（`rev-list --count` + `describe`，CI 传 `-PreleaseVersion`，见 [`docs/release.md`](../release.md) §2） |
 | 覆盖率门控 | kover（koverVerify） | **无 kover** |
 | 产物 | APK + AAB + mapping | **仅 APK + mapping**（个人侧载，不入 Play Store） |
 | Release runner | android-release（专用，Phase 5） | **android**（单 runner，共用） |
-| lint 门控 | abortOnError=true（lint-clean） | **abortOnError=false**（既有 ~31 lint 债务，信息级） |
+| lint 门控 | abortOnError=true（lint-clean） | **abortOnError=true**（lint-clean，lint 债务已偿清） |
 
 ---
 
@@ -88,6 +90,6 @@ git tag v12.0.0-ci-test && git push origin v12.0.0-ci-test
 
 - **撤 CI**：删 `.gitea/workflows/*.yml`（仓库即时停）；runner 容器 `stop` 即停接单。
 - **轮换签名**：重新生成 keystore → 覆盖 Gitea Secret `RELEASE_KEYSTORE` + 3 密码。
-- **收紧 lint**：偿还 lint 债务后，把 `app/build.gradle.kts` 的 `lint { abortOnError = false }` 改回 `true`。
+- **收紧 lint**：~~偿还 lint 债务后，把 `lint { abortOnError = false }` 改回 `true`~~——**已偿清** lint 债务，`app/build.gradle.kts` 现为 `lint { abortOnError = true }`（lint-clean）。新增 lint 问题时 CI 会直接红。
 - **升级 CI 镜像**：SDK/AGP 升级时同步改 Unraid 上的 `universal-ci-android` 镜像（与 ocdroid 共享）。
 - **加速 CI（Gradle 缓存）**：每个 job 是全新容器，且镜像不含 Gradle（`./gradlew` wrapper 自带），默认每次重新下载 distribution + 依赖。为避免重复下载，在 act_runner `config.yaml` 的 `container.options` 加 `-v /mnt/cache/appdata/gradle-cache:/root/.gradle`（并确保 `valid_volumes: ["**"]`），首次下完后续 job 复用。由于 integration/release 可能并发，三个 workflow 分别使用 `/root/.gradle/{branch,integration,release}`，避免共享 journal lock；`gradle-wrapper.properties` 的 `networkTimeout=120000` 已为 services.gradle.org 慢响应留 2 分钟窗口。

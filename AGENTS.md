@@ -199,14 +199,20 @@ app/src/main/java/cn/vectory/syncplayer/
 
 ## Release & Upload
 
-**自动发版（推荐）**：`release.yml` 在 push `v*` tag 时触发，CI 出签名 APK 并上传到 Gitea Release。版本号由 git 派生（见 Conventions · Versioning），无需手动 bump。
+> **完整发版规范见 [`docs/release.md`](docs/release.md)**（版本模型、changelog 规范、签名凭据链、故障排查、与 ocdroid/x-liker 三项目对比）。本节是速查。
+
+**自动发版（推荐）**：`./scripts/release.sh <x.y.z>` → 校验 + **本地门禁**（`compileDebugKotlin + testDebugUnitTest`）+ 自动生成**分类 changelog**（上次 tag 以来的 conventional commits 按 feat/fix/… 分节）→ 打 annotated tag → push → `release.yml` CI 出签名 APK。版本号 git 派生（见 Conventions · Versioning），无需手动 bump。
 
 ```bash
-# 前置: 4 个 RELEASE_* Secrets 已建（./scripts/gitea/setup-secrets.sh），改动已在 main
+# 一次性凭据就绪（pass 为 source of truth）：
+./scripts/setup-signing.sh        # pass(GPG) → local.properties（开发机签名）
+./scripts/gitea/setup-secrets.sh  # local.properties → Gitea Secrets（CI 签名；keytool 校验；轮换时重跑）
+
+# 每次发版（改动已在 main）：
 ./scripts/release.sh 12.1.0
-# → 打注解 tag（notes 取自上次 tag 以来的 commits）+ push
+# → 校验 + 本地门禁 + 分类 changelog → annotated tag + push
 # → release.yml 自动 clean + lintRelease + testDebugUnitTest + assembleRelease（签名）
-#   → 上传 APK/mapping/SHA256SUMS 到 Gitea Release
+#   → publish-release.sh 上传 APK/mapping/SHA256SUMS + 回填 changelog 到 release body
 ```
 
 Actions: `https://git.vectory.cn:18443/mfreceiver/sync-player/actions`
