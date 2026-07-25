@@ -24,3 +24,6 @@ release.p12
 
 # CI build outputs (remote-check.sh / release-check.sh archive here)
 artifacts/
+
+# opencode workflow metadata (never commit)
+.ocmar/
