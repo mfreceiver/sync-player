@@ -1,15 +1,15 @@
 [versions]
 biometric = "1.1.0"
-agp = "8.8.0"
-kotlin = "2.1.0"
-ksp = "2.1.0-1.0.29"
+agp = "9.1.0"
+kotlin = "2.2.10"
+ksp = "2.3.6"
 coil = "2.7.0"
 core-ktx = "1.16.0"
 lifecycle = "2.9.0"
 activity-compose = "1.10.0"
-compose-bom = "2025.02.00"
+compose-bom = "2025.12.00"
 navigation = "2.9.0"
-hilt = "2.54"
+hilt = "2.59.2"
 hilt-navigation-compose = "1.2.0"
 room = "2.7.0"
 media3 = "1.6.0"
@@ -76,7 +76,6 @@ room-testing = { group = "androidx.room", name = "room-testing", version.ref = "
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
