@@ -1,17 +1,20 @@
 package cn.vectory.syncplayer.data.repository
 
+import cn.vectory.syncplayer.data.local.AppDatabase
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao.ChildVideoStat
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao.VideoItemWithPlayback
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.model.FolderStats
+import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class VideoRepository @Inject constructor(
-    private val videoItemDao: VideoItemDao
+    private val videoItemDao: VideoItemDao,
+    private val appDatabase: AppDatabase,
 ) {
 
     fun getItemsInFolder(folderPath: String): Flow<List<VideoItemEntity>> =
@@ -36,6 +39,34 @@ class VideoRepository @Inject constructor(
     suspend fun getBySyncRelationId(relationId: Long): List<VideoItemEntity> =
         videoItemDao.getBySyncRelationId(relationId)
 
+    suspend fun getByPathPrefix(folderPath: String): List<VideoItemEntity> =
+        videoItemDao.getByPathPrefix(folderPath)
+
+    suspend fun getByPathPrefixAndRelation(folderPath: String, syncRelationId: Long): List<VideoItemEntity> =
+        videoItemDao.getByPathPrefixAndRelation(folderPath, syncRelationId)
+
+    /**
+     * Direct-child folder name → has deeper subfolders, computed from a single deep-parentPath query.
+     */
+    suspend fun getDirectChildFolderHasSubFolders(folderPath: String, directChildNames: List<String>): Map<String, Boolean> {
+        if (directChildNames.isEmpty()) return emptyMap()
+        val deepParents = videoItemDao.getDeepParentPaths(folderPath)
+        val has = mutableMapOf<String, Boolean>().apply {
+            directChildNames.forEach { put(it, false) }
+        }
+        for (parent in deepParents) {
+            val after = if (folderPath.isEmpty()) parent else {
+                if (!parent.startsWith("$folderPath/")) continue
+                parent.substring(folderPath.length + 1)
+            }
+            val directChild = after.substringBefore('/')
+            if (directChild.isNotEmpty() && has.containsKey(directChild)) {
+                has[directChild] = true
+            }
+        }
+        return has
+    }
+
     suspend fun upsert(item: VideoItemEntity): Long = videoItemDao.upsert(item)
 
     suspend fun upsertAll(items: List<VideoItemEntity>) = videoItemDao.upsertAll(items)
@@ -48,10 +79,15 @@ class VideoRepository @Inject constructor(
 
     suspend fun deleteById(id: Long) = videoItemDao.deleteById(id)
 
-    suspend fun deleteAll() = videoItemDao.deleteAll()
+    /** Atomically remove playback row + video_item row for [id]. */
+    suspend fun deleteMediaRecord(id: Long) {
+        appDatabase.withTransaction {
+            appDatabase.playbackRecordDao().deleteByVideoId(id)
+            videoItemDao.deleteById(id)
+        }
+    }
 
-    suspend fun deleteByFolderPath(folderPath: String) =
-        videoItemDao.deleteByFolderPath(folderPath)
+    suspend fun deleteAll() = videoItemDao.deleteAll()
 
     suspend fun getAllIdsSorted(): List<Long> = videoItemDao.getAllIdsSorted()
 
@@ -75,7 +111,6 @@ class VideoRepository @Inject constructor(
     suspend fun getChildVideoStats(folderPath: String): List<ChildVideoStat> =
         videoItemDao.getChildVideoStats(folderPath)
 
-    // New helper APIs for phase 2/3
     suspend fun getRecursiveFolderStats(folderPath: String): FolderStats {
         val daoResult = videoItemDao.getRecursiveFolderStats(folderPath)
         return FolderStats(
@@ -97,12 +132,6 @@ class VideoRepository @Inject constructor(
     suspend fun updateStarByPath(relativePath: String, star: Int) = videoItemDao.updateStarByPath(relativePath, star)
 
     fun getFlatItemsFlow(): Flow<List<VideoItemEntity>> = videoItemDao.getFlatItemsFlow()
-
-    suspend fun getDirectChildThumbnails(folderPath: String, limit: Int = 4): List<String> =
-        videoItemDao.getDirectChildThumbnails(folderPath, limit)
-
-    suspend fun getDirectChildThumbnailsBatch(parentFolder: String): List<VideoItemDao.FolderThumbnailRow> =
-        videoItemDao.getDirectChildThumbnailsBatch(parentFolder)
 
     suspend fun getFlatItemsFiltered(
         mediaOnly: Boolean,

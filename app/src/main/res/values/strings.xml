@@ -104,6 +104,18 @@
     <string name="settings_volume_balance">音量均衡</string>
     <string name="settings_volume_balance_desc">点击进行增益分析</string>
     <string name="settings_saf">安卓存储框架</string>
+    <string name="settings_media_storage_location">媒体存储位置</string>
+    <string name="settings_media_storage_internal">应用内部存储（默认）</string>
+    <string name="settings_media_storage_external">外部目录：%1$s</string>
+    <string name="settings_media_storage_space">可用 %1$s</string>
+    <string name="settings_media_storage_summary">%1$s · %2$s</string>
+    <string name="settings_media_storage_reset_internal">恢复内部存储</string>
+    <string name="settings_media_storage_change">更换目录</string>
+    <string name="volume_switch_warning_title">切换存储位置？</string>
+    <string name="volume_switch_warning_body">切换后，旧位置上的媒体文件将不可用，需要重新全量同步。旧卷索引可在「重建元数据」中清理。</string>
+    <string name="volume_switch_confirm">继续切换</string>
+    <string name="volume_switch_cancel">取消</string>
+    <string name="settings_media_storage_persist_failed">无法取得持久目录权限，未切换存储位置。请选择支持持久授权的目录（如系统文件管理器中的文件夹）。</string>
     <string name="settings_app_lock">应用安全锁</string>
     <string name="settings_no_auth">设备未设置任何认证方式</string>
     <string name="settings_auth_support">当前支持: %s</string>
@@ -171,8 +183,6 @@
     <string name="relation_parent_dir">.. (上级目录)</string>
     <string name="relation_select_dir">选择此目录</string>
     <string name="relation_select_local_base">选择本地基目录</string>
-    <string name="relation_new_folder">新建文件夹</string>
-    <string name="relation_folder_name">文件夹名称</string>
     <string name="relation_no_subdirs">没有子目录</string>
 
     <!-- Sync Relation Edit ViewModel -->
@@ -203,6 +213,10 @@
     <string name="gain_remaining">剩余 %d 个</string>
     <string name="gain_analyzing">正在分析 %d 个文件</string>
     <string name="gain_analysis">分析</string>
+    <string name="gain_failed_count">失败 %d 项</string>
+    <string name="gain_failed_files_title">失败文件</string>
+    <string name="gain_failed_file">失败：%s</string>
+    <string name="gain_retry_failed">重试失败项</string>
 
     <!-- Metadata Rebuild -->
     <string name="metadata_title">重建元数据</string>
@@ -252,9 +266,6 @@
     <string name="error_base_dir_inside">文件夹内包含同步基目录，请先删除对应的同步关系</string>
     <string name="error_cannot_delete_sync_dir">同步目录内的文件夹不能手动删除</string>
     <string name="error_folder_not_exist">文件夹不存在</string>
-    <string name="error_cannot_create_in_base_dir">同步基目录内无法手动创建文件夹</string>
-    <string name="error_folder_exists">文件夹已存在</string>
-    <string name="error_create_folder_failed">创建文件夹失败</string>
 
     <!-- Sync Engine -->
     <string name="sync_disk_space_insufficient">磁盘空间不足：需要 %1$s，可用 %2$s</string>

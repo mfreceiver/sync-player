@@ -1,37 +1,39 @@
 package cn.vectory.syncplayer.settings
 
-import android.content.Context
-import android.content.ComponentName
-import android.content.pm.PackageManager
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
-import cn.vectory.syncplayer.provider.SyncDocumentsProvider
 import cn.vectory.syncplayer.security.AuthCapabilityInfo
 import cn.vectory.syncplayer.security.BiometricAuthManager
+import cn.vectory.syncplayer.storage.volume.MediaVolumeProvider
+import cn.vectory.syncplayer.ui.util.formatFileSize
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import androidx.fragment.app.FragmentActivity
 
 data class SettingsState(
     val volumeBalance: Boolean = false,
     val quickRecycle: Boolean = true,
-    val safEnabled: Boolean = false,
-    val secureLockEnabled: Boolean = false
+    val secureLockEnabled: Boolean = false,
+    /** null = 应用内部默认卷；非 null = SAF tree URI 字符串 */
+    val mediaStorageTreeUri: String? = null,
+    /** 可用空间文案，失败时为 "—" */
+    val usableSpaceLabel: String = "—",
 )
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val syncLogRepository: SyncLogRepository,
     private val userPrefs: UserPreferencesRepository,
-    @ApplicationContext private val context: Context,
-    private val biometricAuthManager: BiometricAuthManager
+    private val biometricAuthManager: BiometricAuthManager,
+    private val mediaVolumeProvider: MediaVolumeProvider,
 ) : ViewModel() {
 
     private val _settingsState = MutableStateFlow<SettingsState?>(null)
@@ -48,11 +50,20 @@ class SettingsViewModel @Inject constructor(
                 combine(
                     userPrefs.volumeBalance,
                     userPrefs.quickRecycle,
-                    userPrefs.safProviderEnabled,
-                    userPrefs.secureLockEnabled
-                ) { volumeBalance, quickRecycle, safEnabled, secureLockEnabled ->
-                    SettingsState(volumeBalance, quickRecycle, safEnabled, secureLockEnabled)
-                }.collect { _settingsState.value = it }
+                    userPrefs.secureLockEnabled,
+                    userPrefs.mediaStorageTreeUri,
+                ) { volumeBalance, quickRecycle, secureLockEnabled, mediaStorageTreeUri ->
+                    SettingsState(
+                        volumeBalance = volumeBalance,
+                        quickRecycle = quickRecycle,
+                        secureLockEnabled = secureLockEnabled,
+                        mediaStorageTreeUri = mediaStorageTreeUri,
+                        usableSpaceLabel = _settingsState.value?.usableSpaceLabel ?: "—",
+                    )
+                }.collect { base ->
+                    _settingsState.value = base
+                    refreshUsableSpace()
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load settings", e)
             }
@@ -79,27 +90,6 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun setSafEnabled(enabled: Boolean) {
-        val componentName = ComponentName(context, SyncDocumentsProvider::class.java)
-        val newState = if (enabled) {
-            PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-        } else {
-            PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-        }
-        context.packageManager.setComponentEnabledSetting(
-            componentName,
-            newState,
-            PackageManager.DONT_KILL_APP
-        )
-        viewModelScope.launch {
-            try {
-                userPrefs.setSafProviderEnabled(enabled)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to set SAF enabled", e)
-            }
-        }
-    }
-
     fun setSecureLockEnabled(enabled: Boolean) {
         viewModelScope.launch {
             try {
@@ -108,6 +98,20 @@ class SettingsViewModel @Inject constructor(
                 Log.e(TAG, "Failed to set secure lock", e)
             }
         }
+    }
+
+    fun setMediaStorageTreeUri(uri: String?) {
+        viewModelScope.launch {
+            try {
+                userPrefs.setMediaStorageTreeUri(uri)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to set media storage tree uri", e)
+            }
+        }
+    }
+
+    fun clearMediaStorageTreeUri() {
+        setMediaStorageTreeUri(null)
     }
 
     fun authenticateAndToggle(activity: FragmentActivity, enable: Boolean) {
@@ -126,6 +130,23 @@ class SettingsViewModel @Inject constructor(
                 syncLogRepository.clearOldLogs()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to clear logs", e)
+            }
+        }
+    }
+
+    private fun refreshUsableSpace() {
+        viewModelScope.launch {
+            val label = withContext(Dispatchers.IO) {
+                try {
+                    val bytes = mediaVolumeProvider.current().usableSpace()
+                    if (bytes < 0L) "—" else formatFileSize(bytes)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to read usable space", e)
+                    "—"
+                }
+            }
+            _settingsState.update { state ->
+                state?.copy(usableSpaceLabel = label)
             }
         }
     }

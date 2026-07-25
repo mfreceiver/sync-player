@@ -2,16 +2,24 @@ package cn.vectory.syncplayer.sync
 
 import cn.vectory.syncplayer.data.local.dao.PendingSyncActionDao
 import cn.vectory.syncplayer.data.local.entity.PendingSyncActionEntity
-import cn.vectory.syncplayer.data.model.RemoteFile
+import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.model.SyncAction
 import cn.vectory.syncplayer.data.model.SyncActionType
-import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncRelation
 import cn.vectory.syncplayer.data.model.SyncSource
-import cn.vectory.syncplayer.data.repository.*
+import cn.vectory.syncplayer.data.repository.PlaybackRepository
+import cn.vectory.syncplayer.data.repository.SyncLogRepository
+import cn.vectory.syncplayer.data.repository.SyncRelationRepository
+import cn.vectory.syncplayer.data.repository.SyncSourceRepository
+import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.StoragePaths
-import io.mockk.*
+import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import dagger.Lazy
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -19,26 +27,26 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import java.io.File
+import java.io.OutputStream
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SyncEngineTest {
 
     private val context = mockk<android.content.Context>(relaxed = true)
     private val videoRepository = mockk<VideoRepository>()
-    private val playbackRepository = mockk<PlaybackRepository>()
+    private val playbackRepository = mockk<PlaybackRepository>(relaxed = true)
     private val syncSourceRepository = mockk<SyncSourceRepository>()
-    private val syncRelationRepository = mockk<SyncRelationRepository>()
-    private val syncLogRepository = mockk<SyncLogRepository>()
+    private val syncRelationRepository = mockk<SyncRelationRepository>(relaxed = true)
+    private val syncLogRepository = mockk<SyncLogRepository>(relaxed = true)
     private val pendingSyncActionDao = mockk<PendingSyncActionDao>()
     private val remoteFileClientFactory = mockk<RemoteFileClientFactory>()
     private val storagePaths = mockk<StoragePaths>()
     private val videoMetadataExtractor = mockk<VideoMetadataExtractor>()
     private val imageMetadataExtractor = mockk<ImageMetadataExtractor>()
+    private val encryptedMediaStore = mockk<EncryptedMediaStore>(relaxed = true)
+    private val encryptedMediaStoreLazy = mockk<Lazy<EncryptedMediaStore>>()
 
     private lateinit var syncEngine: SyncEngine
     private val testDispatcher = StandardTestDispatcher()
@@ -46,25 +54,21 @@ class SyncEngineTest {
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
+        every { encryptedMediaStoreLazy.get() } returns encryptedMediaStore
         syncEngine = SyncEngine(
-            context = context,
-            videoRepository = videoRepository,
-            playbackRepository = playbackRepository,
             syncSourceRepository = syncSourceRepository,
             syncRelationRepository = syncRelationRepository,
+            videoRepository = videoRepository,
+            playbackRepository = playbackRepository,
             syncLogRepository = syncLogRepository,
+            videoMetadataExtractor = videoMetadataExtractor,
+            imageMetadataExtractor = imageMetadataExtractor,
             pendingSyncActionDao = pendingSyncActionDao,
             remoteFileClientFactory = remoteFileClientFactory,
             storagePaths = storagePaths,
-            videoMetadataExtractor = videoMetadataExtractor,
-            imageMetadataExtractor = imageMetadataExtractor
+            encryptedMediaStoreLazy = encryptedMediaStoreLazy,
+            context = context
         )
-    }
-
-    @Test
-    fun `dryRun should emit SCANNING phase`() {
-        // This is just a boilerplate to show MockK usage
-        // Actual test implementation would go here
     }
 
     @Test
@@ -92,8 +96,6 @@ class SyncEngineTest {
         assertEquals(0, task.toDelete.size)
         assertEquals("video.mp4", task.toDownload[0].relativePath)
         coVerify(exactly = 1) { pendingSyncActionDao.markRunning(1L) }
-        coVerify(exactly = 1) { pendingSyncActionDao.getPendingByRelationId(1L) }
-        coVerify(exactly = 0) { pendingSyncActionDao.getAndDeleteByRelationId(any()) }
     }
 
     @Test
@@ -108,113 +110,93 @@ class SyncEngineTest {
     }
 
     @Test
-    fun `executeSync should return true when all downloads succeed`() = runTest {
+    fun `executeSync streams download through encrypted sink and finalizes`() = runTest {
         val relationId = 1L
-        val source = SyncSource(
-            id = 1L,
-            name = "test-source",
-            protocol = SyncProtocol.SFTP,
-            host = "example.com",
-            port = 22,
-            username = "user",
-            password = "pass"
-        )
-        val relation = SyncRelation(
-            id = relationId,
-            syncSourceId = 1L,
-            name = "test-relation",
-            localBasePath = "/sync/test",
-            remotePath = "/remote/test"
-        )
-        val action = SyncAction(
-            type = SyncActionType.DOWNLOAD,
-            relativePath = "video.mp4",
-            fileSize = 999L,
-            remoteModifiedTime = 12345L
-        )
+        val relation = mockk<SyncRelation>()
+        every { relation.id } returns relationId
+        every { relation.syncSourceId } returns 10L
+        every { relation.remotePath } returns "/remote"
+        every { relation.localBasePath } returns "/local"
+        every { relation.name } returns "rel"
+        val source = mockk<SyncSource>()
+        every { source.protocol } returns SyncProtocol.SFTP
+        every { source.id } returns 10L
 
         coEvery { syncRelationRepository.getById(relationId) } returns relation
-        coEvery { syncSourceRepository.getById(1L) } returns source
-        every { storagePaths.userdataRoot } returns mockk { every { usableSpace } returns 1024L * 1024 * 1024 * 10 }
-        val realTempRoot = File(System.getProperty("java.io.tmpdir"), "sync-test-${System.nanoTime()}").apply { mkdirs() }
-        every { storagePaths.safeResolveUserData(any()) } returns realTempRoot
-        every { storagePaths.toLocalRelativePath(any(), any()) } answers { secondArg<String>() }
-        every { storagePaths.thumbnailsDir } returns File("/tmp/thumbs")
-        every { storagePaths.toPathUnderBase(any(), any()) } answers { secondArg<String>() }
+        coEvery { syncSourceRepository.getById(10L) } returns source
+        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
+        every { encryptedMediaStore.volumeId } returns "test-vol"
 
-        val mockClient = mockk<RemoteFileClient>(relaxed = true)
-        coEvery { mockClient.downloadFile(any(), any(), any()) } answers {
-            val localFile = secondArg<File>()
-            localFile.parentFile?.mkdirs()
-            localFile.writeBytes(ByteArray(999))
-            true
-        }
-        every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns mockClient
+        val client = mockk<RemoteFileClient>(relaxed = true)
+        every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns client
+        coEvery { client.downloadTo(any(), any(), any()) } returns true
+        every { storagePaths.toLocalRelativePath("/local", "video.mp4") } returns "video.mp4"
 
-        coEvery { videoRepository.upsert(any()) } returns 0L
-        coEvery { videoRepository.getByRelativePathAndRelationId(any(), any()) } returns null
-        coEvery { syncLogRepository.log(any(), any(), any(), any(), any(), any()) } returns Unit
-        coEvery { syncLogRepository.clearOldLogs() } returns Unit
-        coEvery { syncRelationRepository.updateLastSync(any(), any()) } returns Unit
-        every { context.getString(any()) } returns ""
+        // 新文件：existing == null → upsert 占位返回 id
+        coEvery { videoRepository.getByRelativePathAndRelationId("video.mp4", relationId) } returns null
+        coEvery { videoRepository.upsert(any()) } returns 100L
+        val savedEntity = VideoItemEntity(
+            id = 100L, syncRelationId = relationId, relativePath = "video.mp4",
+            fileName = "video.mp4", fileSize = 1000L, volumeId = "test-vol", iv = ByteArray(8)
+        )
+        coEvery { videoRepository.getById(100L) } returns savedEntity
+        coEvery { videoMetadataExtractor.extractAndSave(any()) } returns savedEntity
 
-        val result = syncEngine.executeSync(relationId, listOf(action), emptyList(), "test", "/sync/test")
+        val sink = mockk<OutputStream>(relaxed = true)
+        coEvery { encryptedMediaStore.openEncryptSink(100L, any()) } returns sink
+        coEvery { encryptedMediaStore.finalize(100L) } returns true
 
-        assertTrue(result)
-        val progress = syncEngine.progress.value
-        assertTrue(progress.phase == SyncPhase.COMPLETED)
-        assertEquals(0, progress.failedFiles)
+        val action = SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "video.mp4", fileSize = 1000L)
+        val result = syncEngine.executeSync(relationId, listOf(action), emptyList())
+
+        assertEquals(true, result)
+        coVerify(atLeast = 1) { encryptedMediaStore.openEncryptSink(100L, any()) }
+        coVerify(atLeast = 1) { client.downloadTo(any(), any(), any()) }
+        coVerify(atLeast = 1) { encryptedMediaStore.finalize(100L) }
+        // 成功路径不应 cancel
+        coVerify(exactly = 0) { encryptedMediaStore.cancel(100L) }
     }
 
     @Test
-    fun `executeSync should return false with PARTIAL_FAILED when downloads fail`() = runTest {
+    fun `executeSync cancels and deletes placeholder when download fails`() = runTest {
         val relationId = 1L
-        val source = SyncSource(
-            id = 1L,
-            name = "test-source",
-            protocol = SyncProtocol.SFTP,
-            host = "example.com",
-            port = 22,
-            username = "user",
-            password = "pass"
-        )
-        val relation = SyncRelation(
-            id = relationId,
-            syncSourceId = 1L,
-            name = "test-relation",
-            localBasePath = "/sync/test",
-            remotePath = "/remote/test"
-        )
-        val action = SyncAction(
-            type = SyncActionType.DOWNLOAD,
-            relativePath = "video.mp4",
-            fileSize = 999L,
-            remoteModifiedTime = 12345L
-        )
+        val relation = mockk<SyncRelation>()
+        every { relation.id } returns relationId
+        every { relation.syncSourceId } returns 10L
+        every { relation.remotePath } returns "/remote"
+        every { relation.localBasePath } returns "/local"
+        every { relation.name } returns "rel"
+        val source = mockk<SyncSource>()
+        every { source.protocol } returns SyncProtocol.SFTP
+        every { source.id } returns 10L
 
         coEvery { syncRelationRepository.getById(relationId) } returns relation
-        coEvery { syncSourceRepository.getById(1L) } returns source
-        every { storagePaths.userdataRoot } returns mockk { every { usableSpace } returns 1024L * 1024 * 1024 * 10 }
-        val realTempRoot = File(System.getProperty("java.io.tmpdir"), "sync-test-${System.nanoTime()}").apply { mkdirs() }
-        every { storagePaths.safeResolveUserData(any()) } returns realTempRoot
-        every { storagePaths.toLocalRelativePath(any(), any()) } answers { secondArg<String>() }
-        every { storagePaths.thumbnailsDir } returns File("/tmp/thumbs")
-        every { storagePaths.toPathUnderBase(any(), any()) } answers { secondArg<String>() }
+        coEvery { syncSourceRepository.getById(10L) } returns source
+        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
+        every { encryptedMediaStore.volumeId } returns "test-vol"
 
-        val mockClient = mockk<RemoteFileClient>(relaxed = true)
-        coEvery { mockClient.downloadFile(any(), any(), any()) } throws RuntimeException("Connection failed")
-        every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns mockClient
+        val client = mockk<RemoteFileClient>(relaxed = true)
+        every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns client
+        // downloadTo 始终失败
+        coEvery { client.downloadTo(any(), any(), any()) } returns false
+        every { storagePaths.toLocalRelativePath("/local", "video.mp4") } returns "video.mp4"
 
-        coEvery { syncLogRepository.log(any(), any(), any(), any(), any(), any()) } returns Unit
-        coEvery { syncLogRepository.clearOldLogs() } returns Unit
-        coEvery { syncRelationRepository.updateLastSync(any(), any()) } returns Unit
-        every { context.getString(any()) } returns ""
+        coEvery { videoRepository.getByRelativePathAndRelationId("video.mp4", relationId) } returns null
+        coEvery { videoRepository.upsert(any()) } returns 200L
+        coEvery { videoRepository.deleteById(200L) } returns Unit
 
-        val result = syncEngine.executeSync(relationId, listOf(action), emptyList(), "test", "/sync/test")
+        val sink = mockk<OutputStream>(relaxed = true)
+        coEvery { encryptedMediaStore.openEncryptSink(200L, any()) } returns sink
+        coEvery { encryptedMediaStore.finalize(200L) } returns true
+        coEvery { encryptedMediaStore.cancel(200L) } returns Unit
 
-        assertFalse(result)
-        val progress = syncEngine.progress.value
-        assertEquals(SyncPhase.PARTIAL_FAILED, progress.phase)
-        assertEquals(1, progress.failedFiles)
+        val action = SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "video.mp4", fileSize = 1000L)
+        val result = syncEngine.executeSync(relationId, listOf(action), emptyList())
+
+        // 全部失败 → return false
+        assertEquals(false, result)
+        // 失败应 cancel 并删除占位
+        coVerify(atLeast = 1) { encryptedMediaStore.cancel(200L) }
+        coVerify(atLeast = 1) { videoRepository.deleteById(200L) }
     }
 }

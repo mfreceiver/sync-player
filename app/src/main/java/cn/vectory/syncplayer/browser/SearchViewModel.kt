@@ -110,7 +110,6 @@ class SearchViewModel @Inject constructor(
                     height = video.height,
                     bitrate = video.bitrate,
                     frameRate = video.frameRate,
-                    thumbnailPath = video.thumbnailPath,
                     playbackPosition = video.playbackPosition,
                     playbackDuration = video.playbackDuration,
                     isCompleted = video.isCompleted,
@@ -155,8 +154,8 @@ class SearchViewModel @Inject constructor(
         fileOps.toggleTrashed(videoItemId, basePaths.value, viewModelScope, _error)
     }
 
-    override fun deleteFile(relativePath: String) {
-        fileOps.deleteFile(relativePath, viewModelScope, _error)
+    override fun deleteFile(videoItemId: Long) {
+        fileOps.deleteFile(videoItemId, viewModelScope, _error)
     }
 
     override fun isFileInBaseDir(relativePath: String): Boolean {

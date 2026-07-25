@@ -1,8 +1,9 @@
 package cn.vectory.syncplayer.player
 
+import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
+import android.net.Uri
 import android.util.LruCache
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -12,7 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToLong
 
-class SeekPreviewExtractor {
+class SeekPreviewExtractor(private val context: Context) {
 
     private companion object {
         const val CACHE_MAX_SIZE = 30
@@ -21,7 +22,7 @@ class SeekPreviewExtractor {
     }
 
     private data class CacheKey(
-        val filePath: String,
+        val uri: String,
         val roundedPositionMs: Long,
     )
 
@@ -38,7 +39,7 @@ class SeekPreviewExtractor {
     }
 
     @Volatile private var activeRetriever: MediaMetadataRetriever? = null
-    @Volatile private var activeFilePath: String? = null
+    @Volatile private var activeUri: String? = null
     private val retrieverLock = Any()
 
     @Volatile private var lastExtractedPositionMs: Long = -1L
@@ -46,53 +47,53 @@ class SeekPreviewExtractor {
     private var prefetchJob: Job? = null
     private val prefetchScope = CoroutineScope(Dispatchers.IO)
 
-    /** Call when seek gesture begins */
-    fun beginSession(filePath: String) {
+    /** Call when seek gesture begins. */
+    fun beginSession(uri: Uri) {
         synchronized(retrieverLock) {
-            if (activeFilePath != filePath) {
+            val uriString = uri.toString()
+            if (activeUri != uriString) {
                 activeRetriever?.release()
                 activeRetriever = MediaMetadataRetriever().apply {
-                    setDataSource(filePath)
+                    setDataSource(context, uri)
                 }
-                activeFilePath = filePath
+                activeUri = uriString
             }
             lastExtractedPositionMs = -1L
             lastDirection = 0
         }
     }
 
-    /** Call when seek gesture ends. Releases the active retriever and pending prefetch,
-     *  but keeps the prefetch scope alive so subsequent [beginSession] calls can prefetch again. */
+    /** Call when seek gesture ends. */
     fun endSession() {
         synchronized(retrieverLock) {
             activeRetriever?.release()
             activeRetriever = null
-            activeFilePath = null
+            activeUri = null
         }
         prefetchJob?.cancel()
         prefetchJob = null
     }
 
-    /** Final teardown. Call from DisposableEffect.onDispose when the player leaves composition. */
+    /** Final teardown. */
     fun release() {
         endSession()
         prefetchScope.cancel()
         cache.evictAll()
     }
 
-    fun getCachedFrame(filePath: String, positionMs: Long): Bitmap? {
+    fun getCachedFrame(uri: String, positionMs: Long): Bitmap? {
         val roundedPosition = roundPosition(positionMs)
-        val key = CacheKey(filePath, roundedPosition)
+        val key = CacheKey(uri, roundedPosition)
         return cache.get(key)
     }
 
     private fun roundPosition(positionMs: Long): Long =
         (positionMs / POSITION_ROUNDING_MS) * POSITION_ROUNDING_MS
 
-    suspend fun extractFrameAtPosition(filePath: String, positionMs: Long): Bitmap? =
+    suspend fun extractFrameAtPosition(uri: String, positionMs: Long): Bitmap? =
         withContext(Dispatchers.IO) {
             val roundedPosition = roundPosition(positionMs)
-            val key = CacheKey(filePath, roundedPosition)
+            val key = CacheKey(uri, roundedPosition)
 
             cache.get(key)?.let {
                 updateDirection(roundedPosition)
@@ -100,9 +101,9 @@ class SeekPreviewExtractor {
             }
 
             val retriever = synchronized(retrieverLock) {
-                if (activeFilePath == filePath) activeRetriever
+                if (activeUri == uri) activeRetriever
                 else null
-            } ?: return@withContext extractFallback(filePath, roundedPosition, key)
+            } ?: return@withContext extractFallback(uri, roundedPosition, key)
 
             try {
                 val raw = retriever.getFrameAtTime(
@@ -114,7 +115,7 @@ class SeekPreviewExtractor {
                 if (scaled !== raw) raw.recycle()
                 cache.put(key, scaled)
                 updateDirection(roundedPosition)
-                schedulePrefetch(filePath, roundedPosition)
+                schedulePrefetch(uri, roundedPosition)
                 scaled
             } catch (_: Exception) {
                 null
@@ -129,11 +130,11 @@ class SeekPreviewExtractor {
         lastExtractedPositionMs = currentPositionMs
     }
 
-    private fun schedulePrefetch(filePath: String, currentPositionMs: Long) {
+    private fun schedulePrefetch(uri: String, currentPositionMs: Long) {
         prefetchJob?.cancel()
         prefetchJob = prefetchScope.launch {
             val retriever = synchronized(retrieverLock) {
-                if (activeFilePath == filePath) activeRetriever
+                if (activeUri == uri) activeRetriever
                 else null
             } ?: return@launch
 
@@ -146,7 +147,7 @@ class SeekPreviewExtractor {
             for (step in steps) {
                 val nextPos = (currentPositionMs + step).coerceAtLeast(0)
                 val roundedNext = roundPosition(nextPos)
-                val nextKey = CacheKey(filePath, roundedNext)
+                val nextKey = CacheKey(uri, roundedNext)
                 if (cache.get(nextKey) != null) continue
 
                 try {
@@ -162,11 +163,11 @@ class SeekPreviewExtractor {
         }
     }
 
-    /** Fallback when no active session — creates temporary retriever */
-    private fun extractFallback(filePath: String, roundedMs: Long, key: CacheKey): Bitmap? {
+    /** Fallback when no active session — creates temporary retriever via content URI. */
+    private fun extractFallback(uri: String, roundedMs: Long, key: CacheKey): Bitmap? {
         val retriever = MediaMetadataRetriever()
         try {
-            retriever.setDataSource(filePath)
+            retriever.setDataSource(context, Uri.parse(uri))
             val raw = retriever.getFrameAtTime(
                 roundedMs * 1000L,
                 MediaMetadataRetriever.OPTION_CLOSEST,

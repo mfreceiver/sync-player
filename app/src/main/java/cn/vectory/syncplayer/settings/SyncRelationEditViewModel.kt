@@ -20,7 +20,6 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.io.File
 import javax.inject.Inject
 
 @HiltViewModel
@@ -55,12 +54,6 @@ class SyncRelationEditViewModel @Inject constructor(
 
     private val _currentRemoteBrowsePath = MutableStateFlow("/")
     val currentRemoteBrowsePath = _currentRemoteBrowsePath.asStateFlow()
-
-    private val _currentLocalBrowsePath = MutableStateFlow("")
-    val currentLocalBrowsePath = _currentLocalBrowsePath.asStateFlow()
-
-    private val _localDirectories = MutableStateFlow<List<String>>(emptyList())
-    val localDirectories = _localDirectories.asStateFlow()
 
     private val _isSaving = MutableStateFlow(false)
     val isSaving = _isSaving.asStateFlow()
@@ -107,51 +100,11 @@ class SyncRelationEditViewModel @Inject constructor(
 
     fun setName(value: String) { _name.value = value }
     fun setRemotePath(value: String) { _remotePath.value = value }
+    fun setLocalBasePath(value: String) { _localBasePath.value = value }
     fun selectSource(id: Long) { _selectedSourceId.value = id }
 
-    // --- Local directory browsing (multi-level) ---
-
-    fun browseLocalDirectories() {
-        val baseDir = if (_currentLocalBrowsePath.value.isEmpty()) {
-            storagePaths.userdataRoot
-        } else {
-            File(storagePaths.userdataRoot, _currentLocalBrowsePath.value)
-        }
-        _localDirectories.value = baseDir.listFiles()
-            ?.filter { it.isDirectory }
-            ?.map { it.name }
-            ?.sorted()
-            ?: emptyList()
-    }
-
-    fun navigateLocalInto(dirName: String) {
-        val current = _currentLocalBrowsePath.value
-        _currentLocalBrowsePath.value = if (current.isEmpty()) dirName else "$current/$dirName"
-        browseLocalDirectories()
-    }
-
-    fun navigateLocalUp() {
-        val current = _currentLocalBrowsePath.value
-        if (current.isEmpty()) return
-        val lastSlash = current.lastIndexOf('/')
-        _currentLocalBrowsePath.value = if (lastSlash > 0) current.substring(0, lastSlash) else ""
-        browseLocalDirectories()
-    }
-
-    fun confirmLocalSelection() {
-        _localBasePath.value = _currentLocalBrowsePath.value
-    }
-
-    fun createLocalFolder(name: String) {
-        val baseDir = if (_currentLocalBrowsePath.value.isEmpty()) {
-            storagePaths.userdataRoot
-        } else {
-            File(storagePaths.userdataRoot, _currentLocalBrowsePath.value)
-        }
-        val newDir = File(baseDir, name)
-        if (!newDir.exists()) newDir.mkdirs()
-        browseLocalDirectories()
-    }
+    // Local base path is a pure logical path string (encrypted volume has no browsable plaintext dirs).
+    // Directory materializes on first sync under EncryptedMediaStore.
 
     // --- Remote directory browsing ---
 

@@ -1,14 +1,17 @@
 package cn.vectory.syncplayer.sync
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
-import cn.vectory.syncplayer.storage.StoragePaths
-import java.io.File
-import java.io.FileOutputStream
+import cn.vectory.syncplayer.provider.MediaUris
+import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import dagger.Lazy
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.Locale
 import javax.inject.Inject
@@ -17,7 +20,8 @@ import javax.inject.Singleton
 @Singleton
 class ImageMetadataExtractor @Inject constructor(
     private val videoRepository: VideoRepository,
-    private val storagePaths: StoragePaths
+    private val encryptedMediaStoreLazy: Lazy<EncryptedMediaStore>,
+    @ApplicationContext private val context: Context
 ) {
     private companion object {
         const val TAG = "ImageMetadataExtractor"
@@ -26,76 +30,49 @@ class ImageMetadataExtractor @Inject constructor(
         val EXIF_DATE_FORMAT_ALT = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
     }
 
-    private val thumbnailDir: File
-        get() = storagePaths.thumbnailsDir
+    private val store: EncryptedMediaStore get() = encryptedMediaStoreLazy.get()
 
+    /** 经 MediaContentProvider 解密读取，提取宽高/拍摄时间并生成加密缩略图。 */
     suspend fun extractAndSave(item: VideoItemEntity): VideoItemEntity {
-        val file = File(item.localAbsolutePath)
-        if (!file.exists()) return item
-
+        val uri = MediaUris.mediaUri(item.id)
+        var width: Int? = null
+        var height: Int? = null
+        var dateTaken: Long? = null
         try {
-            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(file.absolutePath, options)
-            val width = options.outWidth.takeIf { it > 0 }
-            val height = options.outHeight.takeIf { it > 0 }
-
-            val exif = ExifInterface(file.absolutePath)
-            val dateTaken = parseExifDate(exif)
-
-            val thumbPath = generateThumbnail(item, file, options)
-
-            val updated = item.copy(
-                width = width ?: item.width,
-                height = height ?: item.height,
-                thumbnailPath = thumbPath ?: item.localAbsolutePath,
-                mediaType = "IMAGE",
-                dateTaken = dateTaken ?: item.dateTaken
-            )
-            videoRepository.upsert(updated)
-            return updated
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to extract image metadata for ${item.fileName}", e)
-            val fallback = item.copy(
-                mediaType = "IMAGE",
-                thumbnailPath = item.localAbsolutePath
-            )
-            videoRepository.upsert(fallback)
-            return fallback
-        }
-    }
-
-    private fun generateThumbnail(item: VideoItemEntity, source: File, bounds: BitmapFactory.Options): String? {
-        if (item.id <= 0L) return null
-        val srcWidth = bounds.outWidth
-        if (srcWidth <= 0) return null
-        return try {
-            val sample = if (srcWidth > THUMB_MAX_WIDTH) {
-                var sampleSize = 1
-                while (srcWidth / sampleSize > THUMB_MAX_WIDTH) sampleSize *= 2
-                sampleSize
-            } else 1
-            val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sample }
-            val decoded = BitmapFactory.decodeFile(source.absolutePath, decodeOpts) ?: return null
-            try {
-                val scaled = if (decoded.width > THUMB_MAX_WIDTH) {
-                    Bitmap.createScaledBitmap(decoded, THUMB_MAX_WIDTH, (decoded.height * THUMB_MAX_WIDTH.toFloat() / decoded.width).toInt(), true)
-                } else decoded
-                try {
-                    val thumbFile = File(thumbnailDir, "${item.id}.jpg")
-                    FileOutputStream(thumbFile).use { fos ->
-                        scaled.compress(Bitmap.CompressFormat.JPEG, 80, fos)
-                    }
-                    thumbFile.absolutePath
-                } finally {
-                    if (scaled !== decoded) scaled.recycle()
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val bitmap = BitmapFactory.decodeStream(input)
+                if (bitmap != null) {
+                    width = bitmap.width
+                    height = bitmap.height
+                    val thumb = sampleThumbnail(bitmap, THUMB_MAX_WIDTH)
+                    val baos = ByteArrayOutputStream()
+                    thumb.compress(Bitmap.CompressFormat.JPEG, 90, baos)
+                    store.writeThumb(item.id, baos.toByteArray())
+                    if (thumb !== bitmap) thumb.recycle()
+                    bitmap.recycle()
                 }
-            } finally {
-                decoded.recycle()
+            }
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                try {
+                    val exif = ExifInterface(input)
+                    dateTaken = parseExifDate(exif)
+                } catch (_: Exception) { }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to generate thumbnail for ${item.fileName}", e)
-            null
+            Log.w(TAG, "Image metadata extraction failed for ${item.fileName}", e)
+            return item
         }
+        val updated = item.copy(width = width, height = height, dateTaken = dateTaken)
+        videoRepository.upsert(updated)
+        return updated
+    }
+
+    private fun sampleThumbnail(src: Bitmap, maxWidth: Int): Bitmap {
+        if (src.width <= maxWidth) return src
+        val ratio = src.width.toFloat() / maxWidth
+        val w = maxWidth
+        val h = (src.height / ratio).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(src, w, h, true)
     }
 
     private fun parseExifDate(exif: ExifInterface): Long? {

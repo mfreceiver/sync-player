@@ -3,46 +3,51 @@ package cn.vectory.syncplayer.settings
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cn.vectory.syncplayer.browser.DeleteMediaResult
+import cn.vectory.syncplayer.browser.FileOperationsUseCase
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
-import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
-import cn.vectory.syncplayer.storage.StoragePaths
+import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.volume.MediaExistence
 import cn.vectory.syncplayer.sync.ImageMetadataExtractor
 import cn.vectory.syncplayer.sync.VideoMetadataExtractor
 import cn.vectory.syncplayer.ui.util.isImageFile
 import cn.vectory.syncplayer.ui.util.isVideoFile
+import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import javax.inject.Inject
 
-data class FileDiscovery(
-    val relativePath: String,
-    val fileName: String,
-    val fileSize: Long,
-    val absolutePath: String
+data class DiscoveryResult(
+    /** 当前活跃卷上密文缺失的记录（真 orphan，可安全清理）。 */
+    val orphanedRecords: List<VideoItemEntity>,
+    /** 元数据缺失（duration/width 等），可经 content:// 重新提取。 */
+    val incompleteRecords: List<VideoItemEntity>,
+    /** 非当前卷索引；需用户强确认后才可清理（D1-b）。 */
+    val otherVolumeRecords: List<VideoItemEntity>,
 )
 
-data class DiscoveryResult(
-    val newFiles: List<FileDiscovery>,
-    val orphanedRecords: List<VideoItemEntity>,
-    val incompleteRecords: List<VideoItemEntity>
+data class CleanupSummary(
+    val success: Int = 0,
+    val failed: Int = 0,
+    val failures: List<Pair<Long, String>> = emptyList(),
 )
 
 @HiltViewModel
 class MetadataRebuildViewModel @Inject constructor(
     private val videoRepository: VideoRepository,
-    private val playbackRepository: PlaybackRepository,
     private val videoMetadataExtractor: VideoMetadataExtractor,
     private val imageMetadataExtractor: ImageMetadataExtractor,
-    private val storagePaths: StoragePaths
+    private val encryptedMediaStoreLazy: Lazy<EncryptedMediaStore>,
+    private val fileOps: FileOperationsUseCase,
 ) : ViewModel() {
+
+    private val mediaStore: EncryptedMediaStore get() = encryptedMediaStoreLazy.get()
 
     private val _discoveryResult = MutableStateFlow<DiscoveryResult?>(null)
     val discoveryResult = _discoveryResult.asStateFlow()
@@ -68,6 +73,9 @@ class MetadataRebuildViewModel @Inject constructor(
     private val _error = MutableStateFlow<String?>(null)
     val error = _error.asStateFlow()
 
+    private val _cleanupSummary = MutableStateFlow<CleanupSummary?>(null)
+    val cleanupSummary = _cleanupSummary.asStateFlow()
+
     private var rebuildJob: Job? = null
     private var discoverJob: Job? = null
 
@@ -78,65 +86,51 @@ class MetadataRebuildViewModel @Inject constructor(
             _error.value = null
             _isComplete.value = false
             _discoveryResult.value = null
+            _cleanupSummary.value = null
             try {
                 withContext(Dispatchers.IO) {
                     val dbRecords = videoRepository.getAll()
-                    val dbPathSet = dbRecords.map { it.relativePath }.toSet()
-
-                    val newFiles = mutableListOf<FileDiscovery>()
+                    val activeVolumeId = mediaStore.volumeId
                     val orphanedRecords = mutableListOf<VideoItemEntity>()
                     val incompleteRecords = mutableListOf<VideoItemEntity>()
-
-                    val userdataRoot = storagePaths.userdataRoot
-                    if (userdataRoot.exists()) {
-                        userdataRoot.walkTopDown()
-                            .filter { it.isFile }
-                            .filter { !it.name.startsWith(".") && !it.name.endsWith(".sync_tmp") }
-                            .forEach { file ->
-                                ensureActive()
-                                val relPath = file.relativeTo(userdataRoot).path
-                                if (relPath !in dbPathSet) {
-                                    newFiles.add(FileDiscovery(
-                                        relativePath = relPath,
-                                        fileName = file.name,
-                                        fileSize = file.length(),
-                                        absolutePath = file.absolutePath
-                                    ))
-                                }
-                            }
-                    }
-
-                    // 将视频和图片文件纳入重建范围，其他文件不需要元数据提取
-                    val mediaNewFiles = newFiles.filter { isVideoFile(it.fileName) || isImageFile(it.fileName) }
-                    val nonMediaFiles = newFiles.filter { !isVideoFile(it.fileName) && !isImageFile(it.fileName) }
+                    val otherVolumeRecords = mutableListOf<VideoItemEntity>()
 
                     for (record in dbRecords) {
-                        val file = File(record.localAbsolutePath)
-                        if (!file.exists()) {
-                            orphanedRecords.add(record)
-                        } else if ((isVideoFile(record.fileName) && (record.duration == null || record.thumbnailPath == null))
-                            || (isImageFile(record.fileName) && (record.width == null || record.thumbnailPath == null))) {
-                            incompleteRecords.add(record)
+                        if (record.volumeId != activeVolumeId) {
+                            // D1-b: other-volume indexes are NEVER auto-orphaned.
+                            otherVolumeRecords.add(record)
+                            continue
+                        }
+                        // M1: three-way existence — IO error aborts scan (do not fake orphan).
+                        when (val existence = mediaStore.checkExistence(record.id)) {
+                            is MediaExistence.EXISTS -> {
+                                val incomplete = when {
+                                    isVideoFile(record.fileName) -> record.duration == null
+                                    isImageFile(record.fileName) -> record.width == null
+                                    else -> false
+                                }
+                                if (incomplete) incompleteRecords.add(record)
+                            }
+                            is MediaExistence.NOT_FOUND -> orphanedRecords.add(record)
+                            is MediaExistence.IO_ERROR -> {
+                                _error.value = "扫描失败：无法访问外部卷 (${existence.reason})"
+                                return@withContext
+                            }
                         }
                     }
 
-                    _discoveryResult.value = DiscoveryResult(mediaNewFiles, orphanedRecords, incompleteRecords)
-                    _totalCount.value = mediaNewFiles.size + orphanedRecords.size + incompleteRecords.size
-
-                    // 非媒体文件仍需创建 DB 记录以供浏览，但不计入重建进度
-                    if (nonMediaFiles.isNotEmpty()) {
-                        for (file in nonMediaFiles) {
-                            val entity = VideoItemEntity(
-                                relativePath = file.relativePath,
-                                fileName = file.fileName,
-                                localAbsolutePath = file.absolutePath,
-                                fileSize = file.fileSize,
-                                syncRelationId = 0,
-                                mediaType = if (isVideoFile(file.fileName)) "VIDEO" else if (isImageFile(file.fileName)) "IMAGE" else "OTHER"
-                            )
-                            videoRepository.upsert(entity)
-                        }
+                    if (_error.value != null) {
+                        // Aborted mid-scan due to IO; leave discoveryResult null.
+                        return@withContext
                     }
+
+                    _discoveryResult.value = DiscoveryResult(
+                        orphanedRecords = orphanedRecords,
+                        incompleteRecords = incompleteRecords,
+                        otherVolumeRecords = otherVolumeRecords,
+                    )
+                    // Rebuild total covers only safe orphan + incomplete (not other-volume).
+                    _totalCount.value = orphanedRecords.size + incompleteRecords.size
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -149,41 +143,28 @@ class MetadataRebuildViewModel @Inject constructor(
         }
     }
 
+    /** Rebuild current-volume orphans + incomplete only. Other-volume requires explicit clean. */
     fun startRebuild() {
         val result = _discoveryResult.value ?: return
         rebuildJob = viewModelScope.launch {
             _isRebuilding.value = true
             _completedCount.value = 0
             _error.value = null
+            _cleanupSummary.value = null
 
             try {
                 withContext(Dispatchers.IO) {
-                    for (file in result.newFiles) {
-                        _currentFile.value = file.fileName
-                        val entity = VideoItemEntity(
-                            relativePath = file.relativePath,
-                            fileName = file.fileName,
-                            localAbsolutePath = file.absolutePath,
-                            fileSize = file.fileSize,
-                            syncRelationId = 0
-                        )
-                        val id = videoRepository.upsert(entity)
-                        val saved = videoRepository.getById(id)
-                        if (saved != null) {
-                            try {
-                                if (isImageFile(saved.fileName)) imageMetadataExtractor.extractAndSave(saved)
-                                else videoMetadataExtractor.extractAndSave(saved)
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Failed to extract metadata for ${file.fileName}", e)
-                            }
-                        }
-                        _completedCount.value++
-                    }
-
+                    var fail = 0
+                    val failures = mutableListOf<Pair<Long, String>>()
                     for (record in result.orphanedRecords) {
                         _currentFile.value = record.fileName
-                        playbackRepository.deleteByVideoId(record.id)
-                        videoRepository.deleteById(record.id)
+                        when (val r = fileOps.deleteMediaById(record.id)) {
+                            is DeleteMediaResult.Success, is DeleteMediaResult.SkippedNotFound -> Unit
+                            is DeleteMediaResult.Failed -> {
+                                fail++
+                                failures.add(record.id to r.reason)
+                            }
+                        }
                         _completedCount.value++
                     }
 
@@ -195,17 +176,81 @@ class MetadataRebuildViewModel @Inject constructor(
                             else videoMetadataExtractor.extractAndSave(fresh)
                         } catch (e: Exception) {
                             Log.w(TAG, "Failed to extract metadata for ${record.fileName}", e)
+                            fail++
+                            failures.add(record.id to (e.message ?: "extract failed"))
                         }
                         _completedCount.value++
                     }
+
+                    if (failures.isNotEmpty()) {
+                        _cleanupSummary.value = CleanupSummary(
+                            success = _completedCount.value - fail,
+                            failed = fail,
+                            failures = failures,
+                        )
+                    }
                 }
 
+                // Keep otherVolumeRecords visible; only clear processed buckets by re-discovering
+                // or updating the snapshot in place.
+                val remainingOther = result.otherVolumeRecords
+                _discoveryResult.value = if (remainingOther.isEmpty()) null
+                else DiscoveryResult(
+                    orphanedRecords = emptyList(),
+                    incompleteRecords = emptyList(),
+                    otherVolumeRecords = remainingOther,
+                )
+                if (remainingOther.isEmpty()) {
+                    _isComplete.value = true
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _error.value = "重建失败: ${e.message}"
+            } finally {
+                _isRebuilding.value = false
+                _currentFile.value = null
+            }
+        }
+    }
+
+    /**
+     * D1-b: only after UI strong-confirm dialog. Permanently drops other-volume index rows.
+     */
+    fun cleanOtherVolumeIndexes() {
+        val result = _discoveryResult.value ?: return
+        val targets = result.otherVolumeRecords
+        if (targets.isEmpty()) return
+        rebuildJob = viewModelScope.launch {
+            _isRebuilding.value = true
+            _completedCount.value = 0
+            _totalCount.value = targets.size
+            _error.value = null
+            try {
+                withContext(Dispatchers.IO) {
+                    var success = 0
+                    val failures = mutableListOf<Pair<Long, String>>()
+                    for (record in targets) {
+                        _currentFile.value = record.fileName
+                        // B1: index-only delete — never mediaStore.delete on active volume.
+                        when (val r = fileOps.deleteOtherVolumeIndex(record.id)) {
+                            is DeleteMediaResult.Success, is DeleteMediaResult.SkippedNotFound -> success++
+                            is DeleteMediaResult.Failed -> failures.add(record.id to r.reason)
+                        }
+                        _completedCount.value++
+                    }
+                    _cleanupSummary.value = CleanupSummary(
+                        success = success,
+                        failed = failures.size,
+                        failures = failures,
+                    )
+                }
                 _discoveryResult.value = null
                 _isComplete.value = true
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _error.value = "重建失败: ${e.message}"
+                _error.value = "清理旧卷索引失败: ${e.message}"
             } finally {
                 _isRebuilding.value = false
                 _currentFile.value = null

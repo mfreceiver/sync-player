@@ -128,10 +128,7 @@ fun PlayerScreen(
 
     LaunchedEffect(uiState.videoItem) {
         val item = uiState.videoItem ?: return@LaunchedEffect
-        val filePath = item.localAbsolutePath
-        val file = File(filePath)
-        if (!file.exists()) return@LaunchedEffect
-        val mediaItem = MediaItem.fromUri(Uri.fromFile(file))
+        val mediaItem = MediaItem.fromUri(cn.vectory.syncplayer.provider.MediaUris.mediaUri(item.id))
         exoPlayer.setMediaItem(mediaItem)
         val savedPos = viewModel.getSavedPosition()
         if (savedPos > 0) {
@@ -350,7 +347,7 @@ fun PlayerScreen(
     var bottomAreaWidth by remember { mutableIntStateOf(0) }
     var progressBarHeightPx by remember { mutableIntStateOf(0) }
 
-    val previewExtractor = remember { SeekPreviewExtractor() }
+    val previewExtractor = remember { SeekPreviewExtractor(context) }
     DisposableEffect(previewExtractor) {
         onDispose {
             previewExtractor.release()
@@ -376,8 +373,8 @@ fun PlayerScreen(
             seekPreviewBitmap = null
             return@LaunchedEffect
         }
-        val filePath = uiState.videoItem?.localAbsolutePath ?: return@LaunchedEffect
-        previewExtractor.beginSession(filePath)
+        val uriString = uiState.videoItem?.let { cn.vectory.syncplayer.provider.MediaUris.mediaUri(it.id).toString() } ?: return@LaunchedEffect
+        previewExtractor.beginSession(android.net.Uri.parse(uriString))
         while (isActive) {
             val progress = when {
                 uiState.isUserSeeking -> uiState.userSeekPosition
@@ -397,12 +394,12 @@ fun PlayerScreen(
                 continue
             }
 
-            val cached = previewExtractor.getCachedFrame(filePath, posMs)
+            val cached = previewExtractor.getCachedFrame(uriString, posMs)
             if (cached != null) {
                 seekPreviewBitmap = cached
                 lastExtractedPosMs = posMs
             } else {
-                val bitmap = previewExtractor.extractFrameAtPosition(filePath, posMs)
+                val bitmap = previewExtractor.extractFrameAtPosition(uriString, posMs)
                 lastExtractedPosMs = posMs
                 if (bitmap != null && isActive) {
                     seekPreviewBitmap = bitmap

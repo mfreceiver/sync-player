@@ -247,10 +247,25 @@ fun SearchScreen(
                                 item = item,
                                 onClick = {
                                     when {
-                                        isVideoFile(item.name) -> onNavigateToPlayer(item.videoItemId!!, viewModel.getSearchResultVideoIds())
+                                        isVideoFile(item.name) -> {
+                                            val id = item.videoItemId
+                                            if (id != null) {
+                                                onNavigateToPlayer(id, viewModel.getSearchResultVideoIds())
+                                            } else {
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar(context.getString(R.string.context_no_record))
+                                                }
+                                            }
+                                        }
                                         isImageFile(item.name) -> {
-                                            val id = item.videoItemId ?: return@SearchFileItem
-                                            onNavigateToImageViewer(id, viewModel.getSearchResultImageIds())
+                                            val id = item.videoItemId
+                                            if (id != null) {
+                                                onNavigateToImageViewer(id, viewModel.getSearchResultImageIds())
+                                            } else {
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar(context.getString(R.string.context_no_record))
+                                                }
+                                            }
                                         }
                                     }
                                 },
@@ -364,7 +379,7 @@ private fun SearchFileItem(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Thumbnail(
-            thumbnailPath = item.thumbnailPath,
+            videoItemId = item.videoItemId,
             isVideo = isVideoFile(item.name),
             isImage = isImageFile(item.name),
             modifier = Modifier

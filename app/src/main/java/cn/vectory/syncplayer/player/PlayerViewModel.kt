@@ -177,7 +177,7 @@ class PlayerViewModel @Inject constructor(
 
     fun getSavedPosition(): Long = _uiState.value.playbackRecord?.position ?: 0L
 
-    fun getVideoFilePath(): String? = _uiState.value.videoItem?.localAbsolutePath
+    fun getVideoUri(): String? = _uiState.value.videoItem?.let { cn.vectory.syncplayer.provider.MediaUris.mediaUri(it.id).toString() }
 
     fun toggleFullscreen() {
         _uiState.update { it.copy(isFullscreen = !it.isFullscreen) }

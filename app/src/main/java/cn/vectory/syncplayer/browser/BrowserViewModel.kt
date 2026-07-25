@@ -6,7 +6,6 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
-import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.data.model.FolderStats
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
@@ -14,11 +13,7 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.data.model.SyncRelationWithSource
-import cn.vectory.syncplayer.storage.StoragePaths
-import cn.vectory.syncplayer.sync.VideoMetadataExtractor
-import cn.vectory.syncplayer.sync.ImageMetadataExtractor
 import cn.vectory.syncplayer.R
-import cn.vectory.syncplayer.ui.util.extractParentPath
 import cn.vectory.syncplayer.ui.util.isVideoFile
 import cn.vectory.syncplayer.ui.util.isImageFile
 import cn.vectory.syncplayer.ui.util.isMediaFile
@@ -30,14 +25,12 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import javax.inject.Inject
 
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
@@ -46,9 +39,6 @@ class BrowserViewModel @Inject constructor(
     private val videoRepository: VideoRepository,
     private val playbackRepository: PlaybackRepository,
     private val syncRelationRepository: SyncRelationRepository,
-    private val videoMetadataExtractor: VideoMetadataExtractor,
-    private val imageMetadataExtractor: ImageMetadataExtractor,
-    private val storagePaths: StoragePaths,
     private val userPrefs: UserPreferencesRepository,
     private val fileOps: FileOperationsUseCase,
     @ApplicationContext private val context: Context
@@ -141,23 +131,7 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    // Trigger thumbnail repair on folder change, not on sort/filter changes
-    init {
-        viewModelScope.launch {
-            effectiveFolder.collectLatest { folder ->
-                try {
-                    if (folder.isNotEmpty()) {
-                        withContext(Dispatchers.IO) {
-                            val videos = videoRepository.getItemsInFolder(folder).first()
-                            repairMissingThumbnails(videos)
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Thumbnail repair failed", e)
-                }
-            }
-        }
-    }
+
 
     val hasConfig: StateFlow<Boolean> = syncRelationRepository.getAllWithSourceFlow()
         .map { it.isNotEmpty() }
@@ -290,7 +264,6 @@ class BrowserViewModel @Inject constructor(
                     height = item.height,
                     bitrate = item.bitrate,
                     frameRate = item.frameRate,
-                    thumbnailPath = item.thumbnailPath,
                     playbackPosition = item.playbackPosition,
                     playbackDuration = item.playbackDuration,
                     isCompleted = item.isCompleted,
@@ -313,46 +286,12 @@ class BrowserViewModel @Inject constructor(
             return@withContext sorted
         }
 
-        // === DIRECTORY MODE: original logic with star filtering added ===
+        // === DIRECTORY MODE: DB is the sole truth source (no physical disk scan) ===
         val dbFolderNames = videoRepository.getSubFolders(folder).first()
-
         val recordMap = records.associateBy { it.videoItemId }
-
-        val physicalDir = if (folder.isEmpty()) storagePaths.userdataRoot else File(storagePaths.userdataRoot, folder)
-        val physicalFolderNames = physicalDir.listFiles()
-            ?.filter { it.isDirectory }
-            ?.map { it.name }
-            ?.toSet()
-            ?: emptySet()
-
-        val allFolderNames = (dbFolderNames.toSet() + physicalFolderNames).sortedWith(fileNameComparator)
-
-        val folderHasSubDirs = allFolderNames.associateWith { folderName ->
-            val fullPath = if (folder.isEmpty()) folderName else "$folder/$folderName"
-            val childDir = File(storagePaths.userdataRoot, fullPath)
-            childDir.isDirectory && childDir.listFiles()?.any { it.isDirectory } == true
-        }
+        val allFolderNames = dbFolderNames.sortedWith(fileNameComparator)
 
         val videoEntities = videoRepository.getItemsInFolder(folder).first()
-        val dbVideoPaths = videoEntities.map { it.relativePath }.toSet()
-
-        val diskOnlyItems = run {
-            val physicalDir = if (folder.isEmpty()) storagePaths.userdataRoot else File(storagePaths.userdataRoot, folder)
-            val filesOnDisk = physicalDir.listFiles()?.filter { it.isFile } ?: emptyList()
-            filesOnDisk.filter { file ->
-                val relPath = if (folder.isEmpty()) file.name else "$folder/${file.name}"
-                relPath !in dbVideoPaths && !file.name.startsWith(".") && !file.name.endsWith(".sync_tmp")
-            }.map { file ->
-                val relPath = if (folder.isEmpty()) file.name else "$folder/${file.name}"
-                BrowseItem(
-                    videoItemId = null,
-                    name = file.name,
-                    relativePath = relPath,
-                    isDirectory = false,
-                    fileSize = file.length()
-                )
-            }
-        }
 
         val childStats = videoRepository.getChildVideoStats(folder)
         val subFolderStatsMap = childStats
@@ -363,11 +302,17 @@ class BrowserViewModel @Inject constructor(
                 afterFolder.substringBefore('/')
             }
 
-        val childThumbnailsBatch = videoRepository.getDirectChildThumbnailsBatch(folder)
-        val folderThumbnailsMap = childThumbnailsBatch.groupBy { row ->
-            val afterFolder = if (folder.isEmpty()) row.relativePath else row.relativePath.substring(folder.length + 1)
-            afterFolder.substringBefore('/')
-        }.mapValues { (_, rows) -> rows.map { it.thumbnailPath }.take(9) }
+        // Folder thumbnail mosaic: ids of media whose parent is a direct child of [folder].
+        val folderVideoIdsMap = childStats
+            .groupBy { stat ->
+                val afterFolder = if (folder.isEmpty()) stat.relativePath
+                    else stat.relativePath.substring(folder.length + 1)
+                afterFolder.substringBefore('/')
+            }
+            .mapValues { (_, rows) -> rows.map { it.id }.take(9) }
+
+        // Subfolder presence: one deep-parentPath query, computed in memory (no N+1).
+        val folderHasSubDirs = videoRepository.getDirectChildFolderHasSubFolders(folder, allFolderNames)
 
         val folders = allFolderNames.map { folderName ->
             val fullPath = if (folder.isEmpty()) folderName else "$folder/$folderName"
@@ -375,7 +320,7 @@ class BrowserViewModel @Inject constructor(
             val vidCount = stats?.size ?: 0
             val playedCount = stats?.count { it.position > 0 || it.isCompleted } ?: 0
             val trashedCount = stats?.count { it.isTrashed } ?: 0
-            val thumbs = folderThumbnailsMap[folderName].orEmpty()
+            val childIds = folderVideoIdsMap[folderName].orEmpty()
             BrowseItem(
                 videoItemId = null,
                 name = folderName,
@@ -387,7 +332,7 @@ class BrowserViewModel @Inject constructor(
                 videoCount = vidCount,
                 playedCount = playedCount,
                 trashedCount = trashedCount,
-                thumbnailPaths = thumbs
+                videoItemIds = childIds
             )
         }
 
@@ -405,7 +350,6 @@ class BrowserViewModel @Inject constructor(
                     height = video.height,
                     bitrate = video.bitrate,
                     frameRate = video.frameRate,
-                    thumbnailPath = video.thumbnailPath,
                     playbackPosition = record?.position ?: 0,
                     playbackDuration = record?.duration ?: 0,
                     isCompleted = record?.isCompleted ?: false,
@@ -417,7 +361,7 @@ class BrowserViewModel @Inject constructor(
                 )
             }
 
-        val allVideos = videos + diskOnlyItems
+        val allVideos = videos
 
         val imageFiles = allVideos.filter { isImageFile(it.name) }
         val videoFiles = allVideos.filter { isVideoFile(it.name) }
@@ -609,34 +553,6 @@ class BrowserViewModel @Inject constructor(
         fileOps.markFolderRead(folderPath, read, viewModelScope, _error) { _refreshTrigger.value++ }
     }
 
-    fun createFolder(parentPath: String, folderName: String) {
-        viewModelScope.launch {
-            try {
-                if (parentPath.isNotEmpty() && isFileInBaseDir(parentPath)) {
-                    _error.value = context.getString(R.string.error_cannot_create_in_base_dir)
-                    return@launch
-                }
-                val newDir = if (parentPath.isEmpty()) {
-                    File(storagePaths.userdataRoot, folderName)
-                } else {
-                    File(File(storagePaths.userdataRoot, parentPath), folderName)
-                }
-                if (newDir.exists()) {
-                    _error.value = context.getString(R.string.error_folder_exists)
-                    return@launch
-                }
-                if (!newDir.mkdirs()) {
-                    _error.value = context.getString(R.string.error_create_folder_failed)
-                    return@launch
-                }
-                _refreshTrigger.value++
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to create folder", e)
-                _error.value = e.message
-            }
-        }
-    }
-
     override fun deleteFolder(path: String) {
         fileOps.deleteFolder(path, basePaths.value, viewModelScope, _error) { _refreshTrigger.value++ }
     }
@@ -645,61 +561,6 @@ class BrowserViewModel @Inject constructor(
         _error.value = null
     }
 
-    private fun repairMissingThumbnails(videos: List<VideoItemEntity>) {
-        val needsRepair = videos.filter { video ->
-            val thumbMissing = video.thumbnailPath == null || !File(video.thumbnailPath).exists()
-            thumbMissing && File(video.localAbsolutePath).exists()
-        }.take(5)
-        if (needsRepair.isEmpty()) return
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                needsRepair.forEach { video ->
-                    videoMetadataExtractor.repairThumbnailIfNeeded(video)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Thumbnail repair failed", e)
-            }
-        }
-    }
-
-    /**
-     * Ensure a VideoItemEntity exists for the given browsed item. If not, create a minimal one
-     * based on the filesystem entry and trigger metadata extraction in background.
-     */
-    suspend fun ensureVideoRecord(item: BrowseItem): Long {
-        // Double-check in case another path created it meanwhile
-        val existing = videoRepository.getByRelativePath(item.relativePath)
-        if (existing != null) return existing.id
-
-        val file = File(storagePaths.userdataRoot, item.relativePath)
-        if (!file.exists()) return -1L
-
-        val entity = VideoItemEntity(
-            relativePath = item.relativePath,
-            parentPath = extractParentPath(item.relativePath),
-            fileName = item.name,
-            localAbsolutePath = file.absolutePath,
-            fileSize = file.length(),
-            syncRelationId = 0,
-            mediaType = when {
-                isImageFile(item.name) -> "IMAGE"
-                isVideoFile(item.name) -> "VIDEO"
-                else -> "OTHER"
-            }
-        )
-        val id = videoRepository.upsert(entity)
-
-        val saved = videoRepository.getById(id)
-        if (saved != null) {
-            withContext(Dispatchers.IO) {
-                if (isImageFile(saved.fileName)) imageMetadataExtractor.extractAndSave(saved)
-                else videoMetadataExtractor.extractAndSave(saved)
-            }
-        }
-        return id
-    }
-
-    /** [includeId] lets the caller include a just-created record before [browseItems] re-emits. */
     fun getFolderVideoIds(includeItem: BrowseItem? = null, includeId: Long = -1L): List<Long> {
         return browseItems.value
             .filter { !it.isDirectory && isVideoFile(it.name) }
@@ -732,8 +593,8 @@ class BrowserViewModel @Inject constructor(
         return fileOps.isFileInBaseDir(relativePath, basePaths.value)
     }
 
-    override fun deleteFile(relativePath: String) {
-        fileOps.deleteFile(relativePath, viewModelScope, _error) { _refreshTrigger.value++ }
+    override fun deleteFile(videoItemId: Long) {
+        fileOps.deleteFile(videoItemId, viewModelScope, _error) { _refreshTrigger.value++ }
     }
 
     override suspend fun buildShareIntent(videoItemId: Long): Intent? =

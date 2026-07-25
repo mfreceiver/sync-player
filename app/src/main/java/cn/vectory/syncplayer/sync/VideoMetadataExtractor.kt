@@ -6,88 +6,79 @@ import android.media.MediaMetadataRetriever
 import android.util.Log
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
-import cn.vectory.syncplayer.storage.StoragePaths
+import cn.vectory.syncplayer.provider.MediaUris
+import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.io.File
-import java.io.FileOutputStream
+import java.io.ByteArrayOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class VideoMetadataExtractor @Inject constructor(
     private val videoRepository: VideoRepository,
-    private val storagePaths: StoragePaths,
+    private val encryptedMediaStoreLazy: Lazy<EncryptedMediaStore>,
     @ApplicationContext private val context: Context
 ) {
     private companion object { const val TAG = "VideoMetadataExtractor" }
 
-    private val thumbnailDir: File
-        get() = storagePaths.thumbnailsDir
+    private val store: EncryptedMediaStore get() = encryptedMediaStoreLazy.get()
 
+    /** 经 MediaContentProvider 解密读取，提取时长/尺寸/码率/帧率并生成加密缩略图。 */
     suspend fun extractAndSave(videoItem: VideoItemEntity): VideoItemEntity {
-        val file = File(videoItem.localAbsolutePath)
-        if (!file.exists()) {
-            return videoItem
-        }
-
-        val retriever = MediaMetadataRetriever()
+        val uri = MediaUris.mediaUri(videoItem.id)
+        var duration: Long? = null
+        var width: Int? = null
+        var height: Int? = null
+        var bitrate: Long? = null
+        var frameRate: Float? = null
         try {
-            retriever.setDataSource(file.absolutePath)
-
-            val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                ?.toLongOrNull() ?: videoItem.duration
-            val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
-                ?.toIntOrNull()
-            val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
-                ?.toIntOrNull()
-            val bitrate = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)
-                ?.toLongOrNull()
-            val frameRate = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
-                ?.toFloatOrNull()
-
-            var thumbnailPath: String? = videoItem.thumbnailPath
-            val frame = retriever.getFrameAtTime(0)
-            if (frame != null) {
-                try {
-                    val scaled = if (frame.width > 640) {
-                        Bitmap.createScaledBitmap(frame, 640, (frame.height * 640f / frame.width).toInt(), true)
-                    } else {
-                        frame
-                    }
-                    val thumbFile = File(thumbnailDir, "${videoItem.id}.jpg")
-                    FileOutputStream(thumbFile).use { fos ->
-                        scaled.compress(Bitmap.CompressFormat.JPEG, 70, fos)
-                    }
-                    thumbnailPath = thumbFile.absolutePath
-                    if (scaled !== frame) scaled.recycle()
-                } finally {
-                    frame.recycle()
-                }
+            MediaMetadataRetriever().use { mmr ->
+                mmr.setDataSource(context, uri)
+                duration = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+                width = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()
+                height = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()
+                bitrate = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toLongOrNull()
+                frameRate = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)?.toFloatOrNull()
+                generateThumbnail(mmr, videoItem)
             }
-
-            val updated = videoItem.copy(
-                duration = duration,
-                width = width,
-                height = height,
-                frameRate = frameRate,
-                bitrate = bitrate,
-                thumbnailPath = thumbnailPath
-            )
-            videoRepository.upsert(updated)
-            return updated
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to extract metadata for ${videoItem.fileName}", e)
+            Log.w(TAG, "Metadata extraction failed for ${videoItem.fileName}", e)
             return videoItem
-        } finally {
-            try { retriever.release() } catch (e: Exception) { Log.w(TAG, "retriever release failed", e) }
         }
+        val updated = videoItem.copy(
+            duration = duration, width = width, height = height,
+            bitrate = bitrate, frameRate = frameRate
+        )
+        videoRepository.upsert(updated)
+        return updated
     }
 
+    /** 仅重新生成加密缩略图（不重新提取尺寸等元数据）。 */
     suspend fun repairThumbnailIfNeeded(videoItem: VideoItemEntity): VideoItemEntity {
-        val thumbPath = videoItem.thumbnailPath
-        if (thumbPath != null && File(thumbPath).exists()) return videoItem
-        val localFile = File(videoItem.localAbsolutePath)
-        if (!localFile.exists()) return videoItem
-        return extractAndSave(videoItem)
+        val uri = MediaUris.mediaUri(videoItem.id)
+        try {
+            MediaMetadataRetriever().use { mmr ->
+                mmr.setDataSource(context, uri)
+                generateThumbnail(mmr, videoItem)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Thumbnail repair failed for ${videoItem.fileName}", e)
+        }
+        return videoItem
+    }
+
+    private suspend fun generateThumbnail(mmr: MediaMetadataRetriever, videoItem: VideoItemEntity) {
+        try {
+            val bitmap = mmr.getFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            if (bitmap != null) {
+                val baos = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 90, baos)
+                store.writeThumb(videoItem.id, baos.toByteArray())
+                bitmap.recycle()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Thumbnail generation failed for ${videoItem.fileName}", e)
+        }
     }
 }

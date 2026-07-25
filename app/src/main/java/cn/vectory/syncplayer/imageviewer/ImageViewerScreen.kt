@@ -290,7 +290,7 @@ private fun ZoomableImage(
             val heightPx = ctx.resources.displayMetrics.heightPixels
             AsyncImage(
                 model = ImageRequest.Builder(ctx)
-                    .data(File(entity.localAbsolutePath))
+                    .data(cn.vectory.syncplayer.provider.MediaUris.mediaUri(entity.id))
                     .size(widthPx, heightPx)
                     .precision(Precision.AUTOMATIC)
                     .build(),

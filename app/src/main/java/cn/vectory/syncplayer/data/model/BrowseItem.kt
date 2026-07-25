@@ -15,7 +15,6 @@ data class BrowseItem(
     val height: Int? = null,
     val bitrate: Long? = null,
     val frameRate: Float? = null,
-    val thumbnailPath: String? = null,
     val playbackPosition: Long = 0,
     val playbackDuration: Long = 0,
     val isCompleted: Boolean = false,
@@ -30,7 +29,8 @@ data class BrowseItem(
     // Video metadata
     val hasGainAdjusted: Boolean = false,
     val star: Int = 0,
-    val thumbnailPaths: List<String> = emptyList(),
+    /** Direct-child media ids used for folder thumbnail mosaic (via MediaUris.thumbUri). */
+    val videoItemIds: List<Long> = emptyList(),
     // Image metadata
     val mediaType: String = "VIDEO",
     val dateTaken: Long? = null

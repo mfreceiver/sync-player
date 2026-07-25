@@ -29,9 +29,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import cn.vectory.syncplayer.provider.MediaUris
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import java.io.File
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -41,7 +41,7 @@ internal fun FolderGridItem(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
-    thumbnailPaths: List<String> = emptyList(),
+    videoItemIds: List<Long> = emptyList(),
     gridDensity: Int = 2
 ) {
     Box(
@@ -59,9 +59,9 @@ internal fun FolderGridItem(
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center
         ) {
-            if (thumbnailPaths.isNotEmpty()) {
+            if (videoItemIds.isNotEmpty()) {
                 ThumbnailGrid(
-                    thumbnailPaths = thumbnailPaths,
+                    videoItemIds = videoItemIds,
                     gridSize = gridDensity
                 )
             } else {
@@ -111,11 +111,11 @@ internal fun FolderGridItem(
 
 @Composable
 private fun ThumbnailGrid(
-    thumbnailPaths: List<String>,
+    videoItemIds: List<Long>,
     gridSize: Int
 ) {
     val context = LocalContext.current
-    val items = thumbnailPaths.take(gridSize * gridSize)
+    val items = videoItemIds.take(gridSize * gridSize)
     if (items.isEmpty()) return
 
     val gap = 1.dp
@@ -129,17 +129,17 @@ private fun ThumbnailGrid(
                     .fillMaxWidth()
             ) {
                 for (i in 0 until gridSize) {
-                    val path = row.getOrNull(i)
+                    val id = row.getOrNull(i)
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxSize()
                             .padding(gap)
                     ) {
-                        if (path != null) {
+                        if (id != null) {
                             AsyncImage(
                                 model = ImageRequest.Builder(context)
-                                    .data(File(path))
+                                    .data(MediaUris.thumbUri(id))
                                     .size(160)
                                     .build(),
                                 contentDescription = null,

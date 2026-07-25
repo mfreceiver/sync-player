@@ -254,9 +254,9 @@ class SmbFileClient(
         return smbUrl.substring(idx + marker.length).trimEnd('/')
     }
 
-    override suspend fun downloadFile(
+    override suspend fun downloadTo(
         remotePath: String,
-        localFile: File,
+        sink: java.io.OutputStream,
         onProgress: ((transferred: Long, total: Long) -> Unit)?
     ): Boolean = withContext(Dispatchers.IO) {
         val ctx = cifsContext ?: throw Exception("SMB未连接，请先执行connect()")
@@ -269,26 +269,35 @@ class SmbFileClient(
             val smbFile = SmbFile(smbUrl, ctx)
             if (!smbFile.exists()) throw Exception("远程文件不存在: $remotePath")
             val totalSize = smbFile.length()
-            localFile.parentFile?.mkdirs()
             val buffer = ByteArray(64 * 1024)
             var transferred = 0L
             smbFile.getInputStream().use { input ->
-                FileOutputStream(localFile).use { output ->
-                    var read: Int
-                    while (input.read(buffer).also { read = it } != -1) {
-                        output.write(buffer, 0, read)
-                        transferred += read
-                        onProgress?.invoke(transferred, totalSize)
-                        currentCoroutineContext().ensureActive()
+                var read: Int
+                var zeroReadRetries = 0
+                while (true) {
+                    read = input.read(buffer)
+                    if (read == -1) break
+                    if (read == 0) {
+                        zeroReadRetries++
+                        if (zeroReadRetries > 5) {
+                            throw java.io.IOException("SMB download stalled: $remotePath — remote stream returned 0 bytes repeatedly")
+                        }
+                        // Brief yield to avoid busy spin
+                        kotlinx.coroutines.yield()
+                        continue
                     }
-                    if (transferred < totalSize) {
-                        throw java.io.IOException("Download truncated: $remotePath — expected $totalSize bytes, got $transferred")
-                    }
+                    zeroReadRetries = 0
+                    sink.write(buffer, 0, read)
+                    transferred += read
+                    onProgress?.invoke(transferred, totalSize)
+                    currentCoroutineContext().ensureActive()
+                }
+                if (transferred < totalSize) {
+                    throw java.io.IOException("Download truncated: $remotePath — expected $totalSize bytes, got $transferred")
                 }
             }
             true
         } catch (e: Exception) {
-            if (localFile.exists()) localFile.delete()
             if (e is jcifs.smb.SmbException) {
                 throw Exception("下载失败 $remotePath: ${smbErrorMessage(e, currentHost)}", e)
             }

@@ -26,7 +26,6 @@ import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Collections
-import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
@@ -290,7 +289,7 @@ fun BrowserScreen(
                                     viewModel.setFolder(item.relativePath)
                                 },
                                 onLongClick = { showFolderContextMenu = item },
-                                thumbnailPaths = item.thumbnailPaths,
+                                videoItemIds = item.videoItemIds,
                                 gridDensity = when {
                                     gridColumns <= 2 -> 3
                                     else -> 2
@@ -298,7 +297,7 @@ fun BrowserScreen(
                             )
                         } else {
                             VideoGridItem(
-                                thumbnailPath = item.thumbnailPath,
+                                videoItemId = item.videoItemId,
                                 fileName = item.name,
                                 duration = item.duration,
                                 width = item.width,
@@ -318,10 +317,7 @@ fun BrowserScreen(
                                             if (id != null) {
                                                 onNavigateToPlayer(id, viewModel.getFolderVideoIds())
                                             } else {
-                                                scope.launch {
-                                                    val newId = viewModel.ensureVideoRecord(item)
-                                                    if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds(item, newId))
-                                                }
+                                                scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
                                             }
                                         }
                                         isImageFile(item.name) -> {
@@ -330,10 +326,7 @@ fun BrowserScreen(
                                             if (id != null) {
                                                 onNavigateToImageViewer(id, viewModel.getFolderImageIds())
                                             } else {
-                                                scope.launch {
-                                                    val newId = viewModel.ensureVideoRecord(item)
-                                                    if (newId > 0) onNavigateToImageViewer(newId, viewModel.getFolderImageIds(item, newId))
-                                                }
+                                                scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
                                             }
                                         }
                                         else -> {
@@ -396,12 +389,12 @@ fun BrowserScreen(
                                 isSyncBaseDir = item.isSyncBaseDir,
                                 onClick = { viewModel.setFolder(item.relativePath) },
                                 onLongClick = { showFolderContextMenu = item },
-                                thumbnailPaths = item.thumbnailPaths,
+                                videoItemIds = item.videoItemIds,
                                 gridDensity = when { gridColumns <= 2 -> 3 else -> 2 }
                             )
                         } else {
                             VideoGridItem(
-                                thumbnailPath = item.thumbnailPath,
+                                videoItemId = item.videoItemId,
                                 fileName = item.name,
                                 duration = item.duration,
                                 width = item.width,
@@ -421,10 +414,7 @@ fun BrowserScreen(
                                             if (id != null) {
                                                 onNavigateToPlayer(id, viewModel.getFolderVideoIds())
                                             } else {
-                                                scope.launch {
-                                                    val newId = viewModel.ensureVideoRecord(item)
-                                                    if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds(item, newId))
-                                                }
+                                                scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
                                             }
                                         }
                                         isImageFile(item.name) -> {
@@ -432,10 +422,7 @@ fun BrowserScreen(
                                             if (id != null) {
                                                 onNavigateToImageViewer(id, viewModel.getFolderImageIds())
                                             } else {
-                                                scope.launch {
-                                                    val newId = viewModel.ensureVideoRecord(item)
-                                                    if (newId > 0) onNavigateToImageViewer(newId, viewModel.getFolderImageIds(item, newId))
-                                                }
+                                                scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
                                             }
                                         }
                                         else -> {
@@ -489,10 +476,7 @@ fun BrowserScreen(
                                             if (id != null) {
                                                 onNavigateToPlayer(id, viewModel.getFolderVideoIds())
                                             } else {
-                                                scope.launch {
-                                                    val newId = viewModel.ensureVideoRecord(item)
-                                                    if (newId > 0) onNavigateToPlayer(newId, viewModel.getFolderVideoIds(item, newId))
-                                                }
+                                                scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
                                             }
                                         }
                                         isImageFile(item.name) -> {
@@ -501,10 +485,7 @@ fun BrowserScreen(
                                             if (id != null) {
                                                 onNavigateToImageViewer(id, viewModel.getFolderImageIds())
                                             } else {
-                                                scope.launch {
-                                                    val newId = viewModel.ensureVideoRecord(item)
-                                                    if (newId > 0) onNavigateToImageViewer(newId, viewModel.getFolderImageIds(item, newId))
-                                                }
+                                                scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.browser_cannot_play)) }
                                             }
                                         }
                                         else -> {
@@ -990,7 +971,7 @@ private fun FileItem(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Thumbnail(
-            thumbnailPath = item.thumbnailPath,
+            videoItemId = item.videoItemId,
             isVideo = isVideoFile(item.name),
             isImage = isImageFile(item.name),
             modifier = Modifier

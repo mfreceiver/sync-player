@@ -155,9 +155,9 @@ class SftpFileClient(
         }
     }
 
-    override suspend fun downloadFile(
+    override suspend fun downloadTo(
         remotePath: String,
-        localFile: File,
+        sink: java.io.OutputStream,
         onProgress: ((transferred: Long, total: Long) -> Unit)?
     ): Boolean = withContext(Dispatchers.IO) {
         val sftp = sftpClient ?: throw Exception("SFTP未连接，请先执行connect()")
@@ -165,31 +165,38 @@ class SftpFileClient(
             val fullRemotePath = if (remoteBasePath.isNotEmpty()) "$remoteBasePath/$remotePath" else remotePath
             val attrs = sftp.stat(fullRemotePath)
             val totalSize = attrs.size
-            localFile.parentFile?.mkdirs()
             val buffer = ByteArray(64 * 1024)
             var transferred = 0L
             sftp.open(fullRemotePath).use { rf ->
-                FileOutputStream(localFile).use { output ->
-                    var offset = 0L
-                    while (offset < totalSize) {
-                        val len = minOf(buffer.size.toLong(), totalSize - offset).toInt()
-                        val bytesRead = rf.read(offset, buffer, 0, len)
-                        if (bytesRead < 0) break
-                        output.write(buffer, 0, bytesRead)
-                        offset += bytesRead
-                        transferred += bytesRead
-                        onProgress?.invoke(transferred, totalSize)
-                        // Cooperative cancellation check after each chunk read
-                        currentCoroutineContext().ensureActive()
+                var offset = 0L
+                var zeroReadRetries = 0
+                while (offset < totalSize) {
+                    val len = minOf(buffer.size.toLong(), totalSize - offset).toInt()
+                    val bytesRead = rf.read(offset, buffer, 0, len)
+                    if (bytesRead < 0) break
+                    if (bytesRead == 0) {
+                        zeroReadRetries++
+                        if (zeroReadRetries > 5) {
+                            throw java.io.IOException("SFTP download stalled: $remotePath — remote stream returned 0 bytes repeatedly")
+                        }
+                        // Brief yield to avoid busy spin
+                        kotlinx.coroutines.yield()
+                        continue
                     }
-                    if (offset < totalSize) {
-                        throw java.io.IOException("Download truncated: $remotePath — expected $totalSize bytes, got $offset")
-                    }
+                    zeroReadRetries = 0
+                    sink.write(buffer, 0, bytesRead)
+                    offset += bytesRead
+                    transferred += bytesRead
+                    onProgress?.invoke(transferred, totalSize)
+                    // Cooperative cancellation check after each chunk read
+                    currentCoroutineContext().ensureActive()
+                }
+                if (offset < totalSize) {
+                    throw java.io.IOException("Download truncated: $remotePath — expected $totalSize bytes, got $offset")
                 }
             }
             true
         } catch (e: Exception) {
-            if (localFile.exists()) localFile.delete()
             throw Exception("下载失败 $remotePath: ${e.message}", e)
         }
     }

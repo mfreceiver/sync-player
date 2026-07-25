@@ -1,9 +1,11 @@
 package cn.vectory.syncplayer.audio
 
+import android.content.Context
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.net.Uri
 import android.util.Log
-import java.io.File
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.log10
@@ -21,17 +23,16 @@ data class AudioGainResult(
 )
 
 @Singleton
-class AudioGainAnalyzer @Inject constructor() {
+class AudioGainAnalyzer @Inject constructor(
+    @ApplicationContext private val context: Context
+) {
 
     private companion object { const val TAG = "AudioGainAnalyzer" }
 
-    fun analyze(filePath: String): AudioGainResult? {
-        val file = File(filePath)
-        if (!file.exists()) return null
-
+    fun analyze(uri: Uri): AudioGainResult? {
         val extractor = MediaExtractor()
         return try {
-            extractor.setDataSource(filePath)
+            extractor.setDataSource(context, uri, null)
             val audioTrack = findAudioTrack(extractor) ?: return null
             extractor.selectTrack(audioTrack)
             val format = extractor.getTrackFormat(audioTrack)
@@ -53,7 +54,7 @@ class AudioGainAnalyzer @Inject constructor() {
                 AudioGainResult(rmsDb, peakDb, gainDb)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Audio gain analysis failed for $filePath", e)
+            Log.w(TAG, "Audio gain analysis failed for $uri", e)
             null
         } finally {
             try { extractor.release() } catch (e: Exception) { Log.w(TAG, "Failed to release extractor", e) }

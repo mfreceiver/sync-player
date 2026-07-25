@@ -9,7 +9,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
@@ -45,8 +44,6 @@ fun SyncRelationEditScreen(
     val localBasePath by viewModel.localBasePath.collectAsStateWithLifecycle()
     val remoteDirs by viewModel.remoteDirectories.collectAsStateWithLifecycle()
     val currentRemotePath by viewModel.currentRemoteBrowsePath.collectAsStateWithLifecycle()
-    val localDirs by viewModel.localDirectories.collectAsStateWithLifecycle()
-    val currentLocalPath by viewModel.currentLocalBrowsePath.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val browseError by viewModel.browseError.collectAsStateWithLifecycle()
     val isBrowsing by viewModel.isBrowsing.collectAsStateWithLifecycle()
@@ -56,7 +53,6 @@ fun SyncRelationEditScreen(
     val saveResult by viewModel.saveResult.collectAsStateWithLifecycle()
 
     var showRemoteBrowser by remember { mutableStateOf(false) }
-    var showLocalBrowser by remember { mutableStateOf(false) }
     var sourceExpanded by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isNavigatingBack by remember { mutableStateOf(false) }
@@ -162,26 +158,15 @@ fun SyncRelationEditScreen(
                 }
             }
 
-            Row(
+            OutlinedTextField(
+                value = localBasePath,
+                onValueChange = { viewModel.setLocalBasePath(it) },
+                label = { Text(stringResource(R.string.relation_local_base_dir)) },
+                placeholder = { Text(stringResource(R.string.relation_local_dir_placeholder), color = extendedColors.placeholderGrey) },
+                supportingText = { Text("逻辑路径；首次同步时在加密卷上自动创建") },
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = localBasePath,
-                    onValueChange = {},
-                    label = { Text(stringResource(R.string.relation_local_base_dir)) },
-                    placeholder = { Text(stringResource(R.string.relation_local_dir_placeholder), color = extendedColors.placeholderGrey) },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    readOnly = true
-                )
-                IconButton(onClick = {
-                    showLocalBrowser = true
-                    viewModel.browseLocalDirectories()
-                }) {
-                    Icon(Icons.Filled.FolderOpen, contentDescription = stringResource(R.string.relation_select_local_dir))
-                }
-            }
+                singleLine = true
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -329,122 +314,5 @@ fun SyncRelationEditScreen(
         )
     }
 
-    // Local browser dialog (multi-level)
-    if (showLocalBrowser) {
-        var showCreateFolderDialog by remember { mutableStateOf(false) }
 
-        AlertDialog(
-            onDismissRequest = { showLocalBrowser = false },
-            title = { Text(stringResource(R.string.relation_select_local_base)) },
-            text = {
-                Column {
-                    Text(
-                        stringResource(R.string.relation_current_path, "/${if (currentLocalPath.isEmpty()) "" else currentLocalPath}"),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(8.dp))
-
-                    if (currentLocalPath.isNotEmpty()) {
-                        TextButton(onClick = { viewModel.navigateLocalUp() }) {
-                            Text(stringResource(R.string.relation_parent_dir))
-                        }
-                    }
-
-                    LazyColumn(modifier = Modifier.heightIn(max = 250.dp)) {
-                        items(localDirs, key = { it }) { dirName ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { viewModel.navigateLocalInto(dirName) }
-                                    .padding(vertical = 8.dp, horizontal = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Filled.Folder,
-                                    contentDescription = null,
-                                    tint = extendedColors.folderAmber,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(dirName)
-                            }
-                        }
-                        if (localDirs.isEmpty()) {
-                            item {
-                                Text(
-                                    stringResource(R.string.relation_no_subdirs),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = { showCreateFolderDialog = true }) {
-                        Icon(
-                            Icons.Filled.CreateNewFolder,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(stringResource(R.string.relation_new_folder))
-                    }
-                    TextButton(onClick = {
-                        viewModel.confirmLocalSelection()
-                        showLocalBrowser = false
-                    }) {
-                        Text(stringResource(R.string.relation_select_dir))
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showLocalBrowser = false }) {
-                    Text(stringResource(R.string.common_cancel))
-                }
-            }
-        )
-
-        if (showCreateFolderDialog) {
-            var newFolderName by remember { mutableStateOf("") }
-            AlertDialog(
-                onDismissRequest = { showCreateFolderDialog = false },
-                title = { Text(stringResource(R.string.relation_new_folder)) },
-                text = {
-                    OutlinedTextField(
-                        value = newFolderName,
-                        onValueChange = { newFolderName = it },
-                        label = { Text(stringResource(R.string.relation_folder_name)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            if (newFolderName.isNotBlank()) {
-                                viewModel.createLocalFolder(newFolderName.trim())
-                            }
-                            showCreateFolderDialog = false
-                        },
-                        enabled = newFolderName.isNotBlank()
-                    ) {
-                        Text(stringResource(R.string.common_create))
-                    }
-                },
-                 dismissButton = {
-                     TextButton(onClick = { showCreateFolderDialog = false }) {
-                         Text(stringResource(R.string.common_cancel))
-                     }
-                 }
-             )
-         }
-     }
  }

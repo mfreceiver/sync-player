@@ -38,8 +38,8 @@ class UserPreferencesRepository @Inject constructor(
         val ANALYZE_ON_DOWNLOAD = booleanPreferencesKey("analyze_on_download")
         val DOUBLE_TAP_ACTION = stringPreferencesKey("double_tap_action")
         val QUICK_RECYCLE = booleanPreferencesKey("quick_recycle")
-        val SAF_PROVIDER_ENABLED = booleanPreferencesKey("saf_provider_enabled")
         val SECURE_LOCK_ENABLED = booleanPreferencesKey("secure_lock_enabled")
+        val MEDIA_STORAGE_TREE_URI = stringPreferencesKey("media_storage_tree_uri")
     }
 
     val longPressSpeed: Flow<Float> = dataStore.data.map { it[Keys.LONG_PRESS_SPEED] ?: 2.0f }
@@ -90,13 +90,17 @@ class UserPreferencesRepository @Inject constructor(
         it[Keys.QUICK_RECYCLE] ?: true
     }
 
-    val safProviderEnabled: Flow<Boolean> = dataStore.data.map {
-        it[Keys.SAF_PROVIDER_ENABLED] ?: false
-    }
-
     // Secure lock enabled flag
     val secureLockEnabled: Flow<Boolean> = dataStore.data.map {
         it[Keys.SECURE_LOCK_ENABLED] ?: false
+    }
+
+    val mediaStorageTreeUri: Flow<String?> = dataStore.data.map { it[Keys.MEDIA_STORAGE_TREE_URI] }
+
+    suspend fun getMediaStorageTreeUri(): String? = mediaStorageTreeUri.first()
+
+    suspend fun setMediaStorageTreeUri(uri: String?) {
+        dataStore.edit { if (uri != null) it[Keys.MEDIA_STORAGE_TREE_URI] = uri else it.remove(Keys.MEDIA_STORAGE_TREE_URI) }
     }
 
     suspend fun getLongPressSpeed(): Float = longPressSpeed.first()
@@ -111,7 +115,6 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun getAnalyzeOnDownload(): Boolean = analyzeOnDownload.first()
     suspend fun getDoubleTapAction(): String = doubleTapAction.first()
     suspend fun getQuickRecycle(): Boolean = quickRecycle.first()
-    suspend fun getSafProviderEnabled(): Boolean = safProviderEnabled.first()
 
     suspend fun getSecureLockEnabled(): Boolean = secureLockEnabled.first()
 
@@ -163,10 +166,6 @@ class UserPreferencesRepository @Inject constructor(
 
     suspend fun setQuickRecycle(enabled: Boolean) {
         dataStore.edit { it[Keys.QUICK_RECYCLE] = enabled }
-    }
-
-    suspend fun setSafProviderEnabled(enabled: Boolean) {
-        dataStore.edit { it[Keys.SAF_PROVIDER_ENABLED] = enabled }
     }
 
     suspend fun setSecureLockEnabled(enabled: Boolean) {

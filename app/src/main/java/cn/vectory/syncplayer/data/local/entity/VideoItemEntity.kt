@@ -9,7 +9,8 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["relativePath", "syncRelationId"], unique = true),
         Index(value = ["syncRelationId"]),
-        Index(value = ["parentPath"])
+        Index(value = ["parentPath"]),
+        Index(value = ["volumeId"])
     ]
 )
 data class VideoItemEntity(
@@ -18,14 +19,14 @@ data class VideoItemEntity(
     val relativePath: String,
     val parentPath: String = "",
     val fileName: String,
-    val localAbsolutePath: String,
+    val volumeId: String = "",
+    val iv: ByteArray = byteArrayOf(),
     val fileSize: Long,
     val duration: Long? = null,
     val width: Int? = null,
     val height: Int? = null,
     val bitrate: Long? = null,
     val frameRate: Float? = null,
-    val thumbnailPath: String? = null,
     val audioGainDb: Float? = null,
     val dateSynced: Long = System.currentTimeMillis(),
     val remoteModifiedTime: Long? = null,

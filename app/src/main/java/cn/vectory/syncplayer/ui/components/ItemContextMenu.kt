@@ -33,7 +33,7 @@ interface FileContextMenuActions {
     fun updateStar(videoItemId: Long, star: Int)
     fun updateStarByPath(relativePath: String, star: Int)
     fun toggleTrashed(videoItemId: Long)
-    fun deleteFile(relativePath: String)
+    fun deleteFile(videoItemId: Long)
     fun isFileInBaseDir(relativePath: String): Boolean
     suspend fun buildShareIntent(videoItemId: Long): Intent?
 }
@@ -94,7 +94,7 @@ fun FileContextMenuDialog(
                     }
                     Spacer(Modifier.height(8.dp))
                     Thumbnail(
-                        thumbnailPath = item.thumbnailPath,
+                        videoItemId = item.videoItemId,
                         isVideo = isVideoFile(item.name),
                         isImage = isImageFile(item.name),
                         modifier = Modifier
@@ -165,7 +165,15 @@ fun FileContextMenuDialog(
                     }
                     if (!actions.isFileInBaseDir(item.relativePath)) {
                         TextButton(onClick = {
-                            actions.deleteFile(item.relativePath)
+                            val delId = item.videoItemId
+                            if (delId == null) {
+                                onDismiss()
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(context.getString(R.string.context_no_record))
+                                }
+                                return@TextButton
+                            }
+                            actions.deleteFile(delId)
                             onDismiss()
                         }) {
                             Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error)

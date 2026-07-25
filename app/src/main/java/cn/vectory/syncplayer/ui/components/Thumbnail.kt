@@ -16,24 +16,24 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.provider.MediaUris
 import coil.compose.AsyncImage
-import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
-import java.io.File
 
 @Composable
 internal fun Thumbnail(
-    thumbnailPath: String?,
+    videoItemId: Long?,
     isVideo: Boolean = true,
     isImage: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val thumbUri = videoItemId?.let { MediaUris.thumbUri(it) }
 
-    if (thumbnailPath != null) {
+    if (thumbUri != null) {
         AsyncImage(
             model = ImageRequest.Builder(context)
-                .data(File(thumbnailPath))
+                .data(thumbUri)
                 .size(320)
                 .build(),
             contentDescription = stringResource(R.string.thumbnail),

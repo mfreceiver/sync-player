@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.provider.MediaUris
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import cn.vectory.syncplayer.ui.util.formatDuration
 import cn.vectory.syncplayer.ui.util.isVideoFile
@@ -54,12 +55,11 @@ import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
-import java.io.File
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun VideoGridItem(
-    thumbnailPath: String?,
+    videoItemId: Long?,
     fileName: String,
     duration: Long?,
     width: Int?,
@@ -102,7 +102,7 @@ internal fun VideoGridItem(
                 contentAlignment = Alignment.Center
             ) {
                 GridThumbnail(
-                    thumbnailPath = thumbnailPath,
+                    videoItemId = videoItemId,
                     isVideo = isVideo,
                     isImage = isImage,
                     modifier = Modifier.fillMaxSize()
@@ -110,7 +110,7 @@ internal fun VideoGridItem(
             }
         } else {
             GridThumbnail(
-                thumbnailPath = thumbnailPath,
+                videoItemId = videoItemId,
                 isVideo = isVideo,
                 isImage = isImage,
                 modifier = thumbnailModifier
@@ -249,19 +249,19 @@ internal fun VideoGridItem(
 
 @Composable
 private fun GridThumbnail(
-    thumbnailPath: String?,
+    videoItemId: Long?,
     isVideo: Boolean,
     isImage: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
 
-    val hasPath = thumbnailPath != null
+    val thumbUri = videoItemId?.let { MediaUris.thumbUri(it) }
     Box(modifier = modifier) {
-        if (hasPath) {
+        if (thumbUri != null) {
             AsyncImage(
                 model = ImageRequest.Builder(context)
-                    .data(File(thumbnailPath!!))
+                    .data(thumbUri)
                     .size(640)
                     .build(),
                 contentDescription = stringResource(R.string.thumbnail),

@@ -7,7 +7,7 @@
 - **Android Studio**: `/home/mar/android-studio`
 - **Project root**: `/home/mar/sync-player`
 - **Gradle**: 8.11.1
-- **No Kotlin LSP installed** — use Gradle build for type/syntax verification
+- **Kotlin LSP disabled** (`opencode.json: lsp=false`). Reason: this project uses Hilt (KSP) + Room (KSP) + Compose Compiler; as of 2026-07 no LSP can resolve KSP/Compose generated code (`build/generated/ksp/`, `Hilt_xxx`, `xxxDao_Impl`), so any LSP would flood the session with stale/unresolved-reference false positives. JetBrains official Kotlin LSP is pre-alpha JVM-only; fwcd/kotlin-language-server is deprecated. **Gradle compile is the single source of truth** for type/syntax verification — always run `compileDebugKotlin` after code changes; never trust LSP-style diagnostics if any tool re-enables them.
 
 All Gradle commands require `JAVA_HOME=/home/mar/android-studio/jbr`. ANDROID_HOME is optional if already in env.
 

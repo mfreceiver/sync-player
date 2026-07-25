@@ -82,9 +82,6 @@ class PlaybackRepository @Inject constructor(
     suspend fun deleteByVideoId(videoItemId: Long) =
         playbackRecordDao.deleteByVideoId(videoItemId)
 
-    suspend fun deleteByFolderPath(folderPath: String) =
-        playbackRecordDao.deleteByFolderPath(folderPath)
-
     // Phase 2: ensure folder has corresponding playback records and mark all as completed/uncompleted
     suspend fun markFolderCompleted(folderPath: String, completed: Boolean) {
         appDatabase.withTransaction {

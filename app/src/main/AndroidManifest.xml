@@ -8,6 +8,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <permission android:name="cn.vectory.syncplayer.permission.READ_MEDIA"
+              android:protectionLevel="signature" />
+
     <application
         android:name=".SyncPlayerApp"
         android:allowBackup="false"
@@ -33,26 +36,11 @@
             android:exported="false" />
 
         <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/filepaths" />
-        </provider>
-
-        <provider
-            android:name=".provider.SyncDocumentsProvider"
-            android:authorities="${applicationId}.documents"
+            android:name=".provider.MediaContentProvider"
+            android:authorities="cn.vectory.syncplayer.media"
             android:exported="true"
             android:grantUriPermissions="true"
-            android:permission="android.permission.MANAGE_DOCUMENTS"
-            android:enabled="false">
-            <intent-filter>
-                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
-            </intent-filter>
-        </provider>
+            android:readPermission="cn.vectory.syncplayer.permission.READ_MEDIA" />
 
     </application>
 

@@ -114,8 +114,34 @@ interface VideoItemDao {
     @Query("DELETE FROM video_item")
     suspend fun deleteAll()
 
-    @Query("DELETE FROM video_item WHERE relativePath LIKE :folderPath || '/%'")
-    suspend fun deleteByFolderPath(folderPath: String)
+    /** Items under [folderPath] (exact or descendants). Path-boundary safe (no false prefix match). */
+    @Query("""
+        SELECT * FROM video_item
+        WHERE relativePath = :folderPath
+           OR relativePath LIKE :folderPath || '/%'
+    """)
+    suspend fun getByPathPrefix(folderPath: String): List<VideoItemEntity>
+
+    /** Relation-scoped path prefix query for deleteFolder isolation. */
+    @Query("""
+        SELECT * FROM video_item
+        WHERE syncRelationId = :syncRelationId
+          AND (relativePath = :folderPath OR relativePath LIKE :folderPath || '/%')
+    """)
+    suspend fun getByPathPrefixAndRelation(folderPath: String, syncRelationId: Long): List<VideoItemEntity>
+
+    /**
+     * ParentPaths of all descendants under [folderPath] that have at least one more path segment
+     * after the direct child. Used to compute folderHasSubDirs in one query.
+     */
+    @Query("""
+        SELECT DISTINCT parentPath FROM video_item
+        WHERE CASE
+            WHEN :folderPath = '' THEN parentPath LIKE '%/%'
+            ELSE parentPath LIKE :folderPath || '/%/%'
+        END
+    """)
+    suspend fun getDeepParentPaths(folderPath: String): List<String>
 
     @Query("SELECT id FROM video_item ORDER BY fileName ASC")
     suspend fun getAllIdsSorted(): List<Long>
@@ -130,7 +156,6 @@ interface VideoItemDao {
         val height: Int?,
         val bitrate: Long?,
         val frameRate: Float?,
-        val thumbnailPath: String?,
         val audioGainDb: Float?,
         val star: Int,
         val mediaType: String,
@@ -143,7 +168,7 @@ interface VideoItemDao {
 
     @Query("""
         SELECT v.id, v.fileName, v.relativePath, v.fileSize, v.duration, v.width, v.height,
-               v.bitrate, v.frameRate, v.thumbnailPath, v.audioGainDb, v.star, v.mediaType, v.dateTaken,
+               v.bitrate, v.frameRate, v.audioGainDb, v.star, v.mediaType, v.dateTaken,
                COALESCE(pr.position, 0) as playbackPosition,
                COALESCE(pr.duration, 0) as playbackDuration,
                COALESCE(pr.isCompleted, 0) as isCompleted,
@@ -154,13 +179,13 @@ interface VideoItemDao {
     """)
     fun searchByFileName(query: String): Flow<List<VideoItemWithPlayback>>
 
-    /** Synchronous variant for DocumentsProvider binder-thread use (no coroutine overhead). */
+    /** Synchronous variant for binder-thread use (no coroutine overhead). */
     @Query("SELECT * FROM video_item WHERE fileName LIKE '%' || :query || '%' COLLATE NOCASE")
     fun searchByFileNameSync(query: String): List<VideoItemEntity>
 
     @Query("""
         SELECT v.id, v.fileName, v.relativePath, v.fileSize, v.duration, v.width, v.height,
-               v.bitrate, v.frameRate, v.thumbnailPath, v.audioGainDb, v.star, v.mediaType, v.dateTaken,
+               v.bitrate, v.frameRate, v.audioGainDb, v.star, v.mediaType, v.dateTaken,
                COALESCE(pr.position, 0) as playbackPosition,
                COALESCE(pr.duration, 0) as playbackDuration,
                COALESCE(pr.isCompleted, 0) as isCompleted,
@@ -254,33 +279,6 @@ interface VideoItemDao {
         val isTrashed: Boolean
     )
 
-    @Query("""
-        SELECT thumbnailPath FROM video_item
-        WHERE thumbnailPath IS NOT NULL
-        AND parentPath = :folderPath
-        ORDER BY fileName ASC
-        LIMIT :limit
-    """)
-    suspend fun getDirectChildThumbnails(folderPath: String, limit: Int = 4): List<String>
-
-    data class FolderThumbnailRow(
-        val relativePath: String,
-        val thumbnailPath: String
-    )
-
-    @Query("""
-        SELECT relativePath, thumbnailPath FROM video_item
-        WHERE thumbnailPath IS NOT NULL
-        AND CASE
-            WHEN :parentFolder = '' THEN parentPath != '' AND parentPath NOT LIKE '%/%'
-            ELSE parentPath LIKE :parentFolder || '/%'
-                 AND LENGTH(SUBSTR(parentPath, LENGTH(:parentFolder) + 2))
-                    - LENGTH(REPLACE(SUBSTR(parentPath, LENGTH(:parentFolder) + 2), '/', '')) = 0
-        END
-        ORDER BY relativePath
-    """)
-    suspend fun getDirectChildThumbnailsBatch(parentFolder: String): List<FolderThumbnailRow>
-
     data class FlatItemWithPlayback(
         val id: Long,
         val fileName: String,
@@ -291,7 +289,6 @@ interface VideoItemDao {
         val height: Int?,
         val bitrate: Long?,
         val frameRate: Float?,
-        val thumbnailPath: String?,
         val audioGainDb: Float?,
         val star: Int,
         val mediaType: String,
@@ -304,7 +301,7 @@ interface VideoItemDao {
 
     @Query("""
         SELECT vi.id, vi.fileName, vi.relativePath, vi.fileSize, vi.duration, vi.width, vi.height,
-               vi.bitrate, vi.frameRate, vi.thumbnailPath, vi.audioGainDb, vi.star, vi.mediaType, vi.dateTaken,
+               vi.bitrate, vi.frameRate, vi.audioGainDb, vi.star, vi.mediaType, vi.dateTaken,
                COALESCE(pr.position, 0) AS playbackPosition,
                COALESCE(pr.duration, 0) AS playbackDuration,
                COALESCE(pr.isCompleted, 0) AS isCompleted,

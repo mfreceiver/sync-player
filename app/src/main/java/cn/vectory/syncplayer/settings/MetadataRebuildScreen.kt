@@ -3,8 +3,8 @@ package cn.vectory.syncplayer.settings
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -31,7 +31,36 @@ fun MetadataRebuildScreen(
     val completedCount by viewModel.completedCount.collectAsStateWithLifecycle()
     val totalCount by viewModel.totalCount.collectAsStateWithLifecycle()
     val currentFile by viewModel.currentFile.collectAsStateWithLifecycle()
+    val cleanupSummary by viewModel.cleanupSummary.collectAsStateWithLifecycle()
     var isNavigatingBack by remember { mutableStateOf(false) }
+    var showOtherVolumeConfirm by remember { mutableStateOf(false) }
+
+    if (showOtherVolumeConfirm) {
+        val otherCount = discoveryResult?.otherVolumeRecords?.size ?: 0
+        AlertDialog(
+            onDismissRequest = { showOtherVolumeConfirm = false },
+            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("将丢弃旧卷索引") },
+            text = {
+                Text("此操作将永久删除 $otherCount 条旧卷索引记录，无法恢复。确认后旧卷媒体将无法在本应用中打开，除非重新同步。")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showOtherVolumeConfirm = false
+                        viewModel.cleanOtherVolumeIndexes()
+                    }
+                ) {
+                    Text("确认清理", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showOtherVolumeConfirm = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -87,9 +116,13 @@ fun MetadataRebuildScreen(
                         }
                     }
                     Spacer(modifier = Modifier.width(8.dp))
+                    val canRebuild = discoveryResult != null
+                        && !isRebuilding && !isDiscovering
+                        && ((discoveryResult?.orphanedRecords?.size ?: 0)
+                            + (discoveryResult?.incompleteRecords?.size ?: 0) > 0)
                     Button(
                         onClick = { viewModel.startRebuild() },
-                        enabled = discoveryResult != null && !isRebuilding && !isDiscovering
+                        enabled = canRebuild
                     ) {
                         if (isRebuilding) {
                             CircularProgressIndicator(
@@ -128,6 +161,12 @@ fun MetadataRebuildScreen(
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(stringResource(R.string.metadata_complete), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        cleanupSummary?.let { s ->
+                            if (s.failed > 0) {
+                                Spacer(Modifier.height(8.dp))
+                                Text("成功 ${s.success}，失败 ${s.failed}", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
                     }
                 }
             }
@@ -186,16 +225,48 @@ fun MetadataRebuildScreen(
                     }
 
                     if (!isRebuilding && !isDiscovering) {
+                        val r = discoveryResult!!
                         Card(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                val r = discoveryResult
-                                Text(stringResource(R.string.metadata_new_files, r!!.newFiles.size))
-                                Text(stringResource(R.string.metadata_orphaned_records, r.orphanedRecords.size))
+                                Text("损坏记录（当前卷）: ${r.orphanedRecords.size}")
                                 Text(stringResource(R.string.metadata_incomplete_records, r.incompleteRecords.size))
                                 Spacer(Modifier.height(4.dp))
                                 HorizontalDivider()
                                 Spacer(Modifier.height(4.dp))
-                                Text(stringResource(R.string.metadata_total_items, r.newFiles.size + r.orphanedRecords.size + r.incompleteRecords.size), fontWeight = FontWeight.Bold)
+                                Text(
+                                    "当前卷待处理: ${r.orphanedRecords.size + r.incompleteRecords.size}",
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        if (r.otherVolumeRecords.isNotEmpty()) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer
+                                )
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        "其他卷残留索引: ${r.otherVolumeRecords.size}",
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                    Text(
+                                        "切换存储位置后，旧卷索引不会自动删除。清理后无法再打开旧卷媒体。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                    Button(
+                                        onClick = { showOtherVolumeConfirm = true },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.error
+                                        )
+                                    ) {
+                                        Text("清理旧卷索引")
+                                    }
+                                }
                             }
                         }
                     }

@@ -17,7 +17,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.ui.components.FullScreenError
 
@@ -35,11 +34,20 @@ fun GainAnalysisScreen(
     val completedCount by viewModel.completedCount.collectAsStateWithLifecycle()
     val totalCount by viewModel.totalCount.collectAsStateWithLifecycle()
     val activeAnalysis by viewModel.activeAnalysis.collectAsStateWithLifecycle()
-    val completedPaths by viewModel.completedPaths.collectAsStateWithLifecycle()
+    val completedIds by viewModel.completedIds.collectAsStateWithLifecycle()
+    val failedIds by viewModel.failedIds.collectAsStateWithLifecycle()
     var isNavigatingBack by remember { mutableStateOf(false) }
 
-    val remainingFiles by remember {
-        derivedStateOf { discoveredFiles.filter { it.localAbsolutePath !in completedPaths } }
+    val remainingFiles by remember(discoveredFiles, completedIds, failedIds) {
+        derivedStateOf {
+            discoveredFiles.filter { it.id !in completedIds && it.id !in failedIds }
+        }
+    }
+
+    val failedFiles by remember(discoveredFiles, failedIds) {
+        derivedStateOf {
+            discoveredFiles.filter { it.id in failedIds }
+        }
     }
 
     Scaffold(
@@ -124,28 +132,111 @@ fun GainAnalysisScreen(
                 )
             }
             isComplete -> {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(paddingValues),
-                    contentAlignment = Alignment.Center
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues)
                 ) {
                     Card(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                            containerColor = if (failedFiles.isEmpty()) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.errorContainer
+                            }
                         )
                     ) {
                         Column(
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Icon(
                                 Icons.Default.CheckCircle,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = if (failedFiles.isEmpty()) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.error
+                                },
                                 modifier = Modifier.size(48.dp)
                             )
                             Spacer(Modifier.height(8.dp))
-                            Text(stringResource(R.string.gain_complete), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = stringResource(R.string.gain_complete),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (failedFiles.isNotEmpty()) {
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = stringResource(
+                                        R.string.gain_failed_count,
+                                        failedFiles.size
+                                    ),
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Button(
+                                    onClick = { viewModel.retryFailed() },
+                                    enabled = !isAnalyzing
+                                ) {
+                                    Text(stringResource(R.string.gain_retry_failed))
+                                }
+                            }
+                        }
+                    }
+
+                    if (failedFiles.isNotEmpty()) {
+                        Text(
+                            text = stringResource(R.string.gain_failed_files_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(vertical = 8.dp)
+                        ) {
+                            items(failedFiles, key = { it.id }) { video ->
+                                ListItem(
+                                    headlineContent = {
+                                        Text(
+                                            text = stringResource(
+                                                R.string.gain_failed_file,
+                                                video.fileName
+                                            ),
+                                            color = MaterialTheme.colorScheme.error,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    },
+                                    supportingContent = {
+                                        Text(
+                                            text = video.relativePath,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    },
+                                    leadingContent = {
+                                        Icon(
+                                            Icons.Default.Equalizer,
+                                            contentDescription = stringResource(
+                                                R.string.gain_analysis
+                                            ),
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -179,11 +270,71 @@ fun GainAnalysisScreen(
                                 Text(stringResource(R.string.gain_discovered_count, discoveredFiles.size))
                             }
                         }
+                        if (failedFiles.isNotEmpty()) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer
+                                )
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = stringResource(
+                                            R.string.gain_failed_count,
+                                            failedFiles.size
+                                        ),
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Button(onClick = { viewModel.retryFailed() }) {
+                                        Text(stringResource(R.string.gain_retry_failed))
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                        }
                     }
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(vertical = 8.dp)
                     ) {
+                        if (failedFiles.isNotEmpty() && !isAnalyzing) {
+                            items(failedFiles, key = { "fail-${it.id}" }) { video ->
+                                ListItem(
+                                    headlineContent = {
+                                        Text(
+                                            text = stringResource(
+                                                R.string.gain_failed_file,
+                                                video.fileName
+                                            ),
+                                            color = MaterialTheme.colorScheme.error,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    },
+                                    supportingContent = {
+                                        Text(
+                                            text = video.relativePath,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    },
+                                    leadingContent = {
+                                        Icon(
+                                            Icons.Default.Equalizer,
+                                            contentDescription = stringResource(R.string.gain_analysis),
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                )
+                            }
+                        }
                         items(remainingFiles, key = { it.id }) { video ->
                             ListItem(
                                 headlineContent = {
