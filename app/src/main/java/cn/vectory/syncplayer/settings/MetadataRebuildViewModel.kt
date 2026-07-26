@@ -168,37 +168,37 @@ class MetadataRebuildViewModel @Inject constructor(
                         var fail = 0
                         val failures = mutableListOf<Pair<Long, String>>()
                         for (record in result.orphanedRecords) {
-                        _currentFile.value = record.fileName
+                            _currentFile.value = record.fileName
                             when (val r = fileOps.deleteMediaByIdLocked(record.id)) {
-                            is DeleteMediaResult.Success, is DeleteMediaResult.SkippedNotFound -> Unit
-                            is DeleteMediaResult.Failed -> {
-                                fail++
-                                failures.add(record.id to syncErrorMessage(r.error, context))
+                                is DeleteMediaResult.Success, is DeleteMediaResult.SkippedNotFound -> Unit
+                                is DeleteMediaResult.Failed -> {
+                                    fail++
+                                    failures.add(record.id to syncErrorMessage(r.error, context))
+                                }
                             }
+                            _completedCount.value++
                         }
-                        _completedCount.value++
-                    }
 
                         for (record in result.incompleteRecords) {
-                        _currentFile.value = record.fileName
-                        val fresh = videoRepository.getById(record.id) ?: continue
-                        try {
-                            if (isImageFile(fresh.fileName)) imageMetadataExtractor.extractAndSave(fresh)
-                            else videoMetadataExtractor.extractAndSave(fresh)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to extract metadata for ${record.fileName}", e)
-                            fail++
-                            failures.add(record.id to syncErrorMessage(e, context))
+                            _currentFile.value = record.fileName
+                            val fresh = videoRepository.getById(record.id) ?: continue
+                            try {
+                                if (isImageFile(fresh.fileName)) imageMetadataExtractor.extractAndSave(fresh)
+                                else videoMetadataExtractor.extractAndSave(fresh)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to extract metadata for ${record.fileName}", e)
+                                fail++
+                                failures.add(record.id to syncErrorMessage(e, context))
+                            }
+                            _completedCount.value++
                         }
-                        _completedCount.value++
-                    }
 
                         if (failures.isNotEmpty()) {
-                        _cleanupSummary.value = CleanupSummary(
-                            success = _completedCount.value - fail,
-                            failed = fail,
-                            failures = failures,
-                        )
+                            _cleanupSummary.value = CleanupSummary(
+                                success = _completedCount.value - fail,
+                                failed = fail,
+                                failures = failures,
+                            )
                         }
                     }
                 }
