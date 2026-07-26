@@ -17,13 +17,19 @@ jobs:
       - name: Checkout（直连 Gitea，完整历史 + tag）
         env:
           TOKEN: ${{ github.token }}
+          # MY_GITEA_LAN_URL：站点级 Actions Variable（管理后台→管理设置→工作流→变量），
+          # 设为 http://<lan-ip>:<port> 让 runner 经局域网直连 Gitea（省公网 hairpin）。
+          # 未设置时回退公网 HTTPS，保证离开局域网也能跑。
+          GITEA_BASE: ${{ vars.MY_GITEA_LAN_URL || 'https://git.vectory.cn:18443' }}
         run: |
           set -e
-          printf 'https://x-access-token:%s@git.vectory.cn:18443\n' "$TOKEN" > ~/.git-credentials
+          # 凭据行 = scheme://x-access-token:TOKEN@host:port（从 GITEA_BASE 拆出 scheme 与 host 再拼回，
+          # 这样 LAN(http) 与公网(https) 同一套逻辑，无需分别写死）
+          printf '%s://x-access-token:%s@%s\n' "${GITEA_BASE%%://*}" "$TOKEN" "${GITEA_BASE#*://}" > ~/.git-credentials
           chmod 600 ~/.git-credentials
           git config --global credential.helper store
           git config --global advice.detachedHead false
-          git clone https://git.vectory.cn:18443/mfreceiver/sync-player.git .
+          git clone "$GITEA_BASE/mfreceiver/sync-player.git" .
           git fetch --tags --force
           git checkout -q "${{ github.sha }}"
 
@@ -63,6 +69,8 @@ jobs:
           # Gitea Actions 自动注入 GITHUB_TOKEN（contents: write）。
           # 若 asset 上传 403，改用自建 secret RELEASE_GITEA_TOKEN（个人 token，release 权限）。
           GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 走局域网直连（与 Checkout 同源）；未设置时 publish-release.sh 自身默认公网 HTTPS。
+          GITEA_URL: ${{ vars.MY_GITEA_LAN_URL || 'https://git.vectory.cn:18443' }}
           TAG: ${{ github.ref_name }}
         run: ./scripts/gitea/publish-release.sh "$TAG"
 
