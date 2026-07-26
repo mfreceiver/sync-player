@@ -5,8 +5,11 @@ import android.util.Log
 import cn.vectory.syncplayer.data.model.RemoteFile
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.sync.RemoteFileClient
+import cn.vectory.syncplayer.sync.RemoteScanIncompleteException
+import cn.vectory.syncplayer.sync.SyncErrorCode
+import cn.vectory.syncplayer.sync.SyncException
+import cn.vectory.syncplayer.sync.SyncOperation
 import cn.vectory.syncplayer.sync.checkNetworkAvailable
-import cn.vectory.syncplayer.sync.mapNetworkErrorMessage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
@@ -14,47 +17,71 @@ import kotlinx.coroutines.ensureActive
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.sftp.SFTPClient
 import net.schmizz.sshj.userauth.UserAuthException
-import java.io.File
-import java.io.FileOutputStream
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 
 class SftpFileClient(
     private val context: Context
 ) : RemoteFileClient {
 
-    private companion object { const val TAG = "SftpFileClient" }
+    private companion object {
+        const val TAG = "SftpFileClient"
+        // 与 SmbFileClient 保持一致；超出即视为扫描不完整而失败（见 RemoteScanIncompleteException）。
+        const val MAX_REMOTE_FILES = 10000
+    }
 
     private var sshClient: SSHClient? = null
     private var sftpClient: SFTPClient? = null
     private var remoteBasePath: String = ""
 
-    private fun sftpErrorMessage(e: Exception, host: String): String {
-        val commonMsg = mapNetworkErrorMessage(e, host, context)
-        if (commonMsg != null) return commonMsg
-        return when (e) {
-            is UserAuthException -> "SSH认证失败，请检查用户名和密码 (${e.message})"
-            is net.schmizz.sshj.transport.TransportException ->
-                "SSH连接错误: ${e.message}"
-            else -> "SFTP连接失败: ${e.javaClass.simpleName}: ${e.message}"
+    /**
+     * Classify an sshj/stdlib exception into a [SyncErrorCode] by exception TYPE.
+     * Never parses prose message text for classification.
+     */
+    private fun classifySftpException(e: Throwable): SyncErrorCode = when (e) {
+        is UserAuthException -> SyncErrorCode.AUTHENTICATION_FAILED
+        is net.schmizz.sshj.transport.TransportException -> {
+            // TransportException covers most connection-level SFTP failures.
+            val cause = e.cause
+            if (cause is SocketTimeoutException || cause is UnknownHostException) {
+                SyncErrorCode.TIMEOUT
+            } else {
+                SyncErrorCode.UNKNOWN
+            }
         }
+        is SocketTimeoutException -> SyncErrorCode.TIMEOUT
+        is UnknownHostException -> SyncErrorCode.UNKNOWN_HOST
+        is ConnectException -> SyncErrorCode.CONNECTION_REFUSED
+        is net.schmizz.sshj.connection.ConnectionException -> SyncErrorCode.UNKNOWN
+        else -> SyncErrorCode.UNKNOWN
     }
 
     override suspend fun connect(source: SyncSource, remotePath: String): Unit = withContext(Dispatchers.IO) {
         checkNetworkAvailable(context)
+        // E4: `client` 必须是局部变量并在失败时显式 disconnect。
+        // 旧实现只把字段置 null —— 若 connect() 已成功但随后的 authPassword()/newSFTPClient()
+        // 抛异常，那条已建立的 SSH 连接就再无引用可关，造成连接泄漏（同步重试会持续累积）。
+        var client: SSHClient? = null
         try {
-            val client = SSHClient(net.schmizz.sshj.DefaultSecurityProviderConfig())
+            client = SSHClient(net.schmizz.sshj.DefaultSecurityProviderConfig())
             client.addHostKeyVerifier(SyncPlayerHostKeyVerifier(context))
             val timeoutMs = 5000
             client.setConnectTimeout(timeoutMs)
             client.setTimeout(timeoutMs)
             client.connect(source.host, source.port)
             client.authPassword(source.username, source.password)
+            val sftp = client.newSFTPClient()
             sshClient = client
-            sftpClient = client.newSFTPClient()
+            sftpClient = sftp
             remoteBasePath = remotePath.trim()
         } catch (e: Exception) {
+            try { client?.disconnect() } catch (closeError: Exception) {
+                Log.w(TAG, "Error closing partially-established SFTP connection", closeError)
+            }
             sshClient = null
             sftpClient = null
-            throw Exception(sftpErrorMessage(e, source.host), e)
+            throw SyncException(classifySftpException(e), SyncOperation.CONNECT, host = source.host, cause = e)
         }
     }
 
@@ -85,14 +112,14 @@ class SftpFileClient(
     }
 
     override suspend fun listFiles(path: String): List<RemoteFile> = withContext(Dispatchers.IO) {
-        val sftp = sftpClient ?: throw Exception("SFTP未连接，请先执行connect()")
+        val sftp = sftpClient ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.BROWSE)
         val result = mutableListOf<RemoteFile>()
         listFilesRecursive(sftp, path, path, result)
         result
     }
 
     override suspend fun listDirectories(path: String): List<RemoteFile> = withContext(Dispatchers.IO) {
-        val sftp = sftpClient ?: throw Exception("SFTP未连接，请先执行connect()")
+        val sftp = sftpClient ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.BROWSE)
         val result = mutableListOf<RemoteFile>()
         val entries = try {
             sftp.ls(path)
@@ -122,16 +149,18 @@ class SftpFileClient(
         currentPath: String,
         rootPath: String,
         result: MutableList<RemoteFile>,
-        maxFiles: Int = 10000
+        maxFiles: Int = MAX_REMOTE_FILES
     ) {
-        if (result.size >= maxFiles) return
-        val entries = try {
-            sftp.ls(currentPath)
-        } catch (e: Exception) {
-            return
+        // E8: 达到上限必须失败（而非静默截断），否则 dryRun 会基于残缺快照生成误删。
+        if (result.size >= maxFiles) {
+            throw RemoteScanIncompleteException(maxFiles = maxFiles)
         }
+        // E8 (a): 列目录异常直接上抛，不得 catch 后 return（原子树静默丢失会触发误删）。
+        val entries = sftp.ls(currentPath)
         for (entry in entries) {
-            if (result.size >= maxFiles) return
+            if (result.size >= maxFiles) {
+                throw RemoteScanIncompleteException(maxFiles = maxFiles)
+            }
             if (entry.name == "." || entry.name == "..") continue
             val fullPath = if (currentPath.endsWith("/")) {
                 "$currentPath${entry.name}"
@@ -160,7 +189,7 @@ class SftpFileClient(
         sink: java.io.OutputStream,
         onProgress: ((transferred: Long, total: Long) -> Unit)?
     ): Boolean = withContext(Dispatchers.IO) {
-        val sftp = sftpClient ?: throw Exception("SFTP未连接，请先执行connect()")
+        val sftp = sftpClient ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.DOWNLOAD)
         try {
             val fullRemotePath = if (remoteBasePath.isNotEmpty()) "$remoteBasePath/$remotePath" else remotePath
             val attrs = sftp.stat(fullRemotePath)
@@ -177,7 +206,10 @@ class SftpFileClient(
                     if (bytesRead == 0) {
                         zeroReadRetries++
                         if (zeroReadRetries > 5) {
-                            throw java.io.IOException("SFTP download stalled: $remotePath — remote stream returned 0 bytes repeatedly")
+                            throw SyncException(
+                                SyncErrorCode.DOWNLOAD_FAILED, SyncOperation.DOWNLOAD,
+                                path = remotePath, cause = java.io.IOException("SFTP stream stalled (0 bytes repeated)")
+                            )
                         }
                         // Brief yield to avoid busy spin
                         kotlinx.coroutines.yield()
@@ -192,23 +224,32 @@ class SftpFileClient(
                     currentCoroutineContext().ensureActive()
                 }
                 if (offset < totalSize) {
-                    throw java.io.IOException("Download truncated: $remotePath — expected $totalSize bytes, got $offset")
+                    throw SyncException(
+                        SyncErrorCode.DOWNLOAD_FAILED, SyncOperation.DOWNLOAD,
+                        path = remotePath, expectedBytes = totalSize, actualBytes = offset,
+                        cause = java.io.IOException("SFTP download truncated")
+                    )
                 }
             }
             true
+        } catch (e: SyncException) {
+            throw e
         } catch (e: Exception) {
-            throw Exception("下载失败 $remotePath: ${e.message}", e)
+            throw SyncException(SyncErrorCode.DOWNLOAD_FAILED, SyncOperation.DOWNLOAD, path = remotePath, cause = e)
         }
     }
 
     override suspend fun deleteFile(remotePath: String): Boolean = withContext(Dispatchers.IO) {
-        val sftp = sftpClient ?: throw Exception("SFTP未连接，请先执行connect()")
+        val sftp = sftpClient ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.DELETE)
         try {
             val fullRemotePath = if (remoteBasePath.isNotEmpty()) "$remoteBasePath/$remotePath" else remotePath
             sftp.rm(fullRemotePath)
             true
         } catch (e: Exception) {
-            throw Exception("删除远程文件失败 $remotePath: ${e.message}", e)
+            throw SyncException(
+                SyncErrorCode.REMOTE_DELETE_FAILED, SyncOperation.DELETE,
+                path = remotePath, cause = e
+            )
         }
     }
 }

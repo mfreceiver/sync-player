@@ -5,8 +5,11 @@ import android.util.Log
 import cn.vectory.syncplayer.data.model.RemoteFile
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.sync.RemoteFileClient
+import cn.vectory.syncplayer.sync.RemoteScanIncompleteException
+import cn.vectory.syncplayer.sync.SyncErrorCode
+import cn.vectory.syncplayer.sync.SyncException
+import cn.vectory.syncplayer.sync.SyncOperation
 import cn.vectory.syncplayer.sync.checkNetworkAvailable
-import cn.vectory.syncplayer.sync.mapNetworkErrorMessage
 import jcifs.context.BaseContext
 import jcifs.smb.NtlmPasswordAuthenticator
 import jcifs.smb.SmbAuthException
@@ -16,8 +19,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import java.io.File
-import java.io.FileOutputStream
 import java.util.Properties
 
 class SmbFileClient(
@@ -34,27 +35,29 @@ class SmbFileClient(
     private var shareName: String = ""
     private var subPath: String = ""
 
-    private fun smbErrorMessage(e: Exception, host: String): String {
-        val commonMsg = mapNetworkErrorMessage(e, host, context)
-        if (commonMsg != null) return commonMsg
-        return when (e) {
-            is SmbAuthException -> "SMB认证失败，请检查用户名和密码 (${e.message})"
-            is SmbException -> {
-                val msg = e.message.orEmpty()
-                when {
-                    msg.contains("bad network name", ignoreCase = true) ||
-                    msg.contains("share", ignoreCase = true) ||
-                    msg.contains("not found", ignoreCase = true) ->
-                        "无法访问共享文件夹，请检查路径是否正确 ($msg)"
-                    msg.contains("access denied", ignoreCase = true) ->
-                        "SMB访问被拒绝，请检查用户权限 ($msg)"
-                    msg.contains("logon failure", ignoreCase = true) ->
-                        "SMB登录失败，请检查用户名和密码 ($msg)"
-                    else -> "SMB错误: ${e.javaClass.simpleName}: $msg"
-                }
+    /**
+     * Classify a jcifs/stdlib exception into a [SyncErrorCode] by inspecting exception
+     * TYPE plus stable English status keywords emitted by jcifs — never by parsing
+     * Chinese prose (these English phrases are jcifs-internal classification keys, not
+     * user-facing display text).
+     */
+    private fun classifySmbException(e: Throwable): SyncErrorCode = when (e) {
+        is SmbAuthException -> SyncErrorCode.AUTHENTICATION_FAILED
+        is SmbException -> {
+            val msg = e.message.orEmpty().lowercase()
+            when {
+                msg.contains("bad network name") ||
+                    msg.contains("no such file") ||
+                    msg.contains("not found") -> SyncErrorCode.PATH_NOT_FOUND
+                msg.contains("access denied") -> SyncErrorCode.ACCESS_DENIED
+                msg.contains("logon failure") -> SyncErrorCode.AUTHENTICATION_FAILED
+                else -> SyncErrorCode.UNKNOWN
             }
-            else -> "SMB连接失败: ${e.javaClass.simpleName}: ${e.message}"
         }
+        is java.net.SocketTimeoutException -> SyncErrorCode.TIMEOUT
+        is java.net.UnknownHostException -> SyncErrorCode.UNKNOWN_HOST
+        is java.net.ConnectException -> SyncErrorCode.CONNECTION_REFUSED
+        else -> SyncErrorCode.UNKNOWN
     }
 
     override suspend fun connect(source: SyncSource, remotePath: String): Unit = withContext(Dispatchers.IO) {
@@ -90,7 +93,7 @@ class SmbFileClient(
             }
         } catch (e: Exception) {
             cifsContext = null
-            throw Exception(smbErrorMessage(e, source.host), e)
+            throw SyncException(classifySmbException(e), SyncOperation.CONNECT, host = source.host, cause = e)
         }
     }
 
@@ -114,7 +117,7 @@ class SmbFileClient(
     }
 
     override suspend fun listFiles(path: String): List<RemoteFile> = withContext(Dispatchers.IO) {
-        val ctx = cifsContext ?: throw Exception("SMB未连接，请先执行connect()")
+        val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.BROWSE)
         val result = mutableListOf<RemoteFile>()
         val pathParts = path.trim('/').split("/")
         val share = pathParts.firstOrNull() ?: ""
@@ -125,15 +128,15 @@ class SmbFileClient(
             "smb://$currentHost/$share/"
         }
         val dir = SmbFile(smbUrl, ctx)
-        if (!dir.exists() || !dir.isDirectory) throw Exception(
-            "远程路径不存在或不是目录: $path"
+        if (!dir.exists() || !dir.isDirectory) throw SyncException(
+            SyncErrorCode.PATH_NOT_FOUND, SyncOperation.BROWSE, path = path
         )
         listFilesRecursive(ctx, dir, share, remoteSubPath, result)
         result
     }
 
     suspend fun listShares(): List<RemoteFile> = withContext(Dispatchers.IO) {
-        val ctx = cifsContext ?: throw Exception("SMB未连接，请先执行connect()")
+        val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.BROWSE)
         val result = mutableListOf<RemoteFile>()
         val smbFile = SmbFile("smb://$currentHost/", ctx)
         val shares = try {
@@ -162,7 +165,7 @@ class SmbFileClient(
     }
 
     override suspend fun listDirectories(path: String): List<RemoteFile> = withContext(Dispatchers.IO) {
-        val ctx = cifsContext ?: throw Exception("SMB未连接，请先执行connect()")
+        val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.BROWSE)
 
         val trimmedPath = path.trim('/')
         if (trimmedPath.isEmpty()) {
@@ -179,8 +182,8 @@ class SmbFileClient(
             "smb://$currentHost/$share/"
         }
         val dir = SmbFile(smbUrl, ctx)
-        if (!dir.exists() || !dir.isDirectory) throw Exception(
-            "远程路径不存在或不是目录: $path"
+        if (!dir.exists() || !dir.isDirectory) throw SyncException(
+            SyncErrorCode.PATH_NOT_FOUND, SyncOperation.BROWSE, path = path
         )
         val children = try {
             dir.listFiles() ?: return@withContext result
@@ -215,31 +218,34 @@ class SmbFileClient(
         result: MutableList<RemoteFile>,
         maxFiles: Int = MAX_REMOTE_FILES
     ) {
-        if (result.size >= maxFiles) return
-        val children = try {
-            dir.listFiles() ?: return
-        } catch (e: Exception) {
-            return
+        // E8: 达到上限必须失败（而非静默截断），否则 dryRun 会基于残缺快照生成误删。
+        if (result.size >= maxFiles) {
+            throw RemoteScanIncompleteException(maxFiles = maxFiles)
         }
+        // E8 (a): 列目录异常直接上抛，不得吞掉（原子树静默丢失会触发误删）。
+        // listFiles() 返回 null 同样视为不可恢复的不完整。
+        val children = dir.listFiles() ?: throw RemoteScanIncompleteException(remotePath = dir.path)
 
         for (child in children) {
-            if (result.size >= maxFiles) return
-            try {
-                if (child.isDirectory) {
-                    listFilesRecursive(ctx, child, share, remoteBasePath, result, maxFiles)
-                } else {
-                    val relPath = extractRelativePath(child.url.toString(), share, remoteBasePath)
-                    result.add(
-                        RemoteFile(
-                            path = relPath,
-                            name = child.name,
-                            isDirectory = false,
-                            size = child.length(),
-                            lastModified = child.lastModified
-                        )
+            if (result.size >= maxFiles) {
+                throw RemoteScanIncompleteException(maxFiles = maxFiles)
+            }
+            // E8 (c): 单条目属性读取异常（length/lastModified/isDirectory 等）直接上抛，
+            // 不再 Log.w 后跳过——静默跳过单文件同样会产生残缺快照。
+            if (child.isDirectory) {
+                listFilesRecursive(ctx, child, share, remoteBasePath, result, maxFiles)
+            } else {
+                val relPath = extractRelativePath(child.url.toString(), share, remoteBasePath)
+                result.add(
+                    RemoteFile(
+                        path = relPath,
+                        name = child.name,
+                        isDirectory = false,
+                        size = child.length(),
+                        lastModified = child.lastModified
                     )
-                }
-            } catch (e: Exception) { Log.w(TAG, "Failed to process SMB file entry", e) }
+                )
+            }
         }
     }
 
@@ -259,7 +265,7 @@ class SmbFileClient(
         sink: java.io.OutputStream,
         onProgress: ((transferred: Long, total: Long) -> Unit)?
     ): Boolean = withContext(Dispatchers.IO) {
-        val ctx = cifsContext ?: throw Exception("SMB未连接，请先执行connect()")
+        val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.DOWNLOAD)
         try {
             val smbUrl = if (subPath.isNotEmpty()) {
                 "smb://$currentHost/$shareName/$subPath/$remotePath"
@@ -267,7 +273,9 @@ class SmbFileClient(
                 "smb://$currentHost/$shareName/$remotePath"
             }
             val smbFile = SmbFile(smbUrl, ctx)
-            if (!smbFile.exists()) throw Exception("远程文件不存在: $remotePath")
+            if (!smbFile.exists()) throw SyncException(
+                SyncErrorCode.PATH_NOT_FOUND, SyncOperation.DOWNLOAD, path = remotePath
+            )
             val totalSize = smbFile.length()
             val buffer = ByteArray(64 * 1024)
             var transferred = 0L
@@ -280,7 +288,10 @@ class SmbFileClient(
                     if (read == 0) {
                         zeroReadRetries++
                         if (zeroReadRetries > 5) {
-                            throw java.io.IOException("SMB download stalled: $remotePath — remote stream returned 0 bytes repeatedly")
+                            throw SyncException(
+                                SyncErrorCode.DOWNLOAD_FAILED, SyncOperation.DOWNLOAD,
+                                path = remotePath, cause = java.io.IOException("SMB stream stalled (0 bytes repeated)")
+                            )
                         }
                         // Brief yield to avoid busy spin
                         kotlinx.coroutines.yield()
@@ -293,20 +304,28 @@ class SmbFileClient(
                     currentCoroutineContext().ensureActive()
                 }
                 if (transferred < totalSize) {
-                    throw java.io.IOException("Download truncated: $remotePath — expected $totalSize bytes, got $transferred")
+                    throw SyncException(
+                        SyncErrorCode.DOWNLOAD_FAILED, SyncOperation.DOWNLOAD,
+                        path = remotePath, expectedBytes = totalSize, actualBytes = transferred,
+                        cause = java.io.IOException("SMB download truncated")
+                    )
                 }
             }
             true
+        } catch (e: SyncException) {
+            throw e
         } catch (e: Exception) {
-            if (e is jcifs.smb.SmbException) {
-                throw Exception("下载失败 $remotePath: ${smbErrorMessage(e, currentHost)}", e)
+            // Re-classify the underlying cause (e.g. SmbAuthException → AUTHENTICATION_FAILED)
+            // so the user gets an accurate message; default to DOWNLOAD_FAILED for download scope.
+            val code = classifySmbException(e).let {
+                if (it == SyncErrorCode.UNKNOWN) SyncErrorCode.DOWNLOAD_FAILED else it
             }
-            throw Exception("下载失败 $remotePath: ${e.message}", e)
+            throw SyncException(code, SyncOperation.DOWNLOAD, path = remotePath, cause = e)
         }
     }
 
     override suspend fun deleteFile(remotePath: String): Boolean = withContext(Dispatchers.IO) {
-        val ctx = cifsContext ?: throw Exception("SMB未连接，请先执行connect()")
+        val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.DELETE)
         try {
             val smbUrl = if (subPath.isNotEmpty()) {
                 "smb://$currentHost/$shareName/$subPath/$remotePath"
@@ -318,7 +337,10 @@ class SmbFileClient(
             smbFile.delete()
             true
         } catch (e: Exception) {
-            throw Exception("删除远程文件失败 $remotePath: ${e.message}", e)
+            throw SyncException(
+                SyncErrorCode.REMOTE_DELETE_FAILED, SyncOperation.DELETE,
+                path = remotePath, cause = e
+            )
         }
     }
 }

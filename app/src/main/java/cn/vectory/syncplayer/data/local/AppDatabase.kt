@@ -24,8 +24,8 @@ import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
         SyncRelationEntity::class,
         PendingSyncActionEntity::class
     ],
-    version = 1,
-    exportSchema = false
+    version = 2,
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun videoItemDao(): VideoItemDao

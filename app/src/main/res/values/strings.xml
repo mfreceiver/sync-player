@@ -174,6 +174,7 @@
     <string name="relation_local_base_dir">本地基目录</string>
     <string name="relation_local_dir_placeholder">动作片</string>
     <string name="relation_select_local_dir">选择本地目录</string>
+    <string name="relation_local_path_supporting">逻辑路径；首次同步时在加密卷上自动创建</string>
     <string name="relation_test_remote">测试远端目录</string>
     <string name="relation_testing">测试中…</string>
     <string name="relation_delete_confirm_title">删除同步关系</string>
@@ -299,4 +300,83 @@
     <string name="trash_status">回收站</string>
     <string name="star_rated">已评分</string>
     <string name="star_unrated">未评分</string>
+
+    <!-- Sync Error Codes (resolved by syncErrorMessage, keyed off SyncErrorCode) -->
+    <string name="sync_error_network_unavailable">网络不可用，请检查网络连接</string>
+    <string name="sync_error_authentication_failed">认证失败，请检查用户名和密码</string>
+    <string name="sync_error_access_denied">访问被拒绝，请检查用户权限</string>
+    <string name="sync_error_not_connected">未连接到服务器，请先建立连接</string>
+    <string name="sync_error_scan_incomplete">远端扫描未完成，请缩小同步范围或检查网络后重试</string>
+    <string name="sync_error_download_failed">下载失败</string>
+    <string name="sync_error_download_failed_path">下载失败：%1$s</string>
+    <string name="sync_error_remote_delete_failed">删除远程文件失败</string>
+    <string name="sync_error_remote_delete_failed_path">删除远程文件失败：%1$s</string>
+    <string name="sync_error_invalid_file_size">文件大小异常，无法计算加密后大小</string>
+    <string name="sync_error_finalize_failed">文件写入完成失败</string>
+    <string name="sync_error_storage_error">存储操作失败</string>
+    <string name="sync_error_thumbnail_error">缩略图处理失败</string>
+    <string name="sync_error_database_error">数据库操作失败</string>
+    <string name="sync_error_unknown">操作失败，请重试</string>
+    <string name="sync_error_insufficient_space">可用空间不足：需要 %1$s，剩余 %2$s</string>
+    <string name="sync_error_volume_mismatch">卷不一致跳过删除 (entity=%1$s, current=%2$s)</string>
+    <string name="sync_error_local_delete_incomplete">本地删除未完成 mediaGone=%1$b thumbGone=%2$b</string>
+
+    <!-- Sync Notification -->
+    <string name="sync_notif_channel_name">文件同步</string>
+    <string name="sync_notif_channel_desc">显示文件同步进度</string>
+    <string name="sync_notif_default_name">同步</string>
+    <string name="sync_notif_scanning">%1$s - 正在扫描…</string>
+    <string name="sync_notif_downloading">%1$s 已下载 %2$d%%</string>
+    <string name="sync_notif_deleting">%1$s - 正在清理…</string>
+    <string name="sync_notif_syncing">%1$s - 正在同步…</string>
+    <string name="sync_notif_downloading_n">正在下载 %1$d 个文件</string>
+    <string name="sync_notif_preparing">准备中…</string>
+    <string name="sync_notif_progress">%1$d/%2$d</string>
+    <string name="sync_notif_eta">  剩余 %1$s</string>
+    <string name="sync_notif_complete_title">%1$s 已下载完成</string>
+    <string name="sync_notif_complete_files">共 %1$d 个文件</string>
+    <string name="sync_notif_partial_title">%1$s 同步完成(部分失败)</string>
+    <string name="sync_notif_failed_title">%1$s 同步失败</string>
+    <string name="sync_notif_cancelled_title">%1$s 同步已取消</string>
+    <string name="sync_notif_ended_title">%1$s 已结束</string>
+    <string name="sync_notif_partial_content">成功 %1$d / 失败 %2$d / 共 %3$d</string>
+    <string name="sync_notif_summary_content">成功 %1$d / 共 %2$d</string>
+
+    <!-- Sync Preview ViewModel -->
+    <string name="sync_preview_load_relations_failed">加载同步关系失败</string>
+    <string name="sync_preview_load_name_failed">加载同步关系名称失败</string>
+    <string name="sync_preview_connect_failed">连接远程服务器失败，请检查网络连接和服务器配置</string>
+    <string name="sync_preview_load_failed">加载预览失败</string>
+    <string name="sync_preview_start_failed">启动同步失败</string>
+    <string name="sync_preview_partial_failed">同步部分失败，%1$d 个文件未成功</string>
+    <string name="sync_preview_sync_failed">同步失败，请检查网络连接后重试</string>
+    <string name="sync_preview_cancelled">同步已取消</string>
+    <string name="sync_preview_observe_failed">监听同步状态失败</string>
+    <string name="sync_preview_delete_failed">删除失败，请检查网络连接后重试</string>
+    <string name="sync_preview_up_to_date_msg">已同步，无需操作</string>
+
+    <!-- Metadata Rebuild -->
+    <string name="metadata_scan_io_error">扫描失败：无法访问外部卷 (%1$s)</string>
+    <string name="metadata_rebuild_failed">重建失败</string>
+    <string name="metadata_clean_other_volume_failed">清理旧卷索引失败</string>
+    <string name="metadata_extract_failed">提取元数据失败</string>
+    <string name="metadata_orphaned_records_label">损坏记录（当前卷）: %1$d</string>
+    <string name="metadata_pending_count">当前卷待处理: %1$d</string>
+    <string name="metadata_other_volume_count">其他卷残留索引: %1$d</string>
+    <string name="metadata_other_volume_desc">切换存储位置后，旧卷索引不会自动删除。清理后无法再打开旧卷媒体。</string>
+    <string name="metadata_clean_other_volume">清理旧卷索引</string>
+    <string name="metadata_cleanup_summary">成功 %1$d，失败 %2$d</string>
+    <string name="metadata_confirm_clean_title">将丢弃旧卷索引</string>
+    <string name="metadata_confirm_clean_body">此操作将永久删除 %1$d 条旧卷索引记录，无法恢复。确认后旧卷媒体将无法在本应用中打开，除非重新同步。</string>
+    <string name="metadata_confirm_clean_button">确认清理</string>
+
+    <!-- Gain Analysis -->
+    <string name="gain_discover_failed">发现文件失败</string>
+    <string name="gain_analysis_failed">分析失败</string>
+
+    <!-- Folder Delete -->
+    <string name="error_folder_delete_partial">部分文件删除失败：成功 %1$d，跳过 %2$d，失败 %3$d</string>
+
+    <!-- Lock Screen -->
+    <string name="lock_cooldown">验证失败次数过多，请 %1$d 秒后重试</string>
 </resources>

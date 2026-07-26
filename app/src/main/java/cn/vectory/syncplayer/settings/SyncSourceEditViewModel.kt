@@ -9,6 +9,7 @@ import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.sync.RemoteFileClientFactory
+import cn.vectory.syncplayer.sync.syncErrorMessage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -91,7 +92,7 @@ class SyncSourceEditViewModel @Inject constructor(
                 client.testConnection(source, "/")
                 _testResult.value = context.getString(R.string.source_connect_success)
             } catch (e: Exception) {
-                _testResult.value = context.getString(R.string.source_connect_failed, e.message)
+                _testResult.value = context.getString(R.string.source_connect_failed, syncErrorMessage(e, context))
             } finally {
                 _isTesting.value = false
             }
@@ -106,7 +107,7 @@ class SyncSourceEditViewModel @Inject constructor(
                 syncSourceRepository.save(buildSource())
                 _saveResult.value = context.getString(R.string.source_save_success)
             } catch (e: Exception) {
-                _saveResult.value = context.getString(R.string.source_save_failed, e.message)
+                _saveResult.value = context.getString(R.string.source_save_failed, syncErrorMessage(e, context))
             } finally {
                 _isSaving.value = false
             }
@@ -126,7 +127,7 @@ class SyncSourceEditViewModel @Inject constructor(
                     _saveResult.value = context.getString(R.string.source_delete_success)
                 }
             } catch (e: Exception) {
-                _saveResult.value = context.getString(R.string.source_delete_failed, e.message)
+                _saveResult.value = context.getString(R.string.source_delete_failed, syncErrorMessage(e, context))
             } finally {
                 _isSaving.value = false
             }

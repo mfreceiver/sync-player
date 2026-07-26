@@ -11,15 +11,7 @@ local.properties
 /app/build
 /app/release.keystore
 
-# Room schemas
-/app/schemas/
-
-# Root junk files
-/20
-/git
-/tail
 .kotlin/
-1
 release.p12*
 
 # CI build outputs (remote-check.sh / release-check.sh archive here)

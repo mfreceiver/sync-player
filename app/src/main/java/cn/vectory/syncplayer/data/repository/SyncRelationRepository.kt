@@ -92,13 +92,7 @@ class SyncRelationRepository @Inject constructor(
     }
 
     suspend fun updateLastSync(relationId: Long, result: String) {
-        val existing = syncRelationDao.getById(relationId) ?: return
-        syncRelationDao.upsert(
-            existing.copy(
-                lastSyncTime = System.currentTimeMillis(),
-                lastSyncResult = result
-            )
-        )
+        syncRelationDao.updateLastSync(relationId, System.currentTimeMillis(), result)
     }
 
     suspend fun delete(id: Long) {

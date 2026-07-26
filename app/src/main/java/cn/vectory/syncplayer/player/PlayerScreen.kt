@@ -79,7 +79,13 @@ fun PlayerScreen(
     val context = LocalContext.current
     val activity = context as? android.app.Activity ?: return
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val currentPosition by viewModel.currentPosition.collectAsStateWithLifecycle()
+    // NOTE: currentPosition (200 ms high-frequency flow) is intentionally NOT
+    // subscribed here. The only top-level consumer used to be `seekDisplayProgress`,
+    // whose currentPosition branch was unreachable inside its sole use site
+    // (guarded by `isSeekingActive`). The narrow progress components
+    // (`SeekProgressBarWithTime`, `MinimizedProgressBar`) subscribe on their
+    // own so polling-driven recomposition stays scoped to them and does not
+    // invalidate the whole PlayerScreen body. (AGENTS.md · State Splitting.)
 
     var originalBrightness by remember { mutableFloatStateOf(-1f) }
     var initialVolume by remember { mutableIntStateOf(0) }
@@ -107,12 +113,16 @@ fun PlayerScreen(
         insetsController.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         onDispose {
+            // Re-read activity.window at dispose time instead of reusing the
+            // window captured at composition — that reference can be stale if
+            // the window has been re-attached between composition and dispose.
+            val w = activity.window
             if (originalBrightness >= 0) {
-                val attrs = window.attributes
+                val attrs = w.attributes
                 attrs.screenBrightness = originalBrightness
-                window.attributes = attrs
+                w.attributes = attrs
             }
-            val restoreController = WindowCompat.getInsetsController(window, window.decorView)
+            val restoreController = WindowCompat.getInsetsController(w, w.decorView)
             restoreController.show(WindowInsetsCompat.Type.systemBars())
             restoreController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
             viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
@@ -122,7 +132,7 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(videoItemId) {
         viewModel.loadVideo(videoItemId)
     }
 
@@ -248,7 +258,11 @@ fun PlayerScreen(
     fun doExit() {
         if (isExiting) return
         isExiting = true
-        viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
+        // saveProgress is intentionally NOT called here: navigating away
+        // disposes this composition, and the DisposableEffect(Unit).onDispose
+        // above is the more reliable save path. Calling from both sites used
+        // to double-write progress on back-press (doExit ran first, then
+        // onDispose ran again as the composition left).
         gestureView.getPlayerView().player = null
         exoPlayer.pause()
         onExit()
@@ -258,90 +272,106 @@ fun PlayerScreen(
         viewModel.toggleControls()
     }
 
-    gestureView.gestureListener = object : GesturePlayerView.GestureListener {
-        override fun onSpeedUpChanged(speedUp: Boolean) {
-            viewModel.setLongPressing(speedUp)
-            if (speedUp) {
-                val multiplier = 2.0f // Or from prefs
-                exoPlayer.playbackParameters = PlaybackParameters(multiplier)
-            } else {
-                exoPlayer.playbackParameters = PlaybackParameters(uiState.playbackSpeed)
+    // Hold the latest uiState in a remembered State holder so the long-lived
+    // gestureListener below can read fresh values (playbackSpeed, quickRecycle,
+    // lastAutoSwitchTime, playbackRecord.isTrashed) without being rebuilt on
+    // every recomposition. Reading uiStateRef.value at callback time always
+    // returns the current snapshot (see AGENTS.md · Recomposition Isolation).
+    val uiStateRef = rememberUpdatedState(uiState)
+
+    // Build the listener ONCE. The previous code reallocated the whole object
+    // and re-assigned it to the View on every recomposition. Captures that are
+    // stable across the composition lifecycle (exoPlayer, viewModel, context,
+    // window, initialVolume's delegated State) are safe to close over here;
+    // uiState is read through uiStateRef above to avoid a stale snapshot.
+    val gestureListener = remember {
+        object : GesturePlayerView.GestureListener {
+            override fun onSpeedUpChanged(speedUp: Boolean) {
+                viewModel.setLongPressing(speedUp)
+                if (speedUp) {
+                    val multiplier = 2.0f // Or from prefs
+                    exoPlayer.playbackParameters = PlaybackParameters(multiplier)
+                } else {
+                    exoPlayer.playbackParameters = PlaybackParameters(uiStateRef.value.playbackSpeed)
+                }
             }
-        }
-        override fun onSeekTo(offsetMs: Long) {
-            val newPos = (exoPlayer.currentPosition + offsetMs).coerceIn(0, exoPlayer.duration.coerceAtLeast(0))
-            viewModel.onGestureSeekFinished(offsetMs)
-            exoPlayer.seekTo(newPos)
-        }
-        override fun onVolumeGestureStart() {
-            val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
-            initialVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-        }
-        override fun onVolumeChanged(totalDelta: Float) {
-            val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
-            val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-            val newVolume = (initialVolume + (totalDelta * maxVolume).toInt()).coerceIn(0, maxVolume)
-            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVolume, 0)
-            val percent = (newVolume * 100 / maxVolume).coerceIn(0, 100)
-            viewModel.showOverlay(PlayerOverlay.Volume(percent))
-        }
-        override fun onBrightnessChanged(delta: Float) {
-            val attrs = window.attributes
-            val current = if (attrs.screenBrightness < 0) 0.5f else attrs.screenBrightness
-            val newBrightness = (current + delta).coerceIn(0f, 1f)
-            attrs.screenBrightness = newBrightness
-            window.attributes = attrs
-            val percent = (newBrightness * 100).toInt()
-            viewModel.showOverlay(PlayerOverlay.Brightness(percent))
-        }
-        override fun onDoubleTap(zone: DoubleTapZone) {
-            when (zone) {
-                DoubleTapZone.PREVIOUS -> {
-                    val prevId = viewModel.getPrevVideoId()
-                    if (prevId != null) {
-                        viewModel.showOverlay(PlayerOverlay.Previous)
-                        viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
-                        viewModel.loadVideo(prevId)
-                    } else {
-                        viewModel.showOverlay(PlayerOverlay.NoPrevious)
+            override fun onSeekTo(offsetMs: Long) {
+                val newPos = (exoPlayer.currentPosition + offsetMs).coerceIn(0, exoPlayer.duration.coerceAtLeast(0))
+                viewModel.onGestureSeekFinished(offsetMs)
+                exoPlayer.seekTo(newPos)
+            }
+            override fun onVolumeGestureStart() {
+                val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+                initialVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            }
+            override fun onVolumeChanged(totalDelta: Float) {
+                val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+                val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                val newVolume = (initialVolume + (totalDelta * maxVolume).toInt()).coerceIn(0, maxVolume)
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVolume, 0)
+                val percent = (newVolume * 100 / maxVolume).coerceIn(0, 100)
+                viewModel.showOverlay(PlayerOverlay.Volume(percent))
+            }
+            override fun onBrightnessChanged(delta: Float) {
+                val attrs = window.attributes
+                val current = if (attrs.screenBrightness < 0) 0.5f else attrs.screenBrightness
+                val newBrightness = (current + delta).coerceIn(0f, 1f)
+                attrs.screenBrightness = newBrightness
+                window.attributes = attrs
+                val percent = (newBrightness * 100).toInt()
+                viewModel.showOverlay(PlayerOverlay.Brightness(percent))
+            }
+            override fun onDoubleTap(zone: DoubleTapZone) {
+                val s = uiStateRef.value
+                when (zone) {
+                    DoubleTapZone.PREVIOUS -> {
+                        val prevId = viewModel.getPrevVideoId()
+                        if (prevId != null) {
+                            viewModel.showOverlay(PlayerOverlay.Previous)
+                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
+                            viewModel.loadVideo(prevId)
+                        } else {
+                            viewModel.showOverlay(PlayerOverlay.NoPrevious)
+                        }
                     }
-                }
-                DoubleTapZone.NEXT -> {
-                    val now = System.currentTimeMillis()
-                    if (now - uiState.lastAutoSwitchTime < 500L) return
-                    val nextId = viewModel.getNextVideoId()
-                    if (nextId != null) {
-                        viewModel.showOverlay(PlayerOverlay.Next)
-                        viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
-                        viewModel.loadVideo(nextId)
-                    } else {
-                        viewModel.showOverlay(PlayerOverlay.NoNext)
+                    DoubleTapZone.NEXT -> {
+                        val now = System.currentTimeMillis()
+                        if (now - s.lastAutoSwitchTime < 500L) return
+                        val nextId = viewModel.getNextVideoId()
+                        if (nextId != null) {
+                            viewModel.showOverlay(PlayerOverlay.Next)
+                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
+                            viewModel.loadVideo(nextId)
+                        } else {
+                            viewModel.showOverlay(PlayerOverlay.NoNext)
+                        }
                     }
-                }
-                DoubleTapZone.CENTER_TOP -> {
-                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                }
-                DoubleTapZone.CENTER_BOTTOM -> {
-                    if (uiState.quickRecycle) {
-                        val wasTrashed = uiState.playbackRecord?.isTrashed ?: false
-                        viewModel.showOverlay(PlayerOverlay.TrashAction(!wasTrashed))
-                        viewModel.toggleTrashed()
-                    } else {
+                    DoubleTapZone.CENTER_TOP -> {
                         if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                     }
+                    DoubleTapZone.CENTER_BOTTOM -> {
+                        if (s.quickRecycle) {
+                            val wasTrashed = s.playbackRecord?.isTrashed ?: false
+                            viewModel.showOverlay(PlayerOverlay.TrashAction(!wasTrashed))
+                            viewModel.toggleTrashed()
+                        } else {
+                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                        }
+                    }
                 }
             }
-        }
-        override fun onSeekOverlay(positionMs: Long, durationMs: Long) {
-            viewModel.onGestureSeekChanged(positionMs, durationMs)
-        }
-        override fun onLongPressSpeedOverlay(multiplier: Float) {
-            viewModel.setSpeedOverlay(multiplier)
-        }
-        override fun onHideOverlay() {
-            viewModel.hideOverlay()
+            override fun onSeekOverlay(positionMs: Long, durationMs: Long) {
+                viewModel.onGestureSeekChanged(positionMs, durationMs)
+            }
+            override fun onLongPressSpeedOverlay(multiplier: Float) {
+                viewModel.setSpeedOverlay(multiplier)
+            }
+            override fun onHideOverlay() {
+                viewModel.hideOverlay()
+            }
         }
     }
+    gestureView.gestureListener = gestureListener
 
     var showSettingsPopup by remember { mutableStateOf(false) }
     var bottomAreaWidth by remember { mutableIntStateOf(0) }
@@ -359,10 +389,14 @@ fun PlayerScreen(
 
     val isSeekingActive = uiState.isUserSeeking || uiState.isGestureSeeking
 
+    // Only consumed inside `if (isSeekingActive && seekPreviewBitmap != null)`
+    // below, so when isSeekingActive is true the first two branches always win.
+    // The previous currentPosition branch was only reached when NOT seeking —
+    // at which point this value is never read. Dropping it lets us stop
+    // subscribing to the 200 ms currentPosition flow at the top of the screen.
     val seekDisplayProgress = when {
         uiState.isUserSeeking -> uiState.userSeekPosition
         uiState.isGestureSeeking -> uiState.gestureSeekPosition
-        uiState.duration > 0 -> (currentPosition.toFloat() / uiState.duration.toFloat()).coerceIn(0f, 1f)
         else -> 0f
     }
 
@@ -645,6 +679,15 @@ fun PlayerScreen(
                         Button(
                             onClick = {
                                 viewModel.clearPlayerError()
+                                // Seek back to the last reported position before
+                                // re-preparing, otherwise prepare() restarts from
+                                // the seek position the player holds in its error
+                                // state (often 0 or the failure point) and the
+                                // user loses their playback position.
+                                val savedPos = viewModel.currentPosition.value.coerceAtLeast(0)
+                                if (savedPos > 0) {
+                                    exoPlayer.seekTo(savedPos)
+                                }
                                 exoPlayer.prepare()
                             }
                         ) {

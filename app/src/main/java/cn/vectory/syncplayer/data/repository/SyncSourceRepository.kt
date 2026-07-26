@@ -6,8 +6,11 @@ import cn.vectory.syncplayer.data.local.dao.SyncSourceDao
 import cn.vectory.syncplayer.data.local.entity.SyncSourceEntity
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.data.model.SyncProtocol
+import android.util.Log
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -17,6 +20,11 @@ class SyncSourceRepository @Inject constructor(
     private val masterKey: MasterKey,
     private val encryptedPrefs: EncryptedSharedPreferences
 ) {
+    /** Serializes save() operations so concurrent calls for the same source id
+     *  cannot race on prefs vs DB ordering. Saves are not a hot path, so a
+     *  single mutex is sufficient and avoids per-id map cleanup complexity. */
+    private val saveMutex = Mutex()
+
     fun getAllFlow(): Flow<List<SyncSource>> =
         syncSourceDao.getAllFlow().map { list -> list.map { it.toInfo() } }
 
@@ -32,7 +40,7 @@ class SyncSourceRepository @Inject constructor(
     suspend fun getRelationCount(sourceId: Long): Int =
         syncSourceDao.getRelationCount(sourceId)
 
-    suspend fun save(source: SyncSource): Long {
+    suspend fun save(source: SyncSource): Long = saveMutex.withLock {
         val entity = SyncSourceEntity(
             id = source.id,
             name = source.name,
@@ -42,17 +50,55 @@ class SyncSourceRepository @Inject constructor(
             username = source.username,
             encryptedPassword = ENCRYPTED_PLACEHOLDER
         )
-        val savedId = syncSourceDao.upsert(entity)
-        val actualId = if (source.id != 0L) source.id else savedId
-        encryptedPrefs.edit()
-            .putString("pw_$actualId", source.password)
-            .apply()
-        return savedId
+
+        if (source.id != 0L) {
+            // Existing source: write encrypted prefs FIRST (synchronously), then DB.
+            // This ensures the password is durably stored before the DB row references it.
+            // 关键：先快照旧密码。DB 写入失败时必须**恢复旧值**而不是 remove ——
+            // 该 key 原本持有一个有效密码，直接删除会把编辑失败升级成凭据丢失。
+            val prevPassword = encryptedPrefs.getString("pw_${source.id}", null)
+            val prefsOk = encryptedPrefs.edit()
+                .putString("pw_${source.id}", source.password)
+                .commit()
+            if (!prefsOk) {
+                throw RuntimeException("Failed to write encrypted password for source ${source.id}")
+            }
+            try {
+                syncSourceDao.upsert(entity)
+            } catch (e: Exception) {
+                // DB write failed — restore the previous password rather than dropping it.
+                encryptedPrefs.edit().apply {
+                    if (prevPassword != null) putString("pw_${source.id}", prevPassword)
+                    else remove("pw_${source.id}")
+                }.commit()
+                throw e
+            }
+        } else {
+            // New source (id=0): DB first to get the auto-generated ID, then prefs.
+            // We cannot write prefs without knowing the DB-assigned key.
+            val savedId = syncSourceDao.upsert(entity)
+            val prefsOk = encryptedPrefs.edit()
+                .putString("pw_$savedId", source.password)
+                .commit()
+            if (!prefsOk) {
+                // Prefs write failed — roll back the DB row
+                syncSourceDao.deleteById(savedId)
+                throw RuntimeException("Failed to write encrypted password for new source $savedId")
+            }
+            savedId
+        }
     }
 
-    suspend fun delete(id: Long) {
+    /**
+     * Shares [saveMutex] with [save] on purpose. Guarding only save/save is not enough — a
+     * save/delete interleaving can leave the DB row alive with its password removed (delete
+     * wipes prefs between save's prefs-write and DB-upsert), or resurrect a deleted source.
+     * Both operations mutate the same (DB row, `pw_<id>` pref) pair, so they must serialize.
+     */
+    suspend fun delete(id: Long) = saveMutex.withLock {
         syncSourceDao.deleteById(id)
-        encryptedPrefs.edit().remove("pw_$id").apply()
+        encryptedPrefs.edit().remove("pw_$id").commit()
+        Unit
     }
 
     private fun SyncSourceEntity.toInfo() = SyncSource(
@@ -73,11 +119,15 @@ class SyncSourceRepository @Inject constructor(
         host = host,
         port = port,
         username = username,
-        password = encryptedPrefs.getString("pw_$id", null) ?: "",
+        password = encryptedPrefs.getString("pw_$id", null) ?: run {
+            Log.w(TAG, "Password missing for sync source id=$id, returning empty string")
+            ""
+        },
         createdAt = createdAt
     )
 
     companion object {
+        private const val TAG = "SyncSourceRepo"
         private const val ENCRYPTED_PLACEHOLDER = "ENCRYPTED"
     }
 }

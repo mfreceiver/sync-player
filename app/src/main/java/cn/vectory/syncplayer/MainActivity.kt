@@ -2,6 +2,7 @@ package cn.vectory.syncplayer
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -34,6 +35,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
         enableEdgeToEdge()
         if (savedInstanceState == null) pendingIntent.value = intent
         setContent {
@@ -44,14 +49,16 @@ class MainActivity : AppCompatActivity() {
                 ) {
                     val navController = rememberNavController()
                     val notificationIntent by pendingIntent.collectAsStateWithLifecycle()
+                    val isLocked by appLockManager.isLocked.collectAsStateWithLifecycle()
 
-                    LaunchedEffect(notificationIntent) {
-                        notificationIntent?.let { handleNotificationNavigation(it, navController) }
+                    LaunchedEffect(notificationIntent, isLocked) {
+                        if (!isLocked && notificationIntent != null) {
+                            handleNotificationNavigation(notificationIntent!!, navController)
+                            pendingIntent.value = null
+                        }
                     }
 
                     AppNavHost(navController = navController)
-
-                    val isLocked by appLockManager.isLocked.collectAsStateWithLifecycle()
                     if (isLocked) {
                         LockScreenOverlay(
                             appLockManager = appLockManager,

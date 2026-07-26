@@ -44,6 +44,9 @@ interface PlaybackRecordDao {
     """)
     suspend fun updateTrashed(videoItemId: Long, trashed: Boolean)
 
+    @Query("UPDATE playback_record SET isTrashed = NOT isTrashed WHERE videoItemId = :videoItemId")
+    suspend fun toggleTrashed(videoItemId: Long): Int
+
     @Query("""
         SELECT pr.* FROM playback_record pr
         INNER JOIN video_item vi ON pr.videoItemId = vi.id

@@ -49,6 +49,11 @@ class AppLockManager @Inject constructor(
 
     override fun onStateChanged(source: LifecycleOwner, event: androidx.lifecycle.Lifecycle.Event) {
         when (event) {
+            // 刻意使用 ON_STOP 而非 ON_PAUSE：ProcessLifecycleOwner 的 ON_PAUSE 在 resumedCounter
+            // 归零后延迟分派，而生物识别弹窗在部分 OEM 上会让 Activity 走 onPause。若在 ON_PAUSE
+            // 置锁，存在「认证成功解锁 → 延迟的 ON_PAUSE 分派 → 立刻重锁 → 再次弹认证」的锁死窗口。
+            // 切换应用瞬间的内容泄漏（截屏/录屏/最近任务缩略图）已由 MainActivity 常开的
+            // FLAG_SECURE 覆盖，无需靠提前置锁来兜。
             androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
                 hasBeenInBackground = true
             }

@@ -19,9 +19,15 @@ class SyncService : Service() {
     @Inject lateinit var syncEngine: SyncEngine
     @Inject lateinit var pendingSyncActionDao: PendingSyncActionDao
 
-    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    // E2: 服务级协程改用 Dispatchers.Default——引擎内部大量 CPU/IO 工作，主线程只承担
+    // 系统回调。需要主线程的地方（无，通知 API 本身线程安全）再显式切。
+    private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var syncJob: Job? = null
     private var collectorJob: Job? = null
+    // E1: 跟踪「延迟停止」协程，新任务到达时取消，避免旧协程 delay 结束后 stopSelf 杀掉新任务。
+    private var pendingStopJob: Job? = null
+    // E1: 记录最近一次 onStartCommand 的 startId，供 stopSelfResult 精确停服。
+    private var lastStartId: Int = 0
 
     private val _syncProgress = MutableStateFlow(SyncProgress())
     val syncProgress = _syncProgress.asStateFlow()
@@ -33,7 +39,7 @@ class SyncService : Service() {
             SyncNotificationHelper.NOTIFICATION_ID,
             SyncNotificationHelper.createOngoingNotification(this, SyncProgress())
         )
-        
+
         collectorJob = serviceScope.launch {
             syncEngine.progress.collect { progress ->
                 _syncProgress.value = progress
@@ -43,6 +49,14 @@ class SyncService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // E1: 每次 onStartCommand（含 redeliver）都重新确立前台状态，
+        // 不能只依赖 onCreate——系统在重建/重复拉起场景下可能跳过 onCreate。
+        startForeground(
+            SyncNotificationHelper.NOTIFICATION_ID,
+            SyncNotificationHelper.createOngoingNotification(this, _syncProgress.value)
+        )
+        lastStartId = startId
+
         if (intent?.action == ACTION_CANCEL) {
             cancelSync()
             return START_REDELIVER_INTENT
@@ -54,12 +68,14 @@ class SyncService : Service() {
             return START_REDELIVER_INTENT
         }
 
+        // E1: 新任务到达——取消任何残留的延迟 stop，否则旧 delay 结束会 stopSelf 杀掉本次新任务。
+        pendingStopJob?.cancel()
+        pendingStopJob = null
+
         syncJob = serviceScope.launch {
             val task = withContext(Dispatchers.IO) { syncEngine.consumePendingTask(relationId) }
             if (task == null) {
-                delay(500)
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                scheduleStop(DELAY_AFTER_NO_TASK_MS)
                 return@launch
             }
 
@@ -101,31 +117,45 @@ class SyncService : Service() {
 
             val finalProgress = syncEngine.progress.value
             if (!finalProgress.isRunning) {
-                delay(1500)
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                scheduleStop(DELAY_AFTER_SYNC_MS)
             }
         }
 
         return START_REDELIVER_INTENT
     }
 
+    /**
+     * E1: 统一的延迟停止入口。所有 stopSelf 都走这里 → stopSelfResult(lastStartId)，
+     * 精确移除最近的 start，并复用 pendingStopJob 句柄在新任务到达时可被取消。
+     */
+    private fun scheduleStop(delayMs: Long) {
+        pendingStopJob?.cancel()
+        pendingStopJob = serviceScope.launch {
+            delay(delayMs)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelfResult(lastStartId)
+        }
+    }
+
     private fun cancelSync() {
         syncJob?.cancel()
         syncJob = null
-        serviceScope.launch {
+        pendingStopJob?.cancel()
+        pendingStopJob = serviceScope.launch {
             SyncNotificationHelper.updateNotification(
                 this@SyncService,
                 SyncProgress(phase = SyncPhase.CANCELLED)
             )
-            delay(1000)
+            delay(DELAY_AFTER_CANCEL_MS)
             stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            stopSelfResult(lastStartId)
         }
     }
 
     override fun onDestroy() {
         syncJob?.cancel()
+        collectorJob?.cancel()
+        pendingStopJob?.cancel()
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -135,6 +165,14 @@ class SyncService : Service() {
     companion object {
         const val ACTION_CANCEL = "cn.vectory.syncplayer.ACTION_CANCEL_SYNC"
         const val EXTRA_RELATION_ID = "relationId"
+
+        // E11: 三个延迟值提为常量并注释取值理由。
+        // 同步完成后通知停留 1.5s，给用户看清结果再消失。
+        private const val DELAY_AFTER_SYNC_MS = 1500L
+        // 取消后通知停留 1s。
+        private const val DELAY_AFTER_CANCEL_MS = 1000L
+        // 无待执行任务时延迟 0.5s 再停服，吸收 startService 的短时抖动，避免立刻 kill。
+        private const val DELAY_AFTER_NO_TASK_MS = 500L
 
         fun start(context: Context, relationId: Long = 0L) {
             val intent = Intent(context, SyncService::class.java)

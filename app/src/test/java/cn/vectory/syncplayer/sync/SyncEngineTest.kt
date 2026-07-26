@@ -143,14 +143,15 @@ class SyncEngineTest {
         coEvery { videoMetadataExtractor.extractAndSave(any()) } returns savedEntity
 
         val sink = mockk<OutputStream>(relaxed = true)
-        coEvery { encryptedMediaStore.openEncryptSink(100L, any()) } returns sink
+        // AEAD v2: sink 需要明文长度以写入 header，故为三参重载。
+        coEvery { encryptedMediaStore.openEncryptSink(100L, any(), any()) } returns sink
         coEvery { encryptedMediaStore.finalize(100L) } returns true
 
         val action = SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "video.mp4", fileSize = 1000L)
         val result = syncEngine.executeSync(relationId, listOf(action), emptyList())
 
         assertEquals(true, result)
-        coVerify(atLeast = 1) { encryptedMediaStore.openEncryptSink(100L, any()) }
+        coVerify(atLeast = 1) { encryptedMediaStore.openEncryptSink(100L, any(), any()) }
         coVerify(atLeast = 1) { client.downloadTo(any(), any(), any()) }
         coVerify(atLeast = 1) { encryptedMediaStore.finalize(100L) }
         // 成功路径不应 cancel
@@ -186,7 +187,7 @@ class SyncEngineTest {
         coEvery { videoRepository.deleteById(200L) } returns Unit
 
         val sink = mockk<OutputStream>(relaxed = true)
-        coEvery { encryptedMediaStore.openEncryptSink(200L, any()) } returns sink
+        coEvery { encryptedMediaStore.openEncryptSink(200L, any(), any()) } returns sink
         coEvery { encryptedMediaStore.finalize(200L) } returns true
         coEvery { encryptedMediaStore.cancel(200L) } returns Unit
 

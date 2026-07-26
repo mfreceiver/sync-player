@@ -8,8 +8,10 @@ import cn.vectory.syncplayer.audio.AudioGainAnalyzer
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.provider.MediaUris
+import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.ui.util.isVideoFile
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -21,6 +23,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import android.content.Context
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 
@@ -28,6 +31,7 @@ import javax.inject.Inject
 class GainAnalysisViewModel @Inject constructor(
     private val videoRepository: VideoRepository,
     private val audioGainAnalyzer: AudioGainAnalyzer,
+    @ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -87,7 +91,7 @@ class GainAnalysisViewModel @Inject constructor(
                     _isComplete.value = true
                 }
             } catch (e: Exception) {
-                _error.value = "发现文件失败: ${e.message}"
+                _error.value = syncErrorMessage(e, context)
             } finally {
                 _isDiscovering.value = false
             }
@@ -195,7 +199,7 @@ class GainAnalysisViewModel @Inject constructor(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _error.value = "分析失败: ${e.message}"
+                _error.value = syncErrorMessage(e, context)
             } finally {
                 _activeAnalysis.value = emptyList()
                 _isAnalyzing.value = false

@@ -11,6 +11,10 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.provider.MediaUris
 import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.sync.SyncErrorCode
+import cn.vectory.syncplayer.sync.SyncException
+import cn.vectory.syncplayer.sync.SyncOperation
+import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.ui.util.getMimeType
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -20,7 +24,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.FileNotFoundException
-import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -28,14 +31,14 @@ import javax.inject.Singleton
 sealed class DeleteMediaResult {
     data class Success(val id: Long) : DeleteMediaResult()
     data class SkippedNotFound(val id: Long) : DeleteMediaResult()
-    data class Failed(val id: Long, val reason: String) : DeleteMediaResult()
+    data class Failed(val id: Long, val error: SyncException) : DeleteMediaResult()
 }
 
 data class FolderDeleteSummary(
     val success: Int = 0,
     val skipped: Int = 0,
     val failed: Int = 0,
-    val failures: List<Pair<Long, String>> = emptyList(),
+    val failures: List<Pair<Long, SyncException>> = emptyList(),
 )
 
 @Singleton
@@ -71,7 +74,7 @@ class FileOperationsUseCase @Inject constructor(
                 onSuccess()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to update star", e)
-                errorFlow.value = e.message
+                errorFlow.value = syncErrorMessage(e, context)
             }
         }
     }
@@ -88,7 +91,7 @@ class FileOperationsUseCase @Inject constructor(
                 onSuccess()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to update star by path", e)
-                errorFlow.value = e.message
+                errorFlow.value = syncErrorMessage(e, context)
             }
         }
     }
@@ -111,7 +114,7 @@ class FileOperationsUseCase @Inject constructor(
                 onSuccess()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to toggle trashed", e)
-                errorFlow.value = e.message
+                errorFlow.value = syncErrorMessage(e, context)
             }
         }
     }
@@ -128,12 +131,12 @@ class FileOperationsUseCase @Inject constructor(
                 when (result) {
                     is DeleteMediaResult.Success, is DeleteMediaResult.SkippedNotFound -> onSuccess()
                     is DeleteMediaResult.Failed -> {
-                        errorFlow.value = result.reason
+                        errorFlow.value = syncErrorMessage(result.error, context)
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to delete file id=$videoItemId", e)
-                errorFlow.value = e.message
+                errorFlow.value = syncErrorMessage(e, context)
             }
         }
     }
@@ -167,7 +170,7 @@ class FileOperationsUseCase @Inject constructor(
                 onSuccess()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to mark folder read", e)
-                errorFlow.value = e.message
+                errorFlow.value = syncErrorMessage(e, context)
             }
         }
     }
@@ -202,45 +205,36 @@ class FileOperationsUseCase @Inject constructor(
                 if (summary.failed > 0) {
                     // M3: partial failure — do not claim full success (skip onSuccess so UI doesn't
                     // refresh as if everything was gone).
-                    errorFlow.value =
-                        "部分文件删除失败：成功 ${summary.success}，跳过 ${summary.skipped}，失败 ${summary.failed}"
+                    errorFlow.value = context.getString(
+                        R.string.error_folder_delete_partial,
+                        summary.success, summary.skipped, summary.failed
+                    )
                 } else {
                     onSuccess()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to delete folder", e)
-                errorFlow.value = e.message
+                errorFlow.value = syncErrorMessage(e, context)
             }
         }
     }
 
     /**
-     * Delete all media under [path]. Scope by the dominant syncRelationId among matching rows
-     * (or delete all matching rows if they share no single relation — rare non-sync orphans).
+     * Delete all media under [path]. Items are already path-scoped by [VideoRepository.getByPathPrefix]
+     * (or [VideoRepository.getAll] for root). Each item's volume ownership is checked inside
+     * [deleteMediaById] — mismatched volumes use index-only deletion instead of ciphertext access.
      */
     private suspend fun deleteFolderContents(path: String): FolderDeleteSummary {
-        val candidates = if (path.isEmpty()) {
+        val items = if (path.isEmpty()) {
             videoRepository.getAll()
         } else {
             videoRepository.getByPathPrefix(path)
         }
-        if (candidates.isEmpty()) return FolderDeleteSummary()
-
-        // Prefer relation-scoped deletion when all items under path share one relation,
-        // or when a single dominant relation covers the folder (sync base children).
-        val byRelation = candidates.groupBy { it.syncRelationId }
-        val items = if (byRelation.size == 1) {
-            candidates
-        } else {
-            // Multi-relation overlap under same path: only delete rows that are NOT under any
-            // other relation's exclusive base. Conservative: delete each by id independently
-            // but still use path-prefix result (already boundary-safe).
-            candidates
-        }
+        if (items.isEmpty()) return FolderDeleteSummary()
 
         var success = 0
         var skipped = 0
-        val failures = mutableListOf<Pair<Long, String>>()
+        val failures = mutableListOf<Pair<Long, SyncException>>()
         for (item in items) {
             when (val r = deleteMediaById(item.id)) {
                 is DeleteMediaResult.Success -> success++
@@ -249,7 +243,7 @@ class FileOperationsUseCase @Inject constructor(
                     skipped++
                     success++
                 }
-                is DeleteMediaResult.Failed -> failures.add(item.id to r.reason)
+                is DeleteMediaResult.Failed -> failures.add(item.id to r.error)
             }
         }
         return FolderDeleteSummary(
@@ -264,17 +258,39 @@ class FileOperationsUseCase @Inject constructor(
      * Delete ciphertext + thumb + DB for [id].
      * - Missing ciphertext (NotFound / !exists): treat as success and still remove DB.
      * - Real IO/permission error: keep DB row, return Failed.
+     * - Volume ownership fail-closed: ciphertext/thumb on the active volume are touched ONLY
+     *   when [VideoItemEntity.volumeId] is *confirmed* equal to the current active volume id.
+     *   Any other value — a different non-empty volume id, OR an empty/unknown volumeId
+     *   (pre-tracking record) — routes through [deleteOtherVolumeIndex] (index-only delete,
+     *   ciphertext never touched on any volume). This matches SyncEngine's strict "empty also
+     *   counts as mismatch" semantics and avoids creating un-reclaimable orphans when the real
+     *   file lives on a non-active volume. See decision table in the class/task notes.
      */
     suspend fun deleteMediaById(id: Long): DeleteMediaResult {
         val video = videoRepository.getById(id)
             ?: return DeleteMediaResult.SkippedNotFound(id)
+
+        // N3: volume ownership guard — fail-closed. Only delete ciphertext/thumb on the active
+        // volume when ownership is *proven* (volumeId == active). An empty/unknown volumeId is
+        // treated as "ownership unknown", NOT as "belongs to active": deleting-by-guess on the
+        // active volume when the real file is elsewhere leaves a permanent orphan the user can
+        // never clean via the app. Index-only delete is the honest, recoverable choice.
+        val currentVolumeId = mediaStore.volumeId
+        if (video.volumeId != currentVolumeId) {
+            Log.w(TAG, "deleteMediaById: id=$id volume='${video.volumeId}' not confirmed on " +
+                "active='$currentVolumeId' (different or empty/unknown); index-only delete, " +
+                "ciphertext untouched")
+            return deleteOtherVolumeIndex(id)
+        }
 
         val cipherMissing = try {
             !mediaStore.exists(id)
         } catch (e: Exception) {
             // exists() itself failed — treat as IO error, do not wipe DB.
             Log.w(TAG, "exists() failed for id=$id", e)
-            return DeleteMediaResult.Failed(id, e.message ?: "exists check failed")
+            return DeleteMediaResult.Failed(
+                id, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE, cause = e)
+            )
         }
 
         if (!cipherMissing) {
@@ -286,11 +302,15 @@ class FileOperationsUseCase @Inject constructor(
                         mediaStore.exists(id)
                     } catch (e: Exception) {
                         Log.w(TAG, "exists() after delete failed for id=$id", e)
-                        return DeleteMediaResult.Failed(id, e.message ?: "exists check after delete failed")
+                        return DeleteMediaResult.Failed(
+                            id, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE, cause = e)
+                        )
                     }
                     if (stillThere) {
                         Log.e(TAG, "ciphertext still present after delete returned false for id=$id")
-                        return DeleteMediaResult.Failed(id, "密文删除失败")
+                        return DeleteMediaResult.Failed(
+                            id, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE)
+                        )
                     }
                     // Race / already gone → idempotent ok
                     Log.i(TAG, "ciphertext already gone for id=$id")
@@ -299,10 +319,12 @@ class FileOperationsUseCase @Inject constructor(
                 Log.i(TAG, "ciphertext already gone for id=$id")
             } catch (e: Exception) {
                 if (isNotFound(e)) {
-                    Log.i(TAG, "ciphertext not found for id=$id: ${e.message}")
+                    Log.i(TAG, "ciphertext not found for id=$id")
                 } else {
                     Log.e(TAG, "Failed to delete ciphertext for id=$id", e)
-                    return DeleteMediaResult.Failed(id, e.message ?: "delete ciphertext failed")
+                    return DeleteMediaResult.Failed(
+                        id, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE, cause = e)
+                    )
                 }
             }
         }
@@ -315,11 +337,15 @@ class FileOperationsUseCase @Inject constructor(
                     mediaStore.thumbExists(id)
                 } catch (e: Exception) {
                     Log.w(TAG, "thumbExists() after delete failed for id=$id", e)
-                    return DeleteMediaResult.Failed(id, "缩略图删除失败: ${e.message}")
+                    return DeleteMediaResult.Failed(
+                        id, SyncException(SyncErrorCode.THUMBNAIL_ERROR, SyncOperation.DELETE, cause = e)
+                    )
                 }
                 if (stillThere) {
                     Log.e(TAG, "thumb still present after delete returned false for id=$id")
-                    return DeleteMediaResult.Failed(id, "缩略图删除失败")
+                    return DeleteMediaResult.Failed(
+                        id, SyncException(SyncErrorCode.THUMBNAIL_ERROR, SyncOperation.DELETE)
+                    )
                 }
                 // No thumb file → idempotent success (common: never generated)
             }
@@ -328,7 +354,9 @@ class FileOperationsUseCase @Inject constructor(
                 // idempotent ok
             } else {
                 Log.e(TAG, "Failed to delete thumb for id=$id", e)
-                return DeleteMediaResult.Failed(id, "缩略图删除失败: ${e.message}")
+                return DeleteMediaResult.Failed(
+                    id, SyncException(SyncErrorCode.THUMBNAIL_ERROR, SyncOperation.DELETE, cause = e)
+                )
             }
         }
 
@@ -338,7 +366,9 @@ class FileOperationsUseCase @Inject constructor(
             else DeleteMediaResult.Success(id)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to delete DB rows for id=$id", e)
-            DeleteMediaResult.Failed(id, e.message ?: "delete DB failed")
+            DeleteMediaResult.Failed(
+                id, SyncException(SyncErrorCode.DATABASE_ERROR, SyncOperation.DELETE, cause = e)
+            )
         }
     }
 
@@ -354,17 +384,15 @@ class FileOperationsUseCase @Inject constructor(
             DeleteMediaResult.Success(video.id)
         } catch (e: Exception) {
             Log.w(TAG, "deleteOtherVolumeIndex failed for id=$videoItemId", e)
-            DeleteMediaResult.Failed(videoItemId, e.message ?: "DB 删除失败")
+            DeleteMediaResult.Failed(
+                videoItemId, SyncException(SyncErrorCode.DATABASE_ERROR, SyncOperation.DELETE, cause = e)
+            )
         }
     }
 
     private fun isNotFound(e: Exception): Boolean {
-        if (e is FileNotFoundException) return true
-        val msg = e.message?.lowercase().orEmpty()
-        return msg.contains("no such file")
-            || msg.contains("not found")
-            || msg.contains("enoent")
-            || (e is IOException && msg.contains("does not exist"))
+        // Rely on exception TYPE only — never parse message text (fragile across locales/libs).
+        return e is FileNotFoundException
     }
 
     suspend fun getRecursiveFolderStats(folderPath: String): FolderStats =

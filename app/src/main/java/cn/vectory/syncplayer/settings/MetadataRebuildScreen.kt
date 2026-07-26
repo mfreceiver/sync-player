@@ -40,9 +40,9 @@ fun MetadataRebuildScreen(
         AlertDialog(
             onDismissRequest = { showOtherVolumeConfirm = false },
             icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-            title = { Text("将丢弃旧卷索引") },
+            title = { Text(stringResource(R.string.metadata_confirm_clean_title)) },
             text = {
-                Text("此操作将永久删除 $otherCount 条旧卷索引记录，无法恢复。确认后旧卷媒体将无法在本应用中打开，除非重新同步。")
+                Text(stringResource(R.string.metadata_confirm_clean_body, otherCount))
             },
             confirmButton = {
                 TextButton(
@@ -51,7 +51,7 @@ fun MetadataRebuildScreen(
                         viewModel.cleanOtherVolumeIndexes()
                     }
                 ) {
-                    Text("确认清理", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.metadata_confirm_clean_button), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
@@ -164,7 +164,7 @@ fun MetadataRebuildScreen(
                         cleanupSummary?.let { s ->
                             if (s.failed > 0) {
                                 Spacer(Modifier.height(8.dp))
-                                Text("成功 ${s.success}，失败 ${s.failed}", color = MaterialTheme.colorScheme.error)
+                                Text(stringResource(R.string.metadata_cleanup_summary, s.success, s.failed), color = MaterialTheme.colorScheme.error)
                             }
                         }
                     }
@@ -228,13 +228,13 @@ fun MetadataRebuildScreen(
                         val r = discoveryResult!!
                         Card(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("损坏记录（当前卷）: ${r.orphanedRecords.size}")
+                                Text(stringResource(R.string.metadata_orphaned_records_label, r.orphanedRecords.size))
                                 Text(stringResource(R.string.metadata_incomplete_records, r.incompleteRecords.size))
                                 Spacer(Modifier.height(4.dp))
                                 HorizontalDivider()
                                 Spacer(Modifier.height(4.dp))
                                 Text(
-                                    "当前卷待处理: ${r.orphanedRecords.size + r.incompleteRecords.size}",
+                                    stringResource(R.string.metadata_pending_count, r.orphanedRecords.size + r.incompleteRecords.size),
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -249,12 +249,12 @@ fun MetadataRebuildScreen(
                             ) {
                                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text(
-                                        "其他卷残留索引: ${r.otherVolumeRecords.size}",
+                                        stringResource(R.string.metadata_other_volume_count, r.otherVolumeRecords.size),
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onErrorContainer
                                     )
                                     Text(
-                                        "切换存储位置后，旧卷索引不会自动删除。清理后无法再打开旧卷媒体。",
+                                        stringResource(R.string.metadata_other_volume_desc),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onErrorContainer
                                     )
@@ -264,7 +264,7 @@ fun MetadataRebuildScreen(
                                             containerColor = MaterialTheme.colorScheme.error
                                         )
                                     ) {
-                                        Text("清理旧卷索引")
+                                        Text(stringResource(R.string.metadata_clean_other_volume))
                                     }
                                 }
                             }

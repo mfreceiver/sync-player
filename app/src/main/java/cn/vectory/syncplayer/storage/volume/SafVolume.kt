@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.StatFs
 import android.os.storage.StorageManager
+import android.os.storage.StorageVolume
 import android.provider.DocumentsContract
 import java.io.OutputStream
 import kotlinx.coroutines.Dispatchers
@@ -153,12 +154,28 @@ class SafVolume(
         isDocumentExists(newUri) && !isDocumentExists(fromUri)
     }
 
+    /**
+     * 可用空间（字节）。
+     *
+     * 解析 [treeUri] 的 document ID 中的卷标识符（"primary" 或 UUID），
+     * 匹配到对应的 [StorageVolume] 后通过 [StatFs] 读取。
+     *
+     * @return 可用字节数，或 **-1L** 表示「无法确定」（卷未挂载 / 无目录 / 异常）。
+     *         调用方（[EncryptedMediaStore.usableSpace] → SyncEngine 空间预检、
+     *         SettingsViewModel 展示）需区分此哨兵值与「充足」——SyncEngine
+     *         遇 -1L 会判定空间不足并终止同步（保守安全策略）。
+     */
     override fun usableSpace(): Long = try {
         val sm = context.getSystemService(Context.STORAGE_SERVICE) as StorageManager
-        val vol = sm.storageVolumes.firstOrNull { !it.isPrimary } ?: return Long.MAX_VALUE
-        val dir = vol.directory ?: return Long.MAX_VALUE
+        val volId = rootDocId.substringBefore(':')
+        val storageVolume: StorageVolume? = if (volId.equals("primary", ignoreCase = true)) {
+            sm.storageVolumes.firstOrNull { it.isPrimary }
+        } else {
+            sm.storageVolumes.firstOrNull { volId.equals(it.uuid, ignoreCase = true) }
+        }
+        val dir = storageVolume?.directory ?: return -1L
         StatFs(dir.absolutePath).availableBytes
-    } catch (_: Exception) { Long.MAX_VALUE }
+    } catch (_: Exception) { -1L }
 
     /** 验证 URI 对应的文档是否存在。 */
     private fun isDocumentExists(uri: Uri): Boolean {

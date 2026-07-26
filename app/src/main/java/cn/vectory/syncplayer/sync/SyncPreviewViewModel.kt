@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.SyncRelation
 import cn.vectory.syncplayer.data.model.SyncAction
 import cn.vectory.syncplayer.data.model.SyncPhase
@@ -82,7 +83,7 @@ class SyncPreviewViewModel @Inject constructor(
             try {
                 _allRelations.value = syncRelationRepository.getAllWithSource().map { it.relation }
             } catch (e: Exception) {
-                _error.value = "加载同步关系失败: ${e.message}"
+                _error.value = syncErrorMessage(e, context)
             }
         }
         viewModelScope.launch {
@@ -90,7 +91,7 @@ class SyncPreviewViewModel @Inject constructor(
                 val relation = syncRelationRepository.getById(relationId)
                 _currentRelationName.value = relation?.name ?: ""
             } catch (e: Exception) {
-                _error.value = "加载同步关系名称失败: ${e.message}"
+                _error.value = syncErrorMessage(e, context)
             }
         }
     }
@@ -120,24 +121,26 @@ class SyncPreviewViewModel @Inject constructor(
                     _toDownload.value = emptyList()
                     _toDelete.value = actions
                     if (actions.isEmpty() && errMsg == null) {
-                        syncRelationRepository.updateLastSync(relationId, "已同步，无需操作")
+                        syncRelationRepository.updateLastSync(relationId, context.getString(R.string.sync_preview_up_to_date_msg))
                         _syncComplete.value = true
                     }
                 } else {
-                    val (downloads, deletes) = syncEngine.dryRun(relationId)
-                    _toDownload.value = downloads
-                    _toDelete.value = deletes
-                    val phase = syncEngine.progress.value.phase
-                    if (phase == SyncPhase.FAILED) {
-                        _error.value = "连接远程服务器失败，请检查网络连接和服务器配置"
-                    } else if (downloads.isEmpty() && deletes.isEmpty()) {
-                        syncRelationRepository.updateLastSync(relationId, "已同步，无需操作")
+                    val result = syncEngine.dryRun(relationId)
+                    _toDownload.value = result.toDownload
+                    _toDelete.value = result.toDelete
+                    // P1-1: 不再把 phase==FAILED 一律映射为固定「连接失败」。
+                    // 用 dryRun 带回的真实根因走 syncErrorMessage 解析（AUTH/PATH_NOT_FOUND/SCAN_INCOMPLETE/UNKNOWN …）。
+                    // 失败分支与「已同步」分支保持互斥（与原 if/else if 语义一致）。
+                    if (result.error != null) {
+                        _error.value = syncErrorMessage(result.error, context)
+                    } else if (result.toDownload.isEmpty() && result.toDelete.isEmpty()) {
+                        syncRelationRepository.updateLastSync(relationId, context.getString(R.string.sync_preview_up_to_date_msg))
                         _syncComplete.value = true
                     }
                 }
                 _previewLoaded.value = true
             } catch (e: Exception) {
-                _error.value = "加载预览失败: ${e.message}"
+                _error.value = syncErrorMessage(e, context)
             } finally {
                 _isLoading.value = false
             }
@@ -160,7 +163,7 @@ class SyncPreviewViewModel @Inject constructor(
                 SyncService.start(context, relationId)
                 observeSyncCompletion()
             } catch (e: Exception) {
-                _error.value = "启动同步失败: ${e.message}"
+                _error.value = syncErrorMessage(e, context)
             }
         }
     }
@@ -177,15 +180,15 @@ class SyncPreviewViewModel @Inject constructor(
                     _toDownload.value = emptyList()
                     _toDelete.value = emptyList()
                 } else if (result.phase == SyncPhase.PARTIAL_FAILED) {
-                    _error.value = "同步部分失败，${result.failedFiles} 个文件未成功"
+                    _error.value = context.getString(R.string.sync_preview_partial_failed, result.failedFiles)
                 } else if (result.phase == SyncPhase.FAILED) {
-                    _error.value = "同步失败，请检查网络连接后重试"
+                    _error.value = context.getString(R.string.sync_preview_sync_failed)
                 } else if (result.phase == SyncPhase.CANCELLED) {
-                    _error.value = "同步已取消"
+                    _error.value = context.getString(R.string.sync_preview_cancelled)
                 }
                 _syncComplete.value = true
             } catch (e: Exception) {
-                _error.value = "监听同步状态失败: ${e.message}"
+                _error.value = syncErrorMessage(e, context)
                 _isSyncing.value = false
             }
         }
@@ -216,10 +219,10 @@ class SyncPreviewViewModel @Inject constructor(
                     _toDownload.value = emptyList()
                     _syncComplete.value = true
                 } else {
-                    _error.value = "删除失败，请检查网络连接后重试"
+                    _error.value = context.getString(R.string.sync_preview_delete_failed)
                 }
             } catch (e: Exception) {
-                _error.value = "删除失败: ${e.message}"
+                _error.value = syncErrorMessage(e, context)
             } finally {
                 _isDeleting.value = false
             }

@@ -6,10 +6,11 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
-import cn.vectory.syncplayer.ui.util.formatFileSize
 import cn.vectory.syncplayer.MainActivity
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProgress
+import cn.vectory.syncplayer.ui.util.formatFileSize
 
 object SyncNotificationHelper {
 
@@ -25,10 +26,10 @@ object SyncNotificationHelper {
     fun createNotificationChannel(context: Context) {
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "文件同步",
+            context.getString(R.string.sync_notif_channel_name),
             NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "显示文件同步进度"
+            description = context.getString(R.string.sync_notif_channel_desc)
             setShowBadge(false)
         }
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -36,25 +37,26 @@ object SyncNotificationHelper {
     }
 
     fun createOngoingNotification(context: Context, progress: SyncProgress): android.app.Notification {
-        val name = progress.relationName.ifEmpty { "同步" }
+        val name = progress.relationName.ifEmpty { context.getString(R.string.sync_notif_default_name) }
         val percent = progress.downloadPercent
         val eta = progress.etaFormatted()
 
         val title = when (progress.phase) {
-            SyncPhase.SCANNING -> "$name - 正在扫描…"
-            SyncPhase.DOWNLOADING -> "$name 已下载 $percent%"
-            SyncPhase.DELETING -> "$name - 正在清理…"
-            else -> "$name - 正在同步…"
+            SyncPhase.SCANNING -> context.getString(R.string.sync_notif_scanning, name)
+            SyncPhase.DOWNLOADING -> context.getString(R.string.sync_notif_downloading, name, percent)
+            SyncPhase.DELETING -> context.getString(R.string.sync_notif_deleting, name)
+            else -> context.getString(R.string.sync_notif_syncing, name)
         }
 
         val content = buildString {
             if (progress.activeDownloads.size > 1) {
-                append("正在下载 ${progress.activeDownloads.size} 个文件")
+                append(context.getString(R.string.sync_notif_downloading_n, progress.activeDownloads.size))
             } else {
-                append(progress.currentFileName.takeIf { it.isNotEmpty() } ?: "准备中…")
+                append(progress.currentFileName.takeIf { it.isNotEmpty() }
+                    ?: context.getString(R.string.sync_notif_preparing))
             }
-            append(" (${progress.completedFiles}/${progress.totalFiles})")
-            append("  剩余 $eta")
+            append(context.getString(R.string.sync_notif_progress, progress.completedFiles, progress.totalFiles))
+            append(context.getString(R.string.sync_notif_eta, eta))
         }
 
         val pendingIntent = createSyncPendingIntent(context, progress.relationId)
@@ -70,11 +72,11 @@ object SyncNotificationHelper {
     }
 
     fun createCompleteNotification(context: Context, progress: SyncProgress): android.app.Notification {
-        val name = progress.relationName.ifEmpty { "同步" }
-        val title = "$name 已下载完成"
+        val name = progress.relationName.ifEmpty { context.getString(R.string.sync_notif_default_name) }
+        val title = context.getString(R.string.sync_notif_complete_title, name)
 
         val content = buildString {
-            append("共 ${progress.completedFiles} 个文件")
+            append(context.getString(R.string.sync_notif_complete_files, progress.completedFiles))
             if (progress.transferredBytes > 0) {
                 append("  ${formatFileSize(progress.transferredBytes)}")
             }
@@ -109,22 +111,23 @@ object SyncNotificationHelper {
         phase == SyncPhase.PARTIAL_FAILED || phase == SyncPhase.FAILED || phase == SyncPhase.CANCELLED
 
     private fun createPartialFailedNotification(context: Context, progress: SyncProgress): android.app.Notification {
-        val name = progress.relationName.ifEmpty { "同步" }
+        val name = progress.relationName.ifEmpty { context.getString(R.string.sync_notif_default_name) }
         val title = when (progress.phase) {
-            SyncPhase.PARTIAL_FAILED -> "$name 同步完成(部分失败)"
-            SyncPhase.FAILED -> "$name 同步失败"
-            SyncPhase.CANCELLED -> "$name 同步已取消"
-            else -> "$name 已结束"
+            SyncPhase.PARTIAL_FAILED -> context.getString(R.string.sync_notif_partial_title, name)
+            SyncPhase.FAILED -> context.getString(R.string.sync_notif_failed_title, name)
+            SyncPhase.CANCELLED -> context.getString(R.string.sync_notif_cancelled_title, name)
+            else -> context.getString(R.string.sync_notif_ended_title, name)
         }
 
-        val content = buildString {
-            if (progress.phase == SyncPhase.PARTIAL_FAILED) {
-                append("成功 ${progress.completedFiles - progress.failedFiles}")
-                append(" / 失败 ${progress.failedFiles}")
-                append(" / 共 ${progress.totalFiles}")
-            } else {
-                append("共处理 ${progress.completedFiles} 个文件")
-            }
+        val content = if (progress.phase == SyncPhase.PARTIAL_FAILED) {
+            // E3 后 completedFiles 只统计成功项（失败项不再同时自增 completed），
+            // 因此这里不能再减 failedFiles —— 否则会重复扣减、把成功数显示得偏小。
+            context.getString(
+                R.string.sync_notif_partial_content,
+                progress.completedFiles, progress.failedFiles, progress.totalFiles
+            )
+        } else {
+            context.getString(R.string.sync_notif_summary_content, progress.completedFiles, progress.totalFiles)
         }
 
         val pendingIntent = createSyncPendingIntent(context, progress.relationId)

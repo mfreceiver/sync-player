@@ -72,7 +72,12 @@ class PlayerViewModel @Inject constructor(
     private val _allVideoIds = MutableStateFlow<List<Long>>(emptyList())
     val allVideoIds: StateFlow<List<Long>> = _allVideoIds.asStateFlow()
 
-    private val savedVideoIds: String? = savedStateHandle.get<String>("videoIds")
+    // Reactive read of the id list passed via SavedStateHandle (e.g. when nav
+    // pushes a new folder context). The previous one-shot `get<String>` only
+    // observed the value present at construction time.
+    private val savedVideoIdsFlow: StateFlow<String?> =
+        savedStateHandle.getStateFlow(SAVED_VIDEO_IDS_KEY, null)
+
     private var overlayHideJob: Job? = null
 
     init {
@@ -94,20 +99,26 @@ class PlayerViewModel @Inject constructor(
             _allVideoIds.value = queueIds
             return
         }
-        val idsStr = savedVideoIds ?: ""
-        val ids = if (idsStr.isNotBlank()) {
-            idsStr.split(",").mapNotNull { it.trim().toLongOrNull() }
-        } else {
-            emptyList()
-        }
-        if (ids.isNotEmpty()) {
-            _allVideoIds.value = ids
-        } else {
-            viewModelScope.launch {
-                try {
-                    _allVideoIds.value = videoRepository.getAllIdsSorted()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to load video IDs", e)
+        // Observe SavedStateHandle reactively so a later nav update to
+        // "videoIds" (e.g. folder change) re-feeds the queue without needing a
+        // fresh PlayerScreen instance.
+        viewModelScope.launch {
+            savedVideoIdsFlow.collect { idsStr ->
+                val ids = idsStr
+                    ?.takeIf { it.isNotBlank() }
+                    ?.split(",")
+                    ?.mapNotNull { it.trim().toLongOrNull() }
+                    ?: emptyList()
+                if (ids.isNotEmpty()) {
+                    _allVideoIds.value = ids
+                } else if (_allVideoIds.value.isEmpty()) {
+                    // DB fallback only while we still have nothing to show;
+                    // later non-empty SavedStateHandle emissions still win.
+                    try {
+                        _allVideoIds.value = videoRepository.getAllIdsSorted()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to load video IDs", e)
+                    }
                 }
             }
         }
@@ -295,5 +306,6 @@ class PlayerViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "PlayerViewModel"
+        private const val SAVED_VIDEO_IDS_KEY = "videoIds"
     }
 }

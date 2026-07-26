@@ -6,12 +6,8 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface VideoItemDao {
-    @Query("SELECT * FROM video_item WHERE parentPath = :folderPath")
-    fun getItemsInFolder(folderPath: String): Flow<List<VideoItemEntity>>
-
-    /** Synchronous variant for DocumentsProvider binder-thread use (no coroutine overhead). */
     @Query("SELECT * FROM video_item WHERE parentPath = :folderPath ORDER BY fileName COLLATE NOCASE ASC")
-    fun getItemsInFolderSync(folderPath: String): List<VideoItemEntity>
+    fun getItemsInFolder(folderPath: String): Flow<List<VideoItemEntity>>
 
     @Query("""
         SELECT DISTINCT SUBSTR(
@@ -33,28 +29,6 @@ interface VideoItemDao {
         END
     """)
     fun getSubFolders(folderPath: String): Flow<List<String>>
-
-    /** Synchronous variant for DocumentsProvider binder-thread use (no coroutine overhead). */
-    @Query("""
-        SELECT DISTINCT SUBSTR(
-            CASE WHEN :folderPath = '' THEN parentPath
-            ELSE SUBSTR(parentPath, LENGTH(:folderPath) + 2)
-            END,
-            1,
-            INSTR(
-                CASE WHEN :folderPath = '' THEN parentPath
-                ELSE SUBSTR(parentPath, LENGTH(:folderPath) + 2)
-                END || '/',
-                '/'
-            ) - 1
-        )
-        FROM video_item
-        WHERE CASE
-            WHEN :folderPath = '' THEN parentPath != ''
-            ELSE parentPath LIKE :folderPath || '/%'
-        END
-    """)
-    fun getSubFoldersSync(folderPath: String): List<String>
 
     @Query("""
         SELECT DISTINCT SUBSTR(
@@ -178,10 +152,6 @@ interface VideoItemDao {
         WHERE v.fileName LIKE '%' || :query || '%' COLLATE NOCASE
     """)
     fun searchByFileName(query: String): Flow<List<VideoItemWithPlayback>>
-
-    /** Synchronous variant for binder-thread use (no coroutine overhead). */
-    @Query("SELECT * FROM video_item WHERE fileName LIKE '%' || :query || '%' COLLATE NOCASE")
-    fun searchByFileNameSync(query: String): List<VideoItemEntity>
 
     @Query("""
         SELECT v.id, v.fileName, v.relativePath, v.fileSize, v.duration, v.width, v.height,

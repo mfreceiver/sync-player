@@ -9,6 +9,6 @@ fun checkNetworkAvailable(context: Context) {
     val network = cm.activeNetwork
     val caps = cm.getNetworkCapabilities(network)
     if (network == null || caps == null || !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-        throw Exception("网络不可用，请检查网络连接")
+        throw SyncException(SyncErrorCode.NETWORK_UNAVAILABLE, SyncOperation.CONNECT)
     }
 }

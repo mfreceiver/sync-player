@@ -58,20 +58,20 @@ class PlaybackRepository @Inject constructor(
     }
 
     suspend fun toggleTrashed(videoItemId: Long) {
-        val existing = playbackRecordDao.getByVideoId(videoItemId)
-        if (existing != null) {
-            playbackRecordDao.updateTrashed(videoItemId, !existing.isTrashed)
-        } else {
-            playbackRecordDao.upsert(
-                PlaybackRecordEntity(
-                    videoItemId = videoItemId,
-                    position = 0,
-                    duration = 0,
-                    lastPlayedTime = System.currentTimeMillis(),
-                    isCompleted = false,
-                    isTrashed = true
+        appDatabase.withTransaction {
+            val affected = playbackRecordDao.toggleTrashed(videoItemId)
+            if (affected == 0) {
+                playbackRecordDao.upsert(
+                    PlaybackRecordEntity(
+                        videoItemId = videoItemId,
+                        position = 0,
+                        duration = 0,
+                        lastPlayedTime = System.currentTimeMillis(),
+                        isCompleted = false,
+                        isTrashed = true
+                    )
                 )
-            )
+            }
         }
     }
 

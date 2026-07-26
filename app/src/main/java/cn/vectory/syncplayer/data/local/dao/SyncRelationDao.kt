@@ -41,6 +41,9 @@ interface SyncRelationDao {
     @Query("SELECT localBasePath FROM sync_relation")
     fun getAllBasePathsFlow(): Flow<List<String>>
 
+    @Query("UPDATE sync_relation SET lastSyncTime = :lastSyncTime, lastSyncResult = :lastSyncResult WHERE id = :id")
+    suspend fun updateLastSync(id: Long, lastSyncTime: Long, lastSyncResult: String)
+
     @Upsert
     suspend fun upsert(relation: SyncRelationEntity): Long
 

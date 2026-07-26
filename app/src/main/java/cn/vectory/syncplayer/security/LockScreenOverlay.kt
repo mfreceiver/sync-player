@@ -15,6 +15,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import cn.vectory.syncplayer.R
+import kotlinx.coroutines.delay
 
 @Composable
 fun LockScreenOverlay(
@@ -25,13 +26,41 @@ fun LockScreenOverlay(
     val activity = context as? FragmentActivity ?: return
 
     var authFailed by remember { mutableStateOf(false) }
+    var failCount by remember { mutableIntStateOf(0) }
+    var isCooldown by remember { mutableStateOf(false) }
+    var cooldownRemaining by remember { mutableIntStateOf(0) }
+
+    // Callback shared between initial auth and retry button
+    val onAuthError: () -> Unit = {
+        authFailed = true
+        failCount++
+        if (failCount >= 5 && !isCooldown) {
+            isCooldown = true
+            cooldownRemaining = 30
+        }
+    }
+
+    // Cooldown countdown timer — runs only when isCooldown is true
+    LaunchedEffect(isCooldown) {
+        if (isCooldown) {
+            var remaining = 30
+            while (remaining > 0) {
+                cooldownRemaining = remaining
+                delay(1000L)
+                remaining--
+            }
+            cooldownRemaining = 0
+            failCount = 0
+            isCooldown = false
+        }
+    }
 
     // Auto-trigger authentication on first composition
     LaunchedEffect(Unit) {
         biometricAuthManager.authenticate(
             activity = activity,
             onSuccess = { appLockManager.unlock() },
-            onError = { authFailed = true }
+            onError = onAuthError
         )
     }
 
@@ -70,16 +99,27 @@ fun LockScreenOverlay(
             if (authFailed) {
                 Spacer(Modifier.height(24.dp))
                 Button(
+                    enabled = !isCooldown,
                     onClick = {
+                        if (isCooldown) return@Button
                         authFailed = false
                         biometricAuthManager.authenticate(
                             activity = activity,
                             onSuccess = { appLockManager.unlock() },
-                            onError = { authFailed = true }
+                            onError = onAuthError
                         )
                     }
                 ) {
                     Text(stringResource(R.string.lock_verify))
+                }
+                if (isCooldown) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.lock_cooldown, cooldownRemaining),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
         }

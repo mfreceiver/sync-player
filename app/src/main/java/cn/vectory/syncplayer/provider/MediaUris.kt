@@ -31,6 +31,16 @@ object MediaUris {
         uri.pathSegments?.size == 2 &&
         uri.pathSegments[0] == PATH_THUMB
 
+    /** 断言 [uri] 是 media URI，否则抛出 [IllegalArgumentException]。 */
+    fun requireMedia(uri: Uri) {
+        require(isMedia(uri)) { "expected media URI, got: $uri" }
+    }
+
+    /** 断言 [uri] 是 thumb URI，否则抛出 [IllegalArgumentException]。 */
+    fun requireThumb(uri: Uri) {
+        require(isThumb(uri)) { "expected thumb URI, got: $uri" }
+    }
+
     fun idOf(uri: Uri): Long {
         if (!isMedia(uri) && !isThumb(uri))
             throw IllegalArgumentException("invalid media uri: $uri")

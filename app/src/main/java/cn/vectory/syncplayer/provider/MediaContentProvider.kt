@@ -11,6 +11,7 @@ import android.os.HandlerThread
 import android.os.ParcelFileDescriptor
 import android.os.storage.StorageManager
 import android.provider.OpenableColumns
+import android.util.Log
 import cn.vectory.syncplayer.crypto.DecryptingFdCallback
 import cn.vectory.syncplayer.data.local.AppDatabase
 import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
@@ -30,6 +31,23 @@ interface MediaProviderEntryPoint {
     fun mediaStore(): EncryptedMediaStore
 }
 
+/**
+ * ContentProvider 暴露加密媒体文件与缩略图给 ExoPlayer 等外部消费者。
+ *
+ * ## HandlerThread 生命周期
+ * [HandlerThread] 在 [onCreate] 中启动后常驻。ContentProvider 没有标准销毁回调
+ *（[android.content.ContentProvider.onDestroy] 不存在），因此在 Provider 生命周期内
+ * 永久保留一个 IO 线程是业界常见做法（参见 Android 官方示例的 ContentProvider 实现）。
+ * [onLowMemory]/[onTrimMemory] 退出线程并惰性重启的方案会引入线程重启竞态，
+ * 而本 Provider 供 ExoPlayer 高频调用，竞态风险高于常驻线程的资源开销，故保持简单。
+ *
+ * ## volumeId 不缓存
+ * [EncryptedMediaStore.volumeId] 每次访问都经由 [runBlocking] 解析当前 SAF treeUri
+ *（见 [EncryptedMediaStore] 的 volume() 实现），按需从 UserPreferences 读取。
+ * 用户在设置页面可随时切换存储卷，但 ContentProvider 无法感知偏好变更事件。
+ * 若在此处缓存 volumeId，切换卷后会导致错误的路由（读旧卷文件或报错）。
+ * 正确方案需 [EncryptedMediaStore] 提供失效通知机制，本侧不做缓存。
+ */
 class MediaContentProvider : ContentProvider() {
     private lateinit var storageManager: StorageManager
     private lateinit var ioThread: HandlerThread
@@ -37,6 +55,7 @@ class MediaContentProvider : ContentProvider() {
 
     override fun onCreate(): Boolean {
         storageManager = context!!.getSystemService(StorageManager::class.java)
+        // IO 线程常驻（见类 KDoc 说明），ContentProvider 无 onDestroy。
         ioThread = HandlerThread("media-provider-io").also { it.start() }
         handler = Handler(ioThread.looper)
         return true
@@ -55,11 +74,14 @@ class MediaContentProvider : ContentProvider() {
         val entity = ep().appDatabase().videoItemDao().getByIdSync(id)
             ?: throw FileNotFoundException("media id=$id not found")
         if (entity.volumeId != store.volumeId) {
-            throw FileNotFoundException(
-                "media id=$id belongs to volume=${entity.volumeId}, active=${store.volumeId}"
-            )
+            Log.w("MediaContentProvider", "volumeId mismatch: entity=${entity.volumeId}, active=${store.volumeId}")
+            // 对外使用统一不可区分的错误消息，不泄漏卷标识
+            throw FileNotFoundException("未找到该媒体文件")
         }
         return if (MediaUris.isMedia(uri)) {
+            // 显式分支断言：此分支仅处理 media URI，不依赖 iv 长度等隐式条件来路由
+            MediaUris.requireMedia(uri)
+            // iv 长度校验作为健壮性检查保留（H2 lane 保证 iv 为 8 字节）
             if (entity.iv.size != 8) throw FileNotFoundException("invalid iv for media id=$id: ${entity.iv.size}")
             val handle = runBlocking(Dispatchers.IO) { store.openCiphertextRead(id) }
             val key = store.contentKey()
@@ -71,7 +93,9 @@ class MediaContentProvider : ContentProvider() {
                 throw e
             }
         } else if (MediaUris.isThumb(uri)) {
-            val bytes = runBlocking(Dispatchers.IO) { store.readThumb(id) } ?: throw FileNotFoundException("no thumbnail for id=$id")
+            MediaUris.requireThumb(uri)
+            val bytes = runBlocking(Dispatchers.IO) { store.readThumb(id) }
+                ?: throw FileNotFoundException("no thumbnail for id=$id")
             openPipeHelper(uri, mode, null, bytes) { output, _, _, extras, data ->
                 FileOutputStream(output.fileDescriptor).use { it.write(data as ByteArray) }
             }

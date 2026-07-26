@@ -1,8 +1,10 @@
 package cn.vectory.syncplayer.settings
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.browser.DeleteMediaResult
 import cn.vectory.syncplayer.browser.FileOperationsUseCase
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
@@ -11,10 +13,12 @@ import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
 import cn.vectory.syncplayer.storage.volume.MediaExistence
 import cn.vectory.syncplayer.sync.ImageMetadataExtractor
 import cn.vectory.syncplayer.sync.VideoMetadataExtractor
+import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.ui.util.isImageFile
 import cn.vectory.syncplayer.ui.util.isVideoFile
 import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,6 +49,7 @@ class MetadataRebuildViewModel @Inject constructor(
     private val imageMetadataExtractor: ImageMetadataExtractor,
     private val encryptedMediaStoreLazy: Lazy<EncryptedMediaStore>,
     private val fileOps: FileOperationsUseCase,
+    @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
     private val mediaStore: EncryptedMediaStore get() = encryptedMediaStoreLazy.get()
@@ -113,7 +118,7 @@ class MetadataRebuildViewModel @Inject constructor(
                             }
                             is MediaExistence.NOT_FOUND -> orphanedRecords.add(record)
                             is MediaExistence.IO_ERROR -> {
-                                _error.value = "扫描失败：无法访问外部卷 (${existence.reason})"
+                                _error.value = context.getString(R.string.metadata_scan_io_error, existence.reason)
                                 return@withContext
                             }
                         }
@@ -135,7 +140,7 @@ class MetadataRebuildViewModel @Inject constructor(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _error.value = "扫描失败: ${e.message}"
+                _error.value = syncErrorMessage(e, context)
             } finally {
                 _isDiscovering.value = false
                 discoverJob = null
@@ -162,7 +167,7 @@ class MetadataRebuildViewModel @Inject constructor(
                             is DeleteMediaResult.Success, is DeleteMediaResult.SkippedNotFound -> Unit
                             is DeleteMediaResult.Failed -> {
                                 fail++
-                                failures.add(record.id to r.reason)
+                                failures.add(record.id to syncErrorMessage(r.error, context))
                             }
                         }
                         _completedCount.value++
@@ -177,7 +182,7 @@ class MetadataRebuildViewModel @Inject constructor(
                         } catch (e: Exception) {
                             Log.w(TAG, "Failed to extract metadata for ${record.fileName}", e)
                             fail++
-                            failures.add(record.id to (e.message ?: "extract failed"))
+                            failures.add(record.id to syncErrorMessage(e, context))
                         }
                         _completedCount.value++
                     }
@@ -206,7 +211,7 @@ class MetadataRebuildViewModel @Inject constructor(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _error.value = "重建失败: ${e.message}"
+                _error.value = syncErrorMessage(e, context)
             } finally {
                 _isRebuilding.value = false
                 _currentFile.value = null
@@ -235,7 +240,7 @@ class MetadataRebuildViewModel @Inject constructor(
                         // B1: index-only delete — never mediaStore.delete on active volume.
                         when (val r = fileOps.deleteOtherVolumeIndex(record.id)) {
                             is DeleteMediaResult.Success, is DeleteMediaResult.SkippedNotFound -> success++
-                            is DeleteMediaResult.Failed -> failures.add(record.id to r.reason)
+                            is DeleteMediaResult.Failed -> failures.add(record.id to syncErrorMessage(r.error, context))
                         }
                         _completedCount.value++
                     }
@@ -250,7 +255,7 @@ class MetadataRebuildViewModel @Inject constructor(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _error.value = "清理旧卷索引失败: ${e.message}"
+                _error.value = syncErrorMessage(e, context)
             } finally {
                 _isRebuilding.value = false
                 _currentFile.value = null

@@ -15,6 +15,7 @@ import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.RemoteFileClientFactory
 import cn.vectory.syncplayer.sync.classifyRemoteError
 import cn.vectory.syncplayer.sync.RemoteBrowseError
+import cn.vectory.syncplayer.sync.syncErrorMessage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -161,7 +162,7 @@ class SyncRelationEditViewModel @Inject constructor(
                 _testResult.value = when (classifyRemoteError(e)) {
                     RemoteBrowseError.PATH_NOT_FOUND -> context.getString(R.string.relation_dir_not_exist)
                     RemoteBrowseError.TIMEOUT -> context.getString(R.string.relation_timeout_check_network)
-                    RemoteBrowseError.OTHER -> context.getString(R.string.relation_access_failed, e.message)
+                    RemoteBrowseError.OTHER -> context.getString(R.string.relation_access_failed, syncErrorMessage(e, context))
                 }
             } finally {
                 _isTesting.value = false
@@ -226,7 +227,7 @@ class SyncRelationEditViewModel @Inject constructor(
                 )
                 _saveResult.value = context.getString(R.string.relation_save_success)
             } catch (e: Exception) {
-                _error.value = context.getString(R.string.relation_save_failed, e.message)
+                _error.value = context.getString(R.string.relation_save_failed, syncErrorMessage(e, context))
             } finally {
                 _isSaving.value = false
             }

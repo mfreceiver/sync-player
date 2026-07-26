@@ -167,7 +167,7 @@ fun SyncRelationEditScreen(
                 onValueChange = { viewModel.setLocalBasePath(it) },
                 label = { Text(stringResource(R.string.relation_local_base_dir)) },
                 placeholder = { Text(stringResource(R.string.relation_local_dir_placeholder), color = extendedColors.placeholderGrey) },
-                supportingText = { Text("逻辑路径；首次同步时在加密卷上自动创建") },
+                supportingText = { Text(stringResource(R.string.relation_local_path_supporting)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
