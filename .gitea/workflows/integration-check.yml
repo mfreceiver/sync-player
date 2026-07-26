@@ -1,12 +1,11 @@
-# integration-check: main / integration/** / validation/** 变更跑全量校验。
-# clean + 全量 lint + 全量测试 + assembleDebug（与本地 check.sh --full 一致）。
+# integration-check: 全量校验（clean + lint + test + assembleDebug，与本地 check.sh --full 一致）。
+# 仅手动触发（workflow_dispatch）——发版时 release.yml 已含等价全量校验，
+# 平时每次提交不再自动跑，避免重复劳动；需要时在 Gitea Actions 面板手动点。
 # sync-player 未接入 kover，故无覆盖率门控（与 ocdroid 不同）。
 # 模拟器插桩测试留作后续阶段。无外部 action（不依赖 github.com）。
 name: integration-check
 
 on:
-  push:
-    branches: [ main, integration/**, validation/** ]
   workflow_dispatch:
 
 jobs:

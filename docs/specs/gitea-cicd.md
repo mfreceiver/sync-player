@@ -27,7 +27,7 @@
 | 本机 | `./scripts/ci/local-check.sh`（= `compileDebugKotlin + testDebugUnitTest`） | 开发期几十秒挡低级错误 |
 | 本机 | `./scripts/check.sh [--full]` | 同上 + 可选 lintDebug |
 | 远端分支 | `branch-check.yml` → `remote-check.sh`（`lintDebug + testDebugUnitTest + assembleDebug`） | 干净容器验证任务分支可构建 |
-| 远端整合 | `integration-check.yml`（`clean + lint + test + assembleDebug`） | 验证与主干组合（无覆盖率门控） |
+| 远端整合 | `integration-check.yml`（`clean + lint + test + assembleDebug`） | 验证与主干组合（无覆盖率门控；**仅手动触发**） |
 | 远端 Release | `release.yml` → `release-check.sh`（`clean + lintRelease + testDebugUnitTest + assembleRelease`） | CI 签名出 APK + mapping + SHA256SUMS |
 
 ---
@@ -37,7 +37,7 @@
 | Workflow | 触发 | 作用 |
 |---|---|---|
 | `branch-check.yml` | push `agent/**`、`feature/**`、`fix/**`、`ci/**` | 任务分支验证（lint + test + assembleDebug） |
-| `integration-check.yml` | push `main`、`integration/**`、`validation/**` | 主干全量校验 |
+| `integration-check.yml` | **仅 `workflow_dispatch`**（手动） | 全量校验；发版时 `release.yml` 已含等价检查，故不再自动跑 |
 | `release.yml` | push tag `v*` | 出签名 APK，上传 Gitea Release |
 
 无外部 action（Unraid 无法访问 github.com）；checkout 用内联 `git clone` 直连 Gitea。
