@@ -43,4 +43,6 @@ sealed class Route(val route: String) {
         }
     }
     data object MetadataRebuild : Route("metadata_rebuild")
+    data object StorageManagement : Route("storage_management")
+    data object DebugLog : Route("debug_log")
 }

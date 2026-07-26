@@ -2,7 +2,9 @@ package cn.vectory.syncplayer.storage.volume
 
 import cn.vectory.syncplayer.crypto.CryptoScheme
 import javax.crypto.SecretKey
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 /** Result of [EncryptedMediaStore.checkExistence]. */
 sealed class MediaExistence {
@@ -46,7 +48,9 @@ class EncryptedMediaStore(
     suspend fun openEncryptSink(id: Long, iv: ByteArray, plainLength: Long): java.io.OutputStream {
         require(iv.size == CryptoScheme.IV_LEN) { "iv must be ${CryptoScheme.IV_LEN} bytes" }
         require(plainLength >= 0) { "plainLength must be non-negative" }
-        val sink = volume().openWrite(tmpMedia(id))
+        // Capture volume once: avoids race if user switches storage between openWrite and catch.
+        val vol = volume()
+        val sink = vol.openWrite(tmpMedia(id))
         // The wrapper must own `sink` from here on: encodeHeader() runs during ChunkedEncryptSink's
         // property initialization and rejects lengths past the implementation cap, i.e. it can throw
         // *before* the constructor body's own try/catch exists. Without this guard the already-open
@@ -55,6 +59,9 @@ class EncryptedMediaStore(
             CryptoScheme.encryptStream(contentKey(), iv, plainLength, sink)
         } catch (e: Throwable) {
             try { sink.close() } catch (closeError: Exception) { e.addSuppressed(closeError) }
+            // NonCancellable: ensure stub cleanup runs even if the coroutine is being cancelled
+            // (CancellationException would otherwise skip the suspend delete, leaving a 0-byte file).
+            try { withContext(NonCancellable) { vol.delete(tmpMedia(id)) } } catch (_: Exception) {}
             throw e
         }
     }
@@ -182,7 +189,11 @@ class EncryptedMediaStore(
             // Bucket dirs from MediaPaths.mediaRelPath are "${id / 1000}" — always a
             // non-negative integer. toLongOrNull (not toInt) handles large ids without overflow;
             // reject anything that is not a provably-valid bucket (incl. negative names).
-            val bucket = entry.toLongOrNull()
+            val bucket = if (entry.isNotEmpty() && entry.all { it in '0'..'9' }) {
+                entry.toLongOrNull()
+            } else {
+                null
+            }
             if (bucket != null && bucket >= 0) {
                 deleted += purgeBucket(vol, bucket)
             } else if (entry == "thumbs") {
@@ -206,6 +217,19 @@ class EncryptedMediaStore(
         val bucketDir = bucket.toString()
         var deleted = 0
         for (name in vol.list(bucketDir)) {
+            // Clean up stale temp files from the double-.enc bug (TMP_SUFFIX was ".enc.tmp",
+            // producing "<id>.enc.enc.tmp"). These are definitively orphaned — never produced
+            // again after the TMP_SUFFIX fix. Strict digit ID + bucket cross-check.
+            // Current-format .enc.tmp files are intentionally NOT purged here (overwritten on
+            // next sync for that id; also cleaned by StorageManagementViewModel.resetStorage).
+            if (name.endsWith(".enc.enc.tmp")) {
+                val legacyIdStr = name.dropLast(12)
+                if (legacyIdStr.isNotEmpty() && legacyIdStr.all { it in '0'..'9' }) {
+                    val legacyId = legacyIdStr.toLongOrNull()
+                    if (legacyId != null && legacyId / 1000 == bucket && vol.delete("$bucketDir/$name")) deleted++
+                }
+                continue
+            }
             // Strict final-media filename "<id>.enc"; tmp files, double-suffixed names, and
             // anything else are skipped (not deleted).
             val id = parseFinalMediaName(name) ?: continue

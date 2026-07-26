@@ -49,4 +49,7 @@ interface PendingSyncActionDao {
 
     @Query("UPDATE pending_sync_action SET status = 'CANCELLED' WHERE relationId = :relationId")
     suspend fun markCancelled(relationId: Long)
+
+    @Query("DELETE FROM pending_sync_action")
+    suspend fun deleteAll()
 }

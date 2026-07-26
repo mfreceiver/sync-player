@@ -1,6 +1,8 @@
 package cn.vectory.syncplayer.settings
 
 import android.content.Context
+import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -11,6 +13,7 @@ import cn.vectory.syncplayer.data.model.SyncRelation
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
+import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.RemoteFileClientFactory
 import cn.vectory.syncplayer.sync.classifyRemoteError
@@ -19,9 +22,15 @@ import cn.vectory.syncplayer.sync.syncErrorMessage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+data class StorageInfo(
+    val typeLabel: String,  // "内部存储" 或 "外部存储"
+    val pathLabel: String,  // 实际路径
+)
 
 @HiltViewModel
 class SyncRelationEditViewModel @Inject constructor(
@@ -29,6 +38,7 @@ class SyncRelationEditViewModel @Inject constructor(
     private val syncSourceRepository: SyncSourceRepository,
     private val remoteFileClientFactory: RemoteFileClientFactory,
     private val storagePaths: StoragePaths,
+    private val userPreferencesRepository: UserPreferencesRepository,
     @ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
@@ -77,14 +87,60 @@ class SyncRelationEditViewModel @Inject constructor(
     private val _testResult = MutableStateFlow<String?>(null)
     val testResult = _testResult.asStateFlow()
 
+    private val _storageInfo = MutableStateFlow<StorageInfo?>(null)
+    val storageInfo: StateFlow<StorageInfo?> = _storageInfo.asStateFlow()
+
     init {
         loadSources()
         if (relationId > 0) loadRelation()
+        loadStorageInfo()
     }
 
     private fun loadSources() {
         viewModelScope.launch {
             _availableSources.value = syncSourceRepository.getAllWithCredentials()
+        }
+    }
+
+    private fun loadStorageInfo() {
+        viewModelScope.launch {
+            val treeUri = userPreferencesRepository.getMediaStorageTreeUri()
+            val info = if (treeUri != null) {
+                StorageInfo(
+                    typeLabel = context.getString(R.string.storage_method_external),
+                    pathLabel = extractDisplayName(treeUri)
+                )
+            } else {
+                StorageInfo(
+                    typeLabel = context.getString(R.string.storage_current_internal),
+                    pathLabel = context.filesDir.absolutePath + "/userdata"
+                )
+            }
+            _storageInfo.value = info
+        }
+    }
+
+    /** 尽量解析 SAF tree 目录显示名；失败则回退到 docId 末段或原 URI 字符串。 */
+    private fun extractDisplayName(treeUriStr: String): String {
+        return try {
+            val uri = Uri.parse(treeUriStr)
+            val docId = DocumentsContract.getTreeDocumentId(uri)
+            val docUri = DocumentsContract.buildDocumentUriUsingTree(uri, docId)
+            context.contentResolver.query(
+                docUri,
+                arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    cursor.getString(0)?.takeIf { it.isNotBlank() }
+                } else {
+                    null
+                }
+            } ?: docId.substringAfterLast(':').substringAfterLast('/').ifBlank { docId }
+        } catch (_: Exception) {
+            treeUriStr
         }
     }
 

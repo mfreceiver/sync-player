@@ -79,4 +79,7 @@ interface PlaybackRecordDao {
     suspend fun upsertAllBatch(records: List<PlaybackRecordEntity>) {
         upsertAll(records)
     }
+
+    @Query("DELETE FROM playback_record")
+    suspend fun deleteAll()
 }

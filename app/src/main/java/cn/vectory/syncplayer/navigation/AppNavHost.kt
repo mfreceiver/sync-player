@@ -26,6 +26,9 @@ import cn.vectory.syncplayer.settings.SyncRelationListScreen
 import cn.vectory.syncplayer.settings.SyncRelationEditScreen
 import cn.vectory.syncplayer.settings.SettingsScreen
 import cn.vectory.syncplayer.settings.SettingsViewModel
+import cn.vectory.syncplayer.settings.StorageManagementScreen
+import cn.vectory.syncplayer.settings.StorageManagementViewModel
+import cn.vectory.syncplayer.settings.DebugLogScreen
 import cn.vectory.syncplayer.settings.GainAnalysisScreen
 import cn.vectory.syncplayer.settings.MetadataRebuildScreen
 import cn.vectory.syncplayer.sync.SyncPreviewScreen
@@ -250,7 +253,9 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                 onNavigateToMetadataRebuild = { navController.navigate(Route.MetadataRebuild.route) },
                 onNavigateToGainAnalysis = { navController.navigate(Route.GainAnalysis.create()) },
                 onNavigateToSyncSourceList = { navController.navigate(Route.SyncSourceList.route) },
-                onNavigateToSyncRelationList = { navController.navigate(Route.SyncRelationList.route) }
+                onNavigateToSyncRelationList = { navController.navigate(Route.SyncRelationList.route) },
+                onNavigateToStorageManagement = { navController.navigate(Route.StorageManagement.route) },
+                onNavigateToDebugLog = { navController.navigate(Route.DebugLog.route) }
             )
         }
 
@@ -267,6 +272,20 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
 
         composable(Route.MetadataRebuild.route) {
             MetadataRebuildScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Route.StorageManagement.route) {
+            val viewModel: StorageManagementViewModel = hiltViewModel()
+            StorageManagementScreen(
+                viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Route.DebugLog.route) {
+            DebugLogScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
         }
     }
 }

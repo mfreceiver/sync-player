@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Sync Player</string>
+    <!-- app_name is injected via manifestPlaceholders in build.gradle.kts (git-derived: "Sync Player <version>-<commit>") -->
     <string name="sync_notification_channel">文件同步</string>
     <string name="sync_notification_title">正在同步文件…</string>
     <string name="share_video">分享视频</string>
@@ -93,7 +93,7 @@
 
     <!-- Settings -->
     <string name="settings_title">设置</string>
-    <string name="settings_section_sync">同步</string>
+    <string name="settings_section_sync">同步与存储</string>
     <string name="settings_section_playback">播放</string>
     <string name="settings_section_system">系统集成</string>
     <string name="settings_section_maintenance">维护与关于</string>
@@ -379,4 +379,41 @@
 
     <!-- Lock Screen -->
     <string name="lock_cooldown">验证失败次数过多，请 %1$d 秒后重试</string>
+
+    <!-- Storage Management -->
+    <string name="storage_title">存储管理</string>
+    <string name="storage_management">存储管理</string>
+    <string name="storage_management_desc">当前存储：%1$s</string>
+    <string name="storage_current_internal">内部存储</string>
+    <string name="storage_current_external">外部（%1$s）</string>
+    <string name="storage_method_section">存储方式</string>
+    <string name="storage_method_internal">内部存储（默认）</string>
+    <string name="storage_method_external">外部存储</string>
+    <string name="storage_external_not_configured">未配置</string>
+    <string name="storage_external_path">路径：%1$s</string>
+    <string name="storage_usage_section">存储占用与重置</string>
+    <string name="storage_usable_space">可用空间：%1$s</string>
+    <string name="storage_file_count">媒体文件：%1$d 个</string>
+    <string name="storage_reset">重置存储</string>
+    <string name="storage_reset_warning_title">确认重置存储</string>
+    <string name="storage_reset_warning_body_internal">此操作将删除所有本地加密媒体文件和缩略图，并清除数据库记录。内部存储还会清理游离文件。此操作不可恢复。</string>
+    <string name="storage_reset_warning_body_external">此操作将删除本应用管辖的所有加密媒体文件和缩略图，并清除数据库记录。外部存储中不属于本应用的文件不会被删除。此操作不可恢复。</string>
+    <string name="storage_reset_in_progress">正在重置存储…</string>
+    <string name="storage_reset_complete">存储已重置，可以切换存储方式</string>
+    <string name="storage_switch_blocked">数据库中仍有文件记录，请先重置存储才能切换存储方式</string>
+    <string name="storage_select_external_dir">选择外部存储目录</string>
+
+    <!-- Debug Log -->
+    <string name="debug_log_title">调试日志</string>
+    <string name="debug_log_clear">清空</string>
+    <string name="debug_log_empty">暂无日志记录</string>
+    <string name="debug_log_level_all">全部</string>
+    <string name="debug_log_level_debug">DEBUG</string>
+    <string name="debug_log_level_info">INFO</string>
+    <string name="debug_log_level_warn">WARN</string>
+    <string name="debug_log_level_error">ERROR</string>
+
+    <!-- SyncRelation storage info -->
+    <string name="relation_current_storage">当前存储：%1$s</string>
+    <string name="relation_storage_path">存储路径：%1$s</string>
 </resources>

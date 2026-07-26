@@ -13,6 +13,7 @@ import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
 import cn.vectory.syncplayer.storage.volume.MediaExistence
 import cn.vectory.syncplayer.sync.ImageMetadataExtractor
 import cn.vectory.syncplayer.sync.VideoMetadataExtractor
+import cn.vectory.syncplayer.sync.SyncEngine
 import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.ui.util.isImageFile
 import cn.vectory.syncplayer.ui.util.isVideoFile
@@ -24,6 +25,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
@@ -49,6 +51,7 @@ class MetadataRebuildViewModel @Inject constructor(
     private val imageMetadataExtractor: ImageMetadataExtractor,
     private val encryptedMediaStoreLazy: Lazy<EncryptedMediaStore>,
     private val fileOps: FileOperationsUseCase,
+    private val syncEngine: SyncEngine,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -94,13 +97,14 @@ class MetadataRebuildViewModel @Inject constructor(
             _cleanupSummary.value = null
             try {
                 withContext(Dispatchers.IO) {
-                    val dbRecords = videoRepository.getAll()
-                    val activeVolumeId = mediaStore.volumeId
-                    val orphanedRecords = mutableListOf<VideoItemEntity>()
-                    val incompleteRecords = mutableListOf<VideoItemEntity>()
-                    val otherVolumeRecords = mutableListOf<VideoItemEntity>()
+                    syncEngine.storageOperationMutex.withLock {
+                        val dbRecords = videoRepository.getAll()
+                        val activeVolumeId = mediaStore.volumeId
+                        val orphanedRecords = mutableListOf<VideoItemEntity>()
+                        val incompleteRecords = mutableListOf<VideoItemEntity>()
+                        val otherVolumeRecords = mutableListOf<VideoItemEntity>()
 
-                    for (record in dbRecords) {
+                        for (record in dbRecords) {
                         if (record.volumeId != activeVolumeId) {
                             // D1-b: other-volume indexes are NEVER auto-orphaned.
                             otherVolumeRecords.add(record)
@@ -124,18 +128,19 @@ class MetadataRebuildViewModel @Inject constructor(
                         }
                     }
 
-                    if (_error.value != null) {
+                        if (_error.value != null) {
                         // Aborted mid-scan due to IO; leave discoveryResult null.
                         return@withContext
                     }
 
-                    _discoveryResult.value = DiscoveryResult(
+                        _discoveryResult.value = DiscoveryResult(
                         orphanedRecords = orphanedRecords,
                         incompleteRecords = incompleteRecords,
                         otherVolumeRecords = otherVolumeRecords,
                     )
                     // Rebuild total covers only safe orphan + incomplete (not other-volume).
-                    _totalCount.value = orphanedRecords.size + incompleteRecords.size
+                        _totalCount.value = orphanedRecords.size + incompleteRecords.size
+                    }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -159,11 +164,12 @@ class MetadataRebuildViewModel @Inject constructor(
 
             try {
                 withContext(Dispatchers.IO) {
-                    var fail = 0
-                    val failures = mutableListOf<Pair<Long, String>>()
-                    for (record in result.orphanedRecords) {
+                    syncEngine.storageOperationMutex.withLock {
+                        var fail = 0
+                        val failures = mutableListOf<Pair<Long, String>>()
+                        for (record in result.orphanedRecords) {
                         _currentFile.value = record.fileName
-                        when (val r = fileOps.deleteMediaById(record.id)) {
+                            when (val r = fileOps.deleteMediaByIdLocked(record.id)) {
                             is DeleteMediaResult.Success, is DeleteMediaResult.SkippedNotFound -> Unit
                             is DeleteMediaResult.Failed -> {
                                 fail++
@@ -173,7 +179,7 @@ class MetadataRebuildViewModel @Inject constructor(
                         _completedCount.value++
                     }
 
-                    for (record in result.incompleteRecords) {
+                        for (record in result.incompleteRecords) {
                         _currentFile.value = record.fileName
                         val fresh = videoRepository.getById(record.id) ?: continue
                         try {
@@ -187,12 +193,13 @@ class MetadataRebuildViewModel @Inject constructor(
                         _completedCount.value++
                     }
 
-                    if (failures.isNotEmpty()) {
+                        if (failures.isNotEmpty()) {
                         _cleanupSummary.value = CleanupSummary(
                             success = _completedCount.value - fail,
                             failed = fail,
                             failures = failures,
                         )
+                        }
                     }
                 }
 
@@ -233,22 +240,24 @@ class MetadataRebuildViewModel @Inject constructor(
             _error.value = null
             try {
                 withContext(Dispatchers.IO) {
-                    var success = 0
-                    val failures = mutableListOf<Pair<Long, String>>()
-                    for (record in targets) {
+                    syncEngine.storageOperationMutex.withLock {
+                        var success = 0
+                        val failures = mutableListOf<Pair<Long, String>>()
+                        for (record in targets) {
                         _currentFile.value = record.fileName
                         // B1: index-only delete — never mediaStore.delete on active volume.
-                        when (val r = fileOps.deleteOtherVolumeIndex(record.id)) {
+                            when (val r = fileOps.deleteOtherVolumeIndexLocked(record.id)) {
                             is DeleteMediaResult.Success, is DeleteMediaResult.SkippedNotFound -> success++
                             is DeleteMediaResult.Failed -> failures.add(record.id to syncErrorMessage(r.error, context))
                         }
                         _completedCount.value++
                     }
-                    _cleanupSummary.value = CleanupSummary(
+                        _cleanupSummary.value = CleanupSummary(
                         success = success,
                         failed = failures.size,
                         failures = failures,
-                    )
+                        )
+                    }
                 }
                 _discoveryResult.value = null
                 _isComplete.value = true

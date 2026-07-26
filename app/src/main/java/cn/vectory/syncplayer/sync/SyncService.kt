@@ -4,7 +4,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.IBinder
-import cn.vectory.syncplayer.data.local.dao.PendingSyncActionDao
 import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProgress
 import dagger.hilt.android.AndroidEntryPoint
@@ -17,7 +16,6 @@ import javax.inject.Inject
 class SyncService : Service() {
 
     @Inject lateinit var syncEngine: SyncEngine
-    @Inject lateinit var pendingSyncActionDao: PendingSyncActionDao
 
     // E2: 服务级协程改用 Dispatchers.Default——引擎内部大量 CPU/IO 工作，主线程只承担
     // 系统回调。需要主线程的地方（无，通知 API 本身线程安全）再显式切。
@@ -73,46 +71,15 @@ class SyncService : Service() {
         pendingStopJob = null
 
         syncJob = serviceScope.launch {
-            val task = withContext(Dispatchers.IO) { syncEngine.consumePendingTask(relationId) }
+            // 🔴 Atomic consume + execute under storageOperationMutex — eliminates TOCTOU
+            // race where reset/switch could intervene between consume and execute.
+            val (task, _) = withContext(Dispatchers.IO) {
+                syncEngine.consumeAndExecute(relationId)
+            }
+
             if (task == null) {
                 scheduleStop(DELAY_AFTER_NO_TASK_MS)
                 return@launch
-            }
-
-            _syncProgress.value = SyncProgress(
-                isRunning = true,
-                phase = SyncPhase.DOWNLOADING,
-                totalFiles = task.toDownload.size + task.toDelete.size,
-                relationId = relationId,
-                relationName = task.relationName,
-                localBasePath = task.localBasePath
-            )
-            SyncNotificationHelper.updateNotification(this@SyncService, _syncProgress.value)
-
-            var success = false
-            try {
-                success = syncEngine.executeSync(
-                    relationId,
-                    task.toDownload,
-                    task.toDelete,
-                    task.relationName,
-                    task.localBasePath
-                )
-            } catch (e: CancellationException) {
-                withContext(Dispatchers.IO) {
-                    pendingSyncActionDao.markCancelled(relationId)
-                    pendingSyncActionDao.deleteByRelationId(relationId)
-                }
-                throw e
-            }
-
-            withContext(Dispatchers.IO) {
-                if (success) {
-                    pendingSyncActionDao.markCompleted(relationId)
-                } else {
-                    pendingSyncActionDao.markFailed(relationId)
-                }
-                pendingSyncActionDao.deleteByRelationId(relationId)
             }
 
             val finalProgress = syncEngine.progress.value

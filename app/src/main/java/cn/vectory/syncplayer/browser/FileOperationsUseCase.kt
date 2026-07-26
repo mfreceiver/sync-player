@@ -14,6 +14,7 @@ import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
 import cn.vectory.syncplayer.sync.SyncErrorCode
 import cn.vectory.syncplayer.sync.SyncException
 import cn.vectory.syncplayer.sync.SyncOperation
+import cn.vectory.syncplayer.sync.SyncEngine
 import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.ui.util.getMimeType
 import dagger.Lazy
@@ -22,6 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.FileNotFoundException
 import javax.inject.Inject
@@ -47,6 +49,7 @@ class FileOperationsUseCase @Inject constructor(
     private val playbackRepository: PlaybackRepository,
     private val syncRelationRepository: SyncRelationRepository,
     private val encryptedMediaStoreLazy: Lazy<EncryptedMediaStore>,
+    private val syncEngine: SyncEngine,
     @ApplicationContext private val context: Context
 ) {
     companion object {
@@ -127,7 +130,9 @@ class FileOperationsUseCase @Inject constructor(
     ) {
         scope.launch {
             try {
-                val result = withContext(Dispatchers.IO) { deleteMediaById(videoItemId) }
+                val result = withContext(Dispatchers.IO) {
+                    syncEngine.storageOperationMutex.withLock { deleteMediaByIdLocked(videoItemId) }
+                }
                 when (result) {
                     is DeleteMediaResult.Success, is DeleteMediaResult.SkippedNotFound -> onSuccess()
                     is DeleteMediaResult.Failed -> {
@@ -201,7 +206,9 @@ class FileOperationsUseCase @Inject constructor(
                     errorFlow.value = context.getString(R.string.error_cannot_delete_sync_dir)
                     return@launch
                 }
-                val summary = withContext(Dispatchers.IO) { deleteFolderContents(path) }
+                val summary = withContext(Dispatchers.IO) {
+                    syncEngine.storageOperationMutex.withLock { deleteFolderContentsLocked(path) }
+                }
                 if (summary.failed > 0) {
                     // M3: partial failure — do not claim full success (skip onSuccess so UI doesn't
                     // refresh as if everything was gone).
@@ -224,7 +231,7 @@ class FileOperationsUseCase @Inject constructor(
      * (or [VideoRepository.getAll] for root). Each item's volume ownership is checked inside
      * [deleteMediaById] — mismatched volumes use index-only deletion instead of ciphertext access.
      */
-    private suspend fun deleteFolderContents(path: String): FolderDeleteSummary {
+    private suspend fun deleteFolderContentsLocked(path: String): FolderDeleteSummary {
         val items = if (path.isEmpty()) {
             videoRepository.getAll()
         } else {
@@ -236,7 +243,7 @@ class FileOperationsUseCase @Inject constructor(
         var skipped = 0
         val failures = mutableListOf<Pair<Long, SyncException>>()
         for (item in items) {
-            when (val r = deleteMediaById(item.id)) {
+            when (val r = deleteMediaByIdLocked(item.id)) {
                 is DeleteMediaResult.Success -> success++
                 is DeleteMediaResult.SkippedNotFound -> {
                     // Already cleaned ciphertext; DB removed as part of skip path.
@@ -267,6 +274,11 @@ class FileOperationsUseCase @Inject constructor(
      *   file lives on a non-active volume. See decision table in the class/task notes.
      */
     suspend fun deleteMediaById(id: Long): DeleteMediaResult {
+        return syncEngine.storageOperationMutex.withLock { deleteMediaByIdLocked(id) }
+    }
+
+    /** Called only while [SyncEngine.storageOperationMutex] is held by a parent workflow. */
+    internal suspend fun deleteMediaByIdLocked(id: Long): DeleteMediaResult {
         val video = videoRepository.getById(id)
             ?: return DeleteMediaResult.SkippedNotFound(id)
 
@@ -280,7 +292,7 @@ class FileOperationsUseCase @Inject constructor(
             Log.w(TAG, "deleteMediaById: id=$id volume='${video.volumeId}' not confirmed on " +
                 "active='$currentVolumeId' (different or empty/unknown); index-only delete, " +
                 "ciphertext untouched")
-            return deleteOtherVolumeIndex(id)
+            return deleteOtherVolumeIndexLocked(id)
         }
 
         val cipherMissing = try {
@@ -377,6 +389,11 @@ class FileOperationsUseCase @Inject constructor(
      * (ids on inactive volumes must not drive mediaStore.delete on the active store).
      */
     suspend fun deleteOtherVolumeIndex(videoItemId: Long): DeleteMediaResult {
+        return syncEngine.storageOperationMutex.withLock { deleteOtherVolumeIndexLocked(videoItemId) }
+    }
+
+    /** Called only while [SyncEngine.storageOperationMutex] is held by a parent workflow. */
+    internal suspend fun deleteOtherVolumeIndexLocked(videoItemId: Long): DeleteMediaResult {
         val video = videoRepository.getById(videoItemId)
             ?: return DeleteMediaResult.SkippedNotFound(videoItemId)
         return try {

@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.sync
 import android.content.Context
 import android.util.Log
 import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.debug.DebugLogger
 import cn.vectory.syncplayer.crypto.CryptoScheme
 import cn.vectory.syncplayer.data.model.ActiveDownload
 import cn.vectory.syncplayer.data.model.SyncAction
@@ -26,6 +27,7 @@ import cn.vectory.syncplayer.ui.util.isImageFile
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -87,6 +89,9 @@ class SyncEngine @Inject constructor(
 
     private val syncMutexMap = ConcurrentHashMap<Long, Mutex>()
 
+    /** Global mutex coordinating sync operations with storage reset/switch (prevents TOCTOU). */
+    val storageOperationMutex = Mutex()
+
     private fun getMutexForRelation(relationId: Long): Mutex =
         syncMutexMap.computeIfAbsent(relationId) { Mutex() }
 
@@ -122,35 +127,37 @@ class SyncEngine @Inject constructor(
     }
 
     suspend fun setPendingTask(task: PendingSyncTask) {
-        val entities = mutableListOf<PendingSyncActionEntity>()
-        for (action in task.toDownload) {
-            entities.add(PendingSyncActionEntity(
-                relationId = task.relationId,
-                relationName = task.relationName,
-                localBasePath = task.localBasePath,
-                actionGroup = 0,
-                actionType = action.type.name,
-                relativePath = action.relativePath,
-                fileSize = action.fileSize,
-                remoteModifiedTime = action.remoteModifiedTime
-            ))
+        storageOperationMutex.withLock {
+            val entities = mutableListOf<PendingSyncActionEntity>()
+            for (action in task.toDownload) {
+                entities.add(PendingSyncActionEntity(
+                    relationId = task.relationId,
+                    relationName = task.relationName,
+                    localBasePath = task.localBasePath,
+                    actionGroup = 0,
+                    actionType = action.type.name,
+                    relativePath = action.relativePath,
+                    fileSize = action.fileSize,
+                    remoteModifiedTime = action.remoteModifiedTime
+                ))
+            }
+            for (action in task.toDelete) {
+                entities.add(PendingSyncActionEntity(
+                    relationId = task.relationId,
+                    relationName = task.relationName,
+                    localBasePath = task.localBasePath,
+                    actionGroup = 1,
+                    actionType = action.type.name,
+                    relativePath = action.relativePath,
+                    fileSize = action.fileSize,
+                    remoteModifiedTime = action.remoteModifiedTime
+                ))
+            }
+            pendingSyncActionDao.replaceForRelation(task.relationId, entities)
         }
-        for (action in task.toDelete) {
-            entities.add(PendingSyncActionEntity(
-                relationId = task.relationId,
-                relationName = task.relationName,
-                localBasePath = task.localBasePath,
-                actionGroup = 1,
-                actionType = action.type.name,
-                relativePath = action.relativePath,
-                fileSize = action.fileSize,
-                remoteModifiedTime = action.remoteModifiedTime
-            ))
-        }
-        pendingSyncActionDao.replaceForRelation(task.relationId, entities)
     }
 
-    suspend fun consumePendingTask(relationId: Long): PendingSyncTask? {
+    internal suspend fun consumePendingTaskLocked(relationId: Long): PendingSyncTask? {
         pendingSyncActionDao.resetRunningToPending(relationId)
         val entities = pendingSyncActionDao.getPendingByRelationId(relationId)
         if (entities.isEmpty()) return null
@@ -179,6 +186,38 @@ class SyncEngine @Inject constructor(
             toDownload = toDownload,
             toDelete = toDelete
         )
+    }
+
+    suspend fun consumePendingTask(relationId: Long): PendingSyncTask? = storageOperationMutex.withLock {
+        consumePendingTaskLocked(relationId)
+    }
+
+    /**
+     * Atomically consume pending task + execute sync under [storageOperationMutex].
+     * Eliminates TOCTOU race where reset/switch could intervene between consume and execute.
+     * Called by [SyncService] instead of separate consumePendingTask + executeSync calls.
+     */
+    internal suspend fun consumeAndExecute(
+        relationId: Long
+    ): Pair<PendingSyncTask?, Boolean> = storageOperationMutex.withLock {
+        val task = consumePendingTaskLocked(relationId) ?: return@withLock null to false
+        val success = try {
+            executeSyncLocked(
+                relationId, task.toDownload, task.toDelete,
+                task.relationName, task.localBasePath
+            )
+        } catch (e: CancellationException) {
+            // NonCancellable: ensure DAO cleanup executes even in cancelled coroutine state.
+            withContext(NonCancellable) {
+                pendingSyncActionDao.markCancelled(relationId)
+                pendingSyncActionDao.deleteByRelationId(relationId)
+            }
+            throw e
+        }
+        if (success) pendingSyncActionDao.markCompleted(relationId)
+        else pendingSyncActionDao.markFailed(relationId)
+        pendingSyncActionDao.deleteByRelationId(relationId)
+        task to success
     }
 
     val isSyncRunning: Boolean get() = _progress.value.isRunning
@@ -236,7 +275,10 @@ class SyncEngine @Inject constructor(
         return code in RETRYABLE_CODES
     }
 
-    suspend fun dryRun(relationId: Long): DryRunResult = getMutexForRelation(relationId).withLock {
+    suspend fun dryRun(relationId: Long): DryRunResult = storageOperationMutex.withLock { dryRunLocked(relationId) }
+
+    private suspend fun dryRunLocked(relationId: Long): DryRunResult = getMutexForRelation(relationId).withLock {
+            DebugLogger.i(TAG, "dryRun 开始: relationId=$relationId")
             val relation = syncRelationRepository.getById(relationId) ?: return DryRunResult(emptyList(), emptyList())
             val source = syncSourceRepository.getById(relation.syncSourceId) ?: return DryRunResult(emptyList(), emptyList())
             val client = getClient(source.protocol)
@@ -352,6 +394,11 @@ class SyncEngine @Inject constructor(
 
             // E8: 到达这里的唯一「非空」路径是 try 块完整跑完（扫描成功）；
             // 任何扫描异常都已在 catch 中清空两个列表，故此处不可能泄漏残缺 toDelete。
+            if (scanError == null) {
+                DebugLogger.i(TAG, "dryRun 完成: ${toDownload.size} 个待下载, ${toDelete.size} 个待删除")
+            } else {
+                DebugLogger.e(TAG, "dryRun 失败", scanError)
+            }
             return DryRunResult(toDownload, toDelete, scanError)
     }
 
@@ -361,14 +408,26 @@ class SyncEngine @Inject constructor(
         toDelete: List<SyncAction>,
         relationName: String = "",
         localBasePath: String = ""
+    ): Boolean = storageOperationMutex.withLock {
+        executeSyncLocked(relationId, toDownload, toDelete, relationName, localBasePath)
+    }
+
+    internal suspend fun executeSyncLocked(
+        relationId: Long,
+        toDownload: List<SyncAction>,
+        toDelete: List<SyncAction>,
+        relationName: String = "",
+        localBasePath: String = ""
     ): Boolean = getMutexForRelation(relationId).withLock {
-        val relation = syncRelationRepository.getById(relationId) ?: return false
+            DebugLogger.i(TAG, "同步开始: relationId=$relationId, 待下载=${toDownload.size}, 待删除=${toDelete.size}")
+            val relation = syncRelationRepository.getById(relationId) ?: return false
         val source = syncSourceRepository.getById(relation.syncSourceId) ?: return false
         val maxConcurrency = MAX_CONCURRENCY
         val name = relationName.ifEmpty { relation.name }
         val basePath = localBasePath.ifEmpty { relation.localBasePath }
         // E2: encryptedMediaStore 是 Hilt Lazy 的纯属性读取，无阻塞，无需 withContext(IO)。
         val store = encryptedMediaStore
+        DebugLogger.i(TAG, "当前卷: ${store.volumeId}")
 
         val toActuallyDownload = toDownload
         // E10: 空间预检使用 AEAD 密文大小而非明文大小。
@@ -379,6 +438,9 @@ class SyncEngine @Inject constructor(
 
         // E2: usableSpace() 内部 runBlocking 阻塞，必须放到 Dispatchers.IO。
         val availableSpace = withContext(Dispatchers.IO) { store.usableSpace() }
+        if (availableSpace >= 0 && totalDownloadSize >= 0) {
+            DebugLogger.i(TAG, "空间检查: 需要 ${formatSize(totalDownloadSize)}, 可用 ${formatSize(availableSpace)}")
+        }
         // SafVolume.usableSpace() 在无法把 treeUri 解析到某个 StorageVolume 时返回 -1（未知），
         // 例如 SAF 树指向 USB/云端 provider。此时不能拿 -1 当「空间不足」——那会让这些卷的
         // 同步被永久阻塞，且文案误导。跳过预检、放行到下载阶段：每个文件写入失败会被
@@ -389,6 +451,7 @@ class SyncEngine @Inject constructor(
             // cipherLengthFor 异常或求和溢出：降级跳过预检，等同可用空间未知。
             Log.w(TAG, "AEAD 密文大小计算异常，跳过空间预检；下载失败将逐文件降级处理")
         } else if (totalDownloadSize > availableSpace) {
+            DebugLogger.e(TAG, "空间不足，中止同步")
             syncRelationRepository.updateLastSync(relationId, context.getString(R.string.sync_disk_space_insufficient, formatSize(totalDownloadSize), formatSize(availableSpace)))
             _progress.value = SyncProgress(isRunning = false, phase = SyncPhase.FAILED, relationId = relationId, relationName = name, localBasePath = basePath)
             return false
@@ -428,6 +491,7 @@ class SyncEngine @Inject constructor(
                                 try {
                                     val localRelPath = storagePaths.toLocalRelativePath(relation.localBasePath, action.relativePath)
                                     val fileName = action.relativePath.substringAfterLast("/")
+                                    DebugLogger.d(TAG, "下载: $fileName (${action.fileSize} bytes)")
 
                                     workerClient.connect(source, relation.remotePath)
 
@@ -556,6 +620,7 @@ class SyncEngine @Inject constructor(
                                             // 由外层 catch 计一次 failedDownloadCount。仅瞬态错误继续重试。
                                             if (!isRetryableSyncException(e)) throw e
                                             if (attempts >= 3) throw e
+                                            DebugLogger.w(TAG, "重试 ($attempts/3): ${action.relativePath.substringAfterLast("/")} - ${e.javaClass.simpleName}")
                                             delay(1000L * attempts)
                                         }
                                     }
@@ -590,6 +655,7 @@ class SyncEngine @Inject constructor(
                                         dryRun = false,
                                         fileSize = action.fileSize
                                     )
+                                    DebugLogger.d(TAG, "完成: $fileName")
                                     completedCount.incrementAndGet()
                                     activeDownloadsMutex.withLock {
                                         completedPathsSet.add(action.relativePath)
@@ -618,6 +684,7 @@ class SyncEngine @Inject constructor(
                                         errorMessage = syncErrorMessage(e, context)
                                     )
                                     Log.e(TAG, "Download failed code=${(e as? SyncException)?.code} path=${action.relativePath}", e)
+                                    DebugLogger.w(TAG, "失败: ${action.relativePath.substringAfterLast("/")} - ${e.javaClass.simpleName}")
                                 } finally {
                                     try { workerClient.close() } catch (_: Exception) {}
                                     semaphore.release()
@@ -711,6 +778,7 @@ class SyncEngine @Inject constructor(
 
             val totalFailures = failedDownloadCount.get() + failedDeleteCount.get()
             val hadFailures = totalFailures > 0
+            DebugLogger.i(TAG, "同步完成: 成功 ${completedCount.get()}, 失败 $totalFailures, 总计 $totalActions")
             _progress.value = SyncProgress(
                 isRunning = false,
                 phase = if (hadFailures) SyncPhase.PARTIAL_FAILED else SyncPhase.COMPLETED,
@@ -742,6 +810,7 @@ class SyncEngine @Inject constructor(
             )
             throw e
         } catch (e: Exception) {
+            DebugLogger.e(TAG, "同步异常退出", e)
             _progress.value = SyncProgress(
                 isRunning = false,
                 phase = SyncPhase.FAILED,
@@ -830,7 +899,9 @@ class SyncEngine @Inject constructor(
             }
     }
 
-    suspend fun executeDelete(relationId: Long, actions: List<SyncAction>): Boolean = getMutexForRelation(relationId).withLock {
+    suspend fun executeDelete(relationId: Long, actions: List<SyncAction>): Boolean = storageOperationMutex.withLock { executeDeleteLocked(relationId, actions) }
+
+    private suspend fun executeDeleteLocked(relationId: Long, actions: List<SyncAction>): Boolean = getMutexForRelation(relationId).withLock {
         val relation = syncRelationRepository.getById(relationId) ?: return false
         val source = syncSourceRepository.getById(relation.syncSourceId) ?: return false
         val client = getClient(source.protocol)

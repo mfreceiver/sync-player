@@ -4,11 +4,13 @@ import android.app.Application
 import android.util.Log
 import cn.vectory.syncplayer.security.AppLockManager
 import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.sync.SyncEngine
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import java.security.Security
 import javax.inject.Inject
 import javax.inject.Provider
@@ -22,6 +24,7 @@ class SyncPlayerApp : Application() {
      * 在后台协程首次取用时才构造，不占用 Application.onCreate 的启动路径。
      */
     @Inject lateinit var encryptedMediaStore: Provider<EncryptedMediaStore>
+    @Inject lateinit var syncEngine: SyncEngine
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -42,7 +45,11 @@ class SyncPlayerApp : Application() {
      */
     private fun purgeLegacyCiphertext() {
         appScope.launch {
-            runCatching { encryptedMediaStore.get().purgeLegacyIfNeeded() }
+            runCatching {
+                syncEngine.storageOperationMutex.withLock {
+                    encryptedMediaStore.get().purgeLegacyIfNeeded()
+                }
+            }
                 .onSuccess { if (it > 0) Log.i(TAG, "legacy v1 ciphertext purge: removed $it file(s)") }
                 .onFailure { Log.w(TAG, "legacy v1 ciphertext purge skipped", it) }
         }
