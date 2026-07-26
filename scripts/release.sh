@@ -12,7 +12,7 @@
 #
 # 本脚本步骤：
 #   1. 校验分支=main、工作树干净、版本格式 x.y.z、tag 未占用
-#   2. 本地门禁：compileDebugKotlin + testDebugUnitTest（破损代码连 tag 都不打）
+#   2. 本地门禁：compileDebugKotlin + testDebugUnitTest + lintDebug（破损代码连 tag 都不打）
 #   3. 生成 changelog（上次 tag..HEAD 的 conventional commits 自动分类）
 #   4. 创建 annotated tag（注释 = changelog）
 #   5. git push origin <tag> → 触发 release.yml（clean+lintRelease+testDebug+assembleRelease
@@ -57,14 +57,14 @@ if [[ -n "$(git status --porcelain)" ]]; then
   fi
 fi
 
-# --- 2. 本地门禁（编译 + 单测）---
+# --- 2. 本地门禁（编译 + 单测 + lint）---
 : "${JAVA_HOME:=/home/mar/android-studio/jbr}"
 if [[ ! -x "$JAVA_HOME/bin/java" ]]; then
   echo "❌ JAVA_HOME=$JAVA_HOME 下无 java；export JAVA_HOME=/home/mar/android-studio/jbr 后重试"
   exit 1
 fi
-echo "==> 本地门禁：compileDebugKotlin + testDebugUnitTest"
-JAVA_HOME="$JAVA_HOME" ./gradlew compileDebugKotlin testDebugUnitTest
+echo "==> 本地门禁：compileDebugKotlin + testDebugUnitTest + lintDebug"
+JAVA_HOME="$JAVA_HOME" ./gradlew compileDebugKotlin testDebugUnitTest lintDebug
 
 # --- 3. changelog（上次 tag..HEAD 的 conventional commits 自动分类）---
 LAST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
