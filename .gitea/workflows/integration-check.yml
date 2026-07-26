@@ -13,22 +13,28 @@ jobs:
   full-check:
     runs-on: android
     steps:
-      - name: Checkout（直连 Gitea）
+      - name: Checkout（直连 Gitea，优先 LAN，空时回退公网）
         env:
           TOKEN: ${{ github.token }}
+          # MY_GITEA_LAN_URL：站点级 Actions Variable（管理后台→管理设置→工作流→变量），
+          # 设为 http://<lan-ip>:<port> 让 runner 经局域网直连 Gitea（省公网 hairpin）。
+          # 未设置时回退公网 HTTPS，保证离开局域网也能跑。
+          GITEA_LAN_URL: ${{ vars.MY_GITEA_LAN_URL }}
         run: |
           set -e
-          printf 'https://x-access-token:%s@git.vectory.cn:18443\n' "$TOKEN" > ~/.git-credentials
+          BASE="${GITEA_LAN_URL:-https://git.vectory.cn:18443}"
+          # 凭据行 = scheme://x-access-token:TOKEN@host:port（从 BASE 拆出 scheme 与 host 再拼回，
+          # 这样 LAN(http) 与公网(https) 同一套逻辑，无需分别写死）
+          SCHEME="${BASE%%://*}"
+          HOST="${BASE#*://}"
+          printf '%s://x-access-token:%s@%s\n' "$SCHEME" "$TOKEN" "$HOST" > ~/.git-credentials
           chmod 600 ~/.git-credentials
           git config --global credential.helper store
           git config --global advice.detachedHead false
-          git clone https://git.vectory.cn:18443/mfreceiver/sync-player.git .
+          git clone "$BASE/mfreceiver/sync-player.git" .
           git fetch --tags --force
           git checkout -q "${{ github.sha }}"
       - name: local.properties
         run: printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
       - name: clean + lint + test + assembleDebug
-        env:
-          # Keep integration Gradle locks separate from branch/release jobs.
-          GRADLE_USER_HOME: /root/.gradle/integration
         run: ./gradlew --no-daemon --stacktrace clean lintDebug testDebugUnitTest assembleDebug

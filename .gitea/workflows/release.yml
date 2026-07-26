@@ -20,16 +20,19 @@ jobs:
           # MY_GITEA_LAN_URL：站点级 Actions Variable（管理后台→管理设置→工作流→变量），
           # 设为 http://<lan-ip>:<port> 让 runner 经局域网直连 Gitea（省公网 hairpin）。
           # 未设置时回退公网 HTTPS，保证离开局域网也能跑。
-          GITEA_BASE: ${{ vars.MY_GITEA_LAN_URL || 'https://git.vectory.cn:18443' }}
+          GITEA_LAN_URL: ${{ vars.MY_GITEA_LAN_URL }}
         run: |
           set -e
-          # 凭据行 = scheme://x-access-token:TOKEN@host:port（从 GITEA_BASE 拆出 scheme 与 host 再拼回，
+          BASE="${GITEA_LAN_URL:-https://git.vectory.cn:18443}"
+          # 凭据行 = scheme://x-access-token:TOKEN@host:port（从 BASE 拆出 scheme 与 host 再拼回，
           # 这样 LAN(http) 与公网(https) 同一套逻辑，无需分别写死）
-          printf '%s://x-access-token:%s@%s\n' "${GITEA_BASE%%://*}" "$TOKEN" "${GITEA_BASE#*://}" > ~/.git-credentials
+          SCHEME="${BASE%%://*}"
+          HOST="${BASE#*://}"
+          printf '%s://x-access-token:%s@%s\n' "$SCHEME" "$TOKEN" "$HOST" > ~/.git-credentials
           chmod 600 ~/.git-credentials
           git config --global credential.helper store
           git config --global advice.detachedHead false
-          git clone "$GITEA_BASE/mfreceiver/sync-player.git" .
+          git clone "$BASE/mfreceiver/sync-player.git" .
           git fetch --tags --force
           git checkout -q "${{ github.sha }}"
 
@@ -59,9 +62,6 @@ jobs:
             || { echo "❌ keyAlias='$RELEASE_KEY_ALIAS' 不存在于 CI keystore（本机重跑 setup-secrets.sh）"; exit 1; }
 
       - name: release-check（clean + lintRelease + testDebugUnitTest + assembleRelease）
-        env:
-          # Release may overlap integration-check; isolate Gradle journal locks.
-          GRADLE_USER_HOME: /root/.gradle/release
         run: ./scripts/ci/release-check.sh
 
       - name: 上传产物到 Gitea Release
