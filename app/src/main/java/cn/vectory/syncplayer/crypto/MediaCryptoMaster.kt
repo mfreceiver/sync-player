@@ -4,7 +4,6 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.security.KeyStore
-import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -59,8 +58,11 @@ class KeystoreKekProvider(
         return (ks.getEntry(alias, null) as KeyStore.SecretKeyEntry).secretKey
     }
     override fun wrap(mk: SecretKey): ByteArray {
-        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
-        val c = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key(), GCMParameterSpec(128, iv)) }
+        // 不要在 ENCRYPT_MODE 传 GCMParameterSpec：KeyGenParameterSpec 默认
+        // setRandomizedEncryptionRequired(true)，禁止 caller-provided IV，否则抛
+        // InvalidAlgorithmParameterException。让 Keystore 自己生成 IV，再用 cipher.iv 取回。
+        val c = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
+        val iv = c.iv
         return iv + c.doFinal(mk.encoded)
     }
     override fun unwrap(blob: ByteArray): SecretKey {

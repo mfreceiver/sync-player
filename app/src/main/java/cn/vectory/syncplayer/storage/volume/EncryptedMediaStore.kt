@@ -1,6 +1,9 @@
 package cn.vectory.syncplayer.storage.volume
 
 import cn.vectory.syncplayer.crypto.CryptoScheme
+import cn.vectory.syncplayer.sync.SyncErrorCode
+import cn.vectory.syncplayer.sync.SyncException
+import cn.vectory.syncplayer.sync.SyncOperation
 import javax.crypto.SecretKey
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.runBlocking
@@ -50,7 +53,13 @@ class EncryptedMediaStore(
         require(plainLength >= 0) { "plainLength must be non-negative" }
         // Capture volume once: avoids race if user switches storage between openWrite and catch.
         val vol = volume()
-        val sink = vol.openWrite(tmpMedia(id))
+        val sink = try {
+            vol.openWrite(tmpMedia(id))
+        } catch (e: java.io.IOException) {
+            // SAF createDocument/openOutputStream 返回 null 时 SafVolume 抛 IOException；
+            // 包装成 STORAGE_ERROR 让 UI 显示准确文案而非 UNKNOWN/类名。
+            throw SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DOWNLOAD, path = tmpMedia(id), cause = e)
+        }
         // The wrapper must own `sink` from here on: encodeHeader() runs during ChunkedEncryptSink's
         // property initialization and rejects lengths past the implementation cap, i.e. it can throw
         // *before* the constructor body's own try/catch exists. Without this guard the already-open

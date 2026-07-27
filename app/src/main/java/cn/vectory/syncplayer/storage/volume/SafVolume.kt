@@ -61,7 +61,7 @@ class SafVolume(
                 val newDoc = DocumentsContract.createDocument(
                     context.contentResolver, parentUri,
                     DocumentsContract.Document.MIME_TYPE_DIR, segment
-                ) ?: error("cannot create directory $segment")
+                ) ?: throw java.io.IOException("cannot create directory $segment")
                 docId = DocumentsContract.getDocumentId(newDoc)
             }
         }
@@ -83,15 +83,15 @@ class SafVolume(
         // 创建新文件（使用 MIME type）
         val newDocUri = DocumentsContract.createDocument(
             context.contentResolver, parentUri, "application/octet-stream", name
-        ) ?: error("cannot create document $relPath")
-        context.contentResolver.openOutputStream(newDocUri) ?: error("cannot open output $relPath")
+        ) ?: throw java.io.IOException("cannot create document $relPath")
+        context.contentResolver.openOutputStream(newDocUri) ?: throw java.io.IOException("cannot open output $relPath")
     }
 
     override suspend fun openRead(relPath: String): SeekableReadHandle = withContext(Dispatchers.IO) {
         val docId = resolveDocId(relPath) ?: throw java.io.FileNotFoundException("document not found: $relPath")
         val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
         val pfd = context.contentResolver.openFileDescriptor(uri, "r")
-            ?: error("cannot open pfd $relPath")
+            ?: throw java.io.IOException("cannot open pfd $relPath")
         val fd = pfd.fileDescriptor
         // Verify the fd is seekable by probing lseek
         try {
