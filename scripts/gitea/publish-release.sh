@@ -2,7 +2,7 @@
 # scripts/gitea/publish-release.sh — CI 内把 release-check 产物上传到 Gitea Release。
 # 用法: publish-release.sh <tag>     (tag 形如 v1.2.3；由 release.yml 调用)
 # 环境：GITEA_TOKEN（release.yml 注入 auto github.token）、GITEA_URL。
-# 产物目录：artifacts/（APK + mapping.txt + SHA256SUMS）。
+# 产物目录：artifacts/（APK + SHA256SUMS）。
 # 说明：CI 镜像（universal-ci-android:35-jdk21）无 python3/jq，故 JSON 解析仅用 POSIX
 #       工具（grep/cut/head），release body 的 JSON 转义仅用 awk。
 set -euo pipefail
