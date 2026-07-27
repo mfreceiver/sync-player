@@ -49,8 +49,44 @@ interface FolderContextMenuActions {
 }
 
 /**
+ * Dispatch a file-menu trash/restore tap.
+ *
+ * Fallback contract (so the button is never a silent no-op):
+ * - When the host supplies an undo-aware [callback] (Browser), it drives the operation and the
+ *   undo Snackbar — the direct [FileContextMenuActions.toggleTrashed] is NOT also called.
+ * - When no callback is supplied (SearchScreen and other legacy hosts), fall back to the direct
+ *   [actions] call.
+ *
+ * Exactly one of the two paths runs. Extracted as a pure function so the contract is unit-testable.
+ */
+internal fun dispatchFileTrashAction(
+    id: Long,
+    callback: ((Long) -> Unit)?,
+    actions: FileContextMenuActions
+) {
+    if (callback != null) callback(id) else actions.toggleTrashed(id)
+}
+
+/**
+ * Dispatch a file-menu delete tap. Same fallback contract as [dispatchFileTrashAction], but for
+ * hard delete via [FileContextMenuActions.deleteFile].
+ */
+internal fun dispatchFileDeleteAction(
+    id: Long,
+    callback: ((Long) -> Unit)?,
+    actions: FileContextMenuActions
+) {
+    if (callback != null) callback(id) else actions.deleteFile(id)
+}
+
+/**
  * Shared context menu dialog for file items (videos and non-videos).
  * Extracted from BrowserScreen for reuse in SearchScreen.
+ *
+ * @param onTrashed Called with the video item id when the user taps the trash/restore action.
+ *   The host is responsible for performing the toggle (with undo support) and showing a snackbar.
+ * @param onDeleted Called with the video item id when the user taps the delete action.
+ *   The host is responsible for performing the deferred delete (with undo support) and showing a snackbar.
  */
 @Composable
 fun FileContextMenuDialog(
@@ -60,6 +96,8 @@ fun FileContextMenuDialog(
     scope: CoroutineScope,
     snackbarHostState: SnackbarHostState,
     context: Context = LocalContext.current,
+    onTrashed: ((Long) -> Unit)? = null,
+    onDeleted: ((Long) -> Unit)? = null,
 ) {
     var localStar by remember { mutableStateOf(item.star) }
     val noRecordStr = stringResource(R.string.context_no_record)
@@ -158,7 +196,10 @@ fun FileContextMenuDialog(
                         TextButton(onClick = {
                             val vidId = item.videoItemId
                             if (vidId != null) {
-                                actions.toggleTrashed(vidId)
+                                // Hosts that pass an undo-aware callback (Browser) drive the
+                                // operation through it; hosts that don't (SearchScreen) fall back
+                                // to the direct actions call. Exactly one path runs.
+                                dispatchFileTrashAction(vidId, onTrashed, actions)
                             }
                             onDismiss()
                         }) {
@@ -175,7 +216,8 @@ fun FileContextMenuDialog(
                                 }
                                 return@TextButton
                             }
-                            actions.deleteFile(delId)
+                            // Same fallback contract as the trash button above.
+                            dispatchFileDeleteAction(delId, onDeleted, actions)
                             onDismiss()
                         }) {
                             Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error)

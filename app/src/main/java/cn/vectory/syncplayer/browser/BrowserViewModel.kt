@@ -10,13 +10,14 @@ import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.data.model.FolderStats
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
+import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.data.model.SyncRelationWithSource
 import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.ui.util.isVideoFile
 import cn.vectory.syncplayer.ui.util.isImageFile
-import cn.vectory.syncplayer.ui.util.isMediaFile
 import cn.vectory.syncplayer.ui.util.fileNameComparator
 import cn.vectory.syncplayer.ui.components.DirectoryNode
 import cn.vectory.syncplayer.ui.components.FileContextMenuActions
@@ -26,6 +27,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.debounce
@@ -39,8 +41,10 @@ class BrowserViewModel @Inject constructor(
     private val videoRepository: VideoRepository,
     private val playbackRepository: PlaybackRepository,
     private val syncRelationRepository: SyncRelationRepository,
+    private val syncSourceRepository: SyncSourceRepository,
     private val userPrefs: UserPreferencesRepository,
     private val fileOps: FileOperationsUseCase,
+    private val undoDeleteUseCase: UndoDeleteUseCase,
     @ApplicationContext private val context: Context
 ) : ViewModel(), FileContextMenuActions, FolderContextMenuActions {
 
@@ -137,11 +141,63 @@ class BrowserViewModel @Inject constructor(
         .map { it.isNotEmpty() }
         .stateIn(viewModelScope, SharingStarted.Lazily, false)
 
+    /**
+     * Coarse onboarding state shown as a guidance card on the browser root when the
+     * library is empty. Combines the raw repository Flows (not the [hasConfig]
+     * StateFlow) so the initial value stays null until Room has emitted at least
+     * once for all three signals — this prevents a one-frame NEEDS_SOURCE flash
+     * for users who already have media.
+     *
+     * Null until first emission; the UI treats null as "do not show card".
+     */
+    val firstRunState: StateFlow<FirstRunState?> = combine(
+        syncSourceRepository.getAllFlow(),
+        syncRelationRepository.getAllWithSourceFlow(),
+        videoRepository.getAllItemsFlow()
+    ) { sources, relations, media ->
+        deriveFirstRunState(
+            hasSource = sources.isNotEmpty(),
+            hasRelation = relations.isNotEmpty(),
+            hasMedia = media.isNotEmpty()
+        )
+    }.stateIn(viewModelScope, SharingStarted.Lazily, null)
+
+    /** Whether the user has dismissed the first-run card. Persisted across launches. */
+    val onboardingDismissed: StateFlow<Boolean> = userPrefs.onboardingDismissed
+        .stateIn(viewModelScope, SharingStarted.Lazily, false)
+
+    /** Persist the dismissal so the card does not reappear on next launch. */
+    fun dismissOnboarding() {
+        viewModelScope.launch {
+            try {
+                userPrefs.setOnboardingDismissed(true)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to persist onboarding dismissal", e)
+            }
+        }
+    }
+
+    /** Reset the dismissal flag so the card can be re-shown from a settings entry. */
+    fun resetOnboardingDismissed() {
+        viewModelScope.launch {
+            try {
+                userPrefs.setOnboardingDismissed(false)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to reset onboarding dismissal", e)
+            }
+        }
+    }
+
     // Playback records will be loaded on-demand per-folder to avoid loading all into memory
     // private val playbackRecords removed in favor of per-folder queries
 
     private val basePaths = syncRelationRepository.getAllWithSourceFlow()
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    /** ID of the first sync relation, used as the sync target in the NEEDS_SYNC card. */
+    val firstRelationId: StateFlow<Long?> = basePaths
+        .map { it.firstOrNull()?.relation?.id }
+        .stateIn(viewModelScope, SharingStarted.Lazily, null)
 
     private val basePathToRelationId = basePaths.map { list ->
         list.associate { it.relation.localBasePath to it.relation.id }
@@ -199,11 +255,21 @@ class BrowserViewModel @Inject constructor(
     // preventing stale results from overwriting fresher ones during rapid navigation.
     .mapLatest { req ->
         val baseDirSet = req.data.relations.map { it.relation.localBasePath }.toSet()
-        val items = buildBrowseItems(
-            req.data.folder, req.filters.mode, req.filters.filterVal, req.filters.starMode, req.filters.starValue,
-            req.browseModeVal, req.data.records, baseDirSet
+        val output = buildBrowseItems(
+            folder = req.data.folder,
+            mode = req.filters.mode,
+            filterVal = req.filters.filterVal,
+            starMode = req.filters.starMode,
+            starValue = req.filters.starValue,
+            browseModeVal = req.browseModeVal,
+            records = req.data.records,
+            baseDirSet = baseDirSet
         )
-        BrowseResult(req.data.folder, items)
+        // Forward the builder's scalar outputs to the StateFlows. flatTotalCount is null in
+        // DIRECTORY mode on purpose — preserves the "retain last FILE-mode value" behavior.
+        output.flatTotalCount?.let { _flatTotalCount.value = it }
+        _hiddenByFilterCount.value = output.hiddenByFilterCount
+        BrowseResult(req.data.folder, output.items)
     }
     // Stamp the folder that produced this list (NOT _currentFolder.value) to avoid scroll-restore
     // misattribution when a slow build completes after the user has already navigated away.
@@ -219,6 +285,14 @@ class BrowserViewModel @Inject constructor(
 
     private data class BrowseResult(val folder: String, val items: List<BrowseItem>)
 
+    /**
+     * Gathers the DAO rows the [BrowseItemBuilder] needs for the current request, then delegates
+     * the pure filter/sort/star/folder combination to it. All I/O (DB queries) and all state
+     * mutation (the two scalar counts) live here; the builder itself is side-effect free.
+     *
+     * Kept as a thin orchestration shell so the Flow chain above (debounce / flatMapLatest /
+     * mapLatest / stateIn timing) is unchanged — only the in-memory build logic moved out.
+     */
     private suspend fun buildBrowseItems(
         folder: String,
         mode: SortMode,
@@ -228,12 +302,11 @@ class BrowserViewModel @Inject constructor(
         browseModeVal: BrowseMode,
         records: List<PlaybackRecordEntity>,
         baseDirSet: Set<String>
-    ): List<BrowseItem> = withContext(Dispatchers.IO) {
-        // === FILE MODE: flat list, no folders ===
+    ): BrowseItemBuilder.Output = withContext(Dispatchers.IO) {
+        // === FILE MODE: flat list, no folders. The DAO applies star/unwatched/media filters
+        // and the duration/size ORDER BY; the builder only remaps + filename-sorts. ===
         if (browseModeVal == BrowseMode.FILE) {
             val totalCount = videoRepository.getTotalItemCount()
-            _flatTotalCount.value = totalCount
-
             val mediaOnly = filterVal == BrowseFilter.MEDIA_ONLY || filterVal == BrowseFilter.UNWATCHED
             val unwatchedOnly = filterVal == BrowseFilter.UNWATCHED
             val sortCol = when (mode) {
@@ -243,7 +316,6 @@ class BrowserViewModel @Inject constructor(
                 SortMode.FILE_SIZE_DESC -> "fileSize_desc"
                 else -> ""
             }
-
             val dbItems = videoRepository.getFlatItemsFiltered(
                 mediaOnly = mediaOnly,
                 unwatchedOnly = unwatchedOnly,
@@ -251,196 +323,53 @@ class BrowserViewModel @Inject constructor(
                 starValue = starValue,
                 sortCol = sortCol
             )
-
-            val result = dbItems.map { item ->
-                BrowseItem(
-                    videoItemId = item.id,
-                    name = item.fileName,
-                    relativePath = item.relativePath,
-                    isDirectory = false,
-                    fileSize = item.fileSize,
-                    duration = item.duration,
-                    width = item.width,
-                    height = item.height,
-                    bitrate = item.bitrate,
-                    frameRate = item.frameRate,
-                    playbackPosition = item.playbackPosition,
-                    playbackDuration = item.playbackDuration,
-                    isCompleted = item.isCompleted,
-                    isTrashed = item.isTrashed,
-                    hasGainAdjusted = item.audioGainDb != null,
-                    star = item.star,
-                    mediaType = item.mediaType,
-                    dateTaken = item.dateTaken
+            return@withContext BrowseItemBuilder.build(
+                BrowseItemBuilder.Input(
+                    folder = folder,
+                    sortMode = mode,
+                    filter = filterVal,
+                    starMode = starMode,
+                    starValue = starValue,
+                    browseMode = browseModeVal,
+                    flatTotalCount = totalCount,
+                    flatItems = dbItems,
+                    subFolders = emptyList(),
+                    itemsInFolder = emptyList(),
+                    childVideoStats = emptyList(),
+                    folderHasSubDirs = emptyMap(),
+                    records = records,
+                    baseDirSet = baseDirSet
                 )
-            }
-
-            val sorted = when (mode) {
-                SortMode.FILENAME_ASC -> result.sortedWith(compareBy(fileNameComparator) { it.name })
-                SortMode.FILENAME_DESC -> result.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
-                else -> result
-            }
-
-            _hiddenByFilterCount.value = (totalCount - sorted.size).coerceAtLeast(0)
-
-            return@withContext sorted
+            )
         }
 
         // === DIRECTORY MODE: DB is the sole truth source (no physical disk scan) ===
         val dbFolderNames = videoRepository.getSubFolders(folder).first()
-        val recordMap = records.associateBy { it.videoItemId }
-        val allFolderNames = dbFolderNames.sortedWith(fileNameComparator)
-
         val videoEntities = videoRepository.getItemsInFolder(folder).first()
-
         val childStats = videoRepository.getChildVideoStats(folder)
-        val subFolderStatsMap = childStats
-            .filter { isVideoFile(it.fileName) }
-            .groupBy { stat ->
-                val afterFolder = if (folder.isEmpty()) stat.relativePath
-                    else stat.relativePath.substring(folder.length + 1)
-                afterFolder.substringBefore('/')
-            }
-
-        // Folder thumbnail mosaic: ids of media whose parent is a direct child of [folder].
-        val folderVideoIdsMap = childStats
-            .groupBy { stat ->
-                val afterFolder = if (folder.isEmpty()) stat.relativePath
-                    else stat.relativePath.substring(folder.length + 1)
-                afterFolder.substringBefore('/')
-            }
-            .mapValues { (_, rows) -> rows.map { it.id }.take(9) }
-
-        // Subfolder presence: one deep-parentPath query, computed in memory (no N+1).
+        // Subfolder presence: one deep-parentPath query, computed in memory (no N+1). Sort order
+        // of directChildNames does not affect the resulting map, but matches the original call.
+        val allFolderNames = dbFolderNames.sortedWith(fileNameComparator)
         val folderHasSubDirs = videoRepository.getDirectChildFolderHasSubFolders(folder, allFolderNames)
 
-        val folders = allFolderNames.map { folderName ->
-            val fullPath = if (folder.isEmpty()) folderName else "$folder/$folderName"
-            val stats = subFolderStatsMap[folderName]
-            val vidCount = stats?.size ?: 0
-            val playedCount = stats?.count { it.position > 0 || it.isCompleted } ?: 0
-            val trashedCount = stats?.count { it.isTrashed } ?: 0
-            val childIds = folderVideoIdsMap[folderName].orEmpty()
-            BrowseItem(
-                videoItemId = null,
-                name = folderName,
-                relativePath = fullPath,
-                isDirectory = true,
-                isSyncBaseDir = baseDirSet.contains(fullPath),
-                containsSyncBaseDir = baseDirSet.any { it.startsWith("$fullPath/") },
-                isInSyncBaseDir = baseDirSet.any { fullPath.startsWith("$it/") },
-                videoCount = vidCount,
-                playedCount = playedCount,
-                trashedCount = trashedCount,
-                videoItemIds = childIds
+        BrowseItemBuilder.build(
+            BrowseItemBuilder.Input(
+                folder = folder,
+                sortMode = mode,
+                filter = filterVal,
+                starMode = starMode,
+                starValue = starValue,
+                browseMode = browseModeVal,
+                flatTotalCount = 0,
+                flatItems = emptyList(),
+                subFolders = dbFolderNames,
+                itemsInFolder = videoEntities,
+                childVideoStats = childStats,
+                folderHasSubDirs = folderHasSubDirs,
+                records = records,
+                baseDirSet = baseDirSet
             )
-        }
-
-        val videos = videoEntities
-            .map { video ->
-                val record = recordMap[video.id]
-                BrowseItem(
-                    videoItemId = video.id,
-                    name = video.fileName,
-                    relativePath = video.relativePath,
-                    isDirectory = false,
-                    fileSize = video.fileSize,
-                    duration = video.duration,
-                    width = video.width,
-                    height = video.height,
-                    bitrate = video.bitrate,
-                    frameRate = video.frameRate,
-                    playbackPosition = record?.position ?: 0,
-                    playbackDuration = record?.duration ?: 0,
-                    isCompleted = record?.isCompleted ?: false,
-                    isTrashed = record?.isTrashed ?: false,
-                    hasGainAdjusted = video.audioGainDb != null,
-                    star = video.star,
-                    mediaType = video.mediaType,
-                    dateTaken = video.dateTaken
-                )
-            }
-
-        val allVideos = videos
-
-        val imageFiles = allVideos.filter { isImageFile(it.name) }
-        val videoFiles = allVideos.filter { isVideoFile(it.name) }
-        val otherFiles = allVideos.filter { !isVideoFile(it.name) && !isImageFile(it.name) }
-
-        val filteredVideos = when (filterVal) {
-            BrowseFilter.ALL -> videoFiles
-            BrowseFilter.MEDIA_ONLY -> videoFiles
-            BrowseFilter.UNWATCHED -> videoFiles.filter {
-                it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
-            }
-        }
-        val filteredImages = when (filterVal) {
-            BrowseFilter.ALL -> imageFiles
-            BrowseFilter.MEDIA_ONLY -> imageFiles
-            BrowseFilter.UNWATCHED -> imageFiles.filter {
-                it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
-            }
-        }
-
-        val starFilteredVideos = when (starMode) {
-            StarFilterMode.OFF -> filteredVideos
-            StarFilterMode.EQ -> filteredVideos.filter { it.star == starValue }
-            StarFilterMode.GT -> filteredVideos.filter { it.star > starValue }
-            StarFilterMode.LT -> filteredVideos.filter { it.star < starValue }
-        }
-        val starFilteredImages = when (starMode) {
-            StarFilterMode.OFF -> filteredImages
-            StarFilterMode.EQ -> filteredImages.filter { it.star == starValue }
-            StarFilterMode.GT -> filteredImages.filter { it.star > starValue }
-            StarFilterMode.LT -> filteredImages.filter { it.star < starValue }
-        }
-
-        val sortedFolders = when (mode) {
-            SortMode.FILENAME_ASC -> folders.sortedWith(compareBy(fileNameComparator) { it.name })
-            SortMode.FILENAME_DESC -> folders.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
-            else -> folders.sortedWith(compareBy(fileNameComparator) { it.name })
-        }
-        val sortedNonVideos = otherFiles.sortedWith(compareBy(fileNameComparator) { it.name })
-        val sortedVideos = when (mode) {
-            SortMode.FILENAME_ASC -> starFilteredVideos.sortedWith(compareBy(fileNameComparator) { it.name })
-            SortMode.FILENAME_DESC -> starFilteredVideos.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
-            SortMode.DURATION_ASC -> starFilteredVideos.sortedBy { it.duration ?: 0L }
-            SortMode.DURATION_DESC -> starFilteredVideos.sortedByDescending { it.duration ?: 0L }
-            SortMode.FILE_SIZE_ASC -> starFilteredVideos.sortedBy { it.fileSize }
-            SortMode.FILE_SIZE_DESC -> starFilteredVideos.sortedByDescending { it.fileSize }
-        }
-        val sortedImages = when (mode) {
-            SortMode.FILENAME_ASC -> starFilteredImages.sortedWith(compareBy(fileNameComparator) { it.name })
-            SortMode.FILENAME_DESC -> starFilteredImages.sortedWith(compareBy(fileNameComparator) { it.name }).asReversed()
-            SortMode.DURATION_ASC -> starFilteredImages.sortedBy { it.dateTaken ?: 0L }
-            SortMode.DURATION_DESC -> starFilteredImages.sortedByDescending { it.dateTaken ?: 0L }
-            SortMode.FILE_SIZE_ASC -> starFilteredImages.sortedBy { it.fileSize }
-            SortMode.FILE_SIZE_DESC -> starFilteredImages.sortedByDescending { it.fileSize }
-        }
-
-        val totalBeforeFilter = sortedFolders.size + allVideos.size
-        val filteredFolders = if (filterVal == BrowseFilter.UNWATCHED) {
-            sortedFolders.filter { folderItem ->
-                val hasSubDirs = folderHasSubDirs[folderItem.name] ?: true
-                !(folderItem.videoCount > 0 && folderItem.playedCount >= folderItem.videoCount && !hasSubDirs)
-            }
-        } else {
-            sortedFolders
-        }
-        val finalNonVideos = when (filterVal) {
-            BrowseFilter.ALL -> sortedNonVideos
-            BrowseFilter.MEDIA_ONLY -> emptyList()
-            BrowseFilter.UNWATCHED -> emptyList()
-        }
-
-        val finalImages = when (filterVal) {
-            BrowseFilter.ALL -> sortedImages
-            BrowseFilter.MEDIA_ONLY -> sortedImages
-            BrowseFilter.UNWATCHED -> sortedImages
-        }
-        _hiddenByFilterCount.value = (totalBeforeFilter - filteredFolders.size - finalNonVideos.size - finalImages.size - sortedVideos.size).coerceAtLeast(0)
-
-        (filteredFolders + finalNonVideos + finalImages + sortedVideos).distinctBy { it.relativePath }
+        )
     }
 
     fun setFolder(folder: String) {
@@ -586,7 +515,17 @@ class BrowserViewModel @Inject constructor(
     }
 
     override fun toggleTrashed(videoItemId: Long) {
-        fileOps.toggleTrashed(videoItemId, basePaths.value, viewModelScope, _error)
+        undoDeleteUseCase.performTrashToggle(videoItemId, basePaths.value, viewModelScope, _error)
+    }
+
+    /**
+     * Trash-toggle with an [onSuccess] callback invoked ONLY after the use-case has performed
+     * the toggle and recorded undo state. The caller (BrowserScreen) uses this to defer showing
+     * the undo Snackbar until the async toggle actually succeeds — so a failed toggle never
+     * produces a misleading "moved to trash" Snackbar. On failure the error lands in [_error].
+     */
+    fun toggleTrashedWithUndo(videoItemId: Long, onSuccess: () -> Unit) {
+        undoDeleteUseCase.performTrashToggle(videoItemId, basePaths.value, viewModelScope, _error, onSuccess)
     }
 
     override fun isFileInBaseDir(relativePath: String): Boolean {
@@ -594,11 +533,83 @@ class BrowserViewModel @Inject constructor(
     }
 
     override fun deleteFile(videoItemId: Long) {
-        fileOps.deleteFile(videoItemId, viewModelScope, _error) { _refreshTrigger.value++ }
+        undoDeleteUseCase.performHardDelete(videoItemId, viewModelScope, _error) { _refreshTrigger.value++ }
+    }
+
+    /**
+     * Deferred hard-delete with an [onSuccess] callback invoked ONLY after the use-case has
+     * recorded the pending delete and bumped the refresh trigger. The caller defers the undo
+     * Snackbar until then, so a delete that fails before recording state never shows a
+     * "deleted" Snackbar.
+     */
+    fun deleteFileWithUndo(videoItemId: Long, onSuccess: () -> Unit) {
+        undoDeleteUseCase.performHardDelete(videoItemId, viewModelScope, _error) {
+            _refreshTrigger.value++
+            onSuccess()
+        }
+    }
+
+    /**
+     * Undo the most recent delete operation (trash toggle or deferred hard delete).
+     * @param expectedId If provided, only undo if the current pending operation matches this id.
+     * Returns the result so the caller can show appropriate feedback.
+     */
+    suspend fun undoDelete(expectedId: Long? = null): UndoResult = undoDeleteUseCase.undo(expectedId)
+
+    /**
+     * Commit the deferred hard delete when the undo snackbar expires without action.
+     *
+     * If the commit fails, the [UndoResult.Failed] is mapped to a localized message in [_error]
+     * (surfaced via the error Snackbar) — a failed commit must never be silently swallowed.
+     *
+     * @param expectedId If provided, only commit if the current pending operation matches this id.
+     * No-op if the last operation was a trash toggle (already applied).
+     */
+    suspend fun commitDeferredDelete(expectedId: Long? = null): UndoResult {
+        val result = undoDeleteUseCase.commitDeferredDelete(expectedId)
+        if (result is UndoResult.Failed) {
+            _error.value = syncErrorMessage(result.error, context)
+        }
+        return result
+    }
+
+    /**
+     * Page-leave safety commit: fire-and-forget on the use-case's own safety scope, so a
+     * deferred hard delete is never silently lost when the BrowserScreen composition disposes
+     * (snackbar cancelled / navigation away) before the snackbar's Dismissed branch ran.
+     *
+     * [expectedId] scopes the commit to the specific pending delete observed at dispose time,
+     * so a stale dispose cannot commit a newer operation.
+     */
+    fun commitDeferredDeleteSafely(expectedId: Long) {
+        undoDeleteUseCase.commitPendingSafely(expectedId)
     }
 
     override suspend fun buildShareIntent(videoItemId: Long): Intent? =
         fileOps.buildShareIntent(videoItemId)
+
+    /**
+     * True when the entire library has no media (regardless of current filter/folder).
+     * Used by onboarding to avoid showing the guidance card when the current view is
+     * merely filtered empty while media exists elsewhere.
+     */
+    val libraryEmpty: StateFlow<Boolean> = videoRepository.getAllItemsFlow()
+        .map { it.isEmpty() }
+        .stateIn(viewModelScope, SharingStarted.Lazily, true)
+
+    /**
+     * On ViewModel clear (page leave / fragment destroy), commit any pending deferred
+     * hard delete so it is never silently lost.
+     *
+     * NOTE: this MUST NOT launch into [viewModelScope] — by the time `onCleared()` runs,
+     * that scope is already cancelled and a launch into it is a silent no-op (the pending
+     * hard delete would leak forever). [UndoDeleteUseCase.commitPendingSafely] uses its
+     * own owned safety scope + [NonCancellable] so the commit runs regardless.
+     */
+    override fun onCleared() {
+        super.onCleared()
+        undoDeleteUseCase.commitPendingSafely()
+    }
 
     companion object {
         private const val TAG = "BrowserViewModel"

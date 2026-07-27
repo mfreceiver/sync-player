@@ -43,10 +43,10 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
     NavHost(
         navController = navController,
         startDestination = Route.Browser.route,
-        enterTransition = { EnterTransition.None },
-        exitTransition = { ExitTransition.None },
-        popEnterTransition = { EnterTransition.None },
-        popExitTransition = { ExitTransition.None }
+        enterTransition = { fadeIn(tween(200)) },
+        exitTransition = { fadeOut(tween(200)) },
+        popEnterTransition = { fadeIn(tween(200)) },
+        popExitTransition = { fadeOut(tween(200)) }
     ) {
         composable(
             route = Route.Browser.route,
@@ -82,6 +82,12 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                 },
                 onNavigateToSyncPreview = { relationId ->
                     navController.navigate(Route.SyncPreview.create(relationId, "download"))
+                },
+                onNavigateToCreateSyncSource = {
+                    navController.navigate(Route.SyncSourceEdit.createNew())
+                },
+                onNavigateToCreateSyncRelation = {
+                    navController.navigate(Route.SyncRelationEdit.createNew())
                 }
             )
         }

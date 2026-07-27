@@ -26,7 +26,7 @@ class SyncRelationRepository @Inject constructor(
                 val source = sourceMap[entity.syncSourceId]
                 SyncRelationWithSource(
                     relation = entity.toDomain(),
-                    sourceName = source?.name ?: "未知",
+                    sourceName = source?.name,
                     sourceProtocol = source?.protocol?.let { SyncProtocol.valueOf(it) } ?: SyncProtocol.SMB
                 )
             }
@@ -41,7 +41,7 @@ class SyncRelationRepository @Inject constructor(
             val source = sourceMap[entity.syncSourceId]
             SyncRelationWithSource(
                 relation = entity.toDomain(),
-                sourceName = source?.name ?: "未知",
+                sourceName = source?.name,
                 sourceProtocol = source?.protocol?.let { SyncProtocol.valueOf(it) } ?: SyncProtocol.SMB
             )
         }

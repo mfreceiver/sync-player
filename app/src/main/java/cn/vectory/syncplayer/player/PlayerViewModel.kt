@@ -7,11 +7,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
+import cn.vectory.syncplayer.browser.UndoDeleteUseCase
+import cn.vectory.syncplayer.browser.UndoResult
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.navigation.VideoQueue
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -28,7 +31,13 @@ sealed class PlayerOverlay {
     data object NoPrevious : PlayerOverlay()
     data object NoNext : PlayerOverlay()
     data class TrashAction(val isIn: Boolean) : PlayerOverlay()
-    data class Orientation(val label: String) : PlayerOverlay()
+    data class Orientation(val mode: OrientationMode) : PlayerOverlay()
+}
+
+/** Orientation mode for the player overlay. UI resolves display text from resources. */
+enum class OrientationMode {
+    FULLSCREEN,
+    ROTATION,
 }
 
 data class PlayerUiState(
@@ -51,7 +60,7 @@ data class PlayerUiState(
     val speedOverlayMultiplier: Float? = null,
     val isLongPressing: Boolean = false,
     val lastAutoSwitchTime: Long = 0L,
-    val playerError: String? = null
+    val hasPlayerError: Boolean = false
 )
 
 @HiltViewModel
@@ -60,7 +69,8 @@ class PlayerViewModel @Inject constructor(
     private val videoRepository: VideoRepository,
     private val playbackRepository: PlaybackRepository,
     private val userPrefs: UserPreferencesRepository,
-    private val videoQueue: VideoQueue
+    private val videoQueue: VideoQueue,
+    private val undoDeleteUseCase: UndoDeleteUseCase
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PlayerUiState())
@@ -68,6 +78,17 @@ class PlayerViewModel @Inject constructor(
 
     private val _currentPosition = MutableStateFlow(0L)
     val currentPosition: StateFlow<Long> = _currentPosition.asStateFlow()
+
+    /** Error flow for undo/delete operations — surfaced via Snackbar in the UI. */
+    val _playerErrorFlow = MutableStateFlow<String?>(null)
+
+    /** Read-only view of [_playerErrorFlow] for the UI to collect. */
+    val playerError: StateFlow<String?> get() = _playerErrorFlow
+
+    /** Clear the player error after the UI has shown it. */
+    fun clearError() {
+        _playerErrorFlow.value = null
+    }
 
     private val _allVideoIds = MutableStateFlow<List<Long>>(emptyList())
     val allVideoIds: StateFlow<List<Long>> = _allVideoIds.asStateFlow()
@@ -173,18 +194,51 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun toggleTrashed() {
+    /**
+     * Toggle trashed flag with undo support. [onSuccess] receives the video id captured at
+     * call time — the caller uses it as the undo Snackbar's `expectedId` so a stale Snackbar
+     * (after switching to the next video) never undoes a newer toggle on the new media.
+     *
+     * The playback-record refresh is launched separately in `viewModelScope` and only updates
+     * `state.playbackRecord` if the currently-loaded video still matches [videoId] — switching
+     * to the next item before the refresh completes will NOT overwrite the new item's record.
+     *
+     * A failed toggle sets [_playerErrorFlow] and never invokes [onSuccess].
+     * CancellationException is propagated, never swallowed.
+     */
+    fun toggleTrashed(onSuccess: (Long) -> Unit = {}) {
         val videoId = _uiState.value.videoItem?.id ?: return
-        viewModelScope.launch {
-            try {
-                playbackRepository.toggleTrashed(videoId)
-                val record = playbackRepository.getByVideoId(videoId)
-                _uiState.update { it.copy(playbackRecord = record) }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to toggle trashed", e)
+        undoDeleteUseCase.performTrashToggleNoGuard(videoId, viewModelScope, _playerErrorFlow) {
+            // Refresh the playback record only if the user is still on this video.
+            viewModelScope.launch {
+                try {
+                    val record = playbackRepository.getByVideoId(videoId)
+                    _uiState.update { state ->
+                        if (state.videoItem?.id == videoId) {
+                            state.copy(playbackRecord = record)
+                        } else {
+                            // Switched to another video — do NOT overwrite the new item's record.
+                            state
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to refresh playback record after toggle id=$videoId", e)
+                }
             }
+            // Surface the captured id (NOT the current state's id) so a stale Snackbar can never
+            // undo a newer toggle on a different video.
+            onSuccess(videoId)
         }
     }
+
+    /**
+     * Undo the most recent delete operation (trash toggle).
+     * @param expectedId If provided, only undo if the current pending operation matches this id.
+     * Returns the result so the caller can show appropriate feedback.
+     */
+    suspend fun undoDelete(expectedId: Long? = null): UndoResult = undoDeleteUseCase.undo(expectedId)
 
     fun getSavedPosition(): Long = _uiState.value.playbackRecord?.position ?: 0L
 
@@ -292,12 +346,18 @@ class PlayerViewModel @Inject constructor(
         _uiState.update { it.copy(seekTarget = -1L) }
     }
 
-    fun onPlayerError(errorMessage: String) {
-        _uiState.update { it.copy(playerError = errorMessage, isPlaying = false) }
+    /**
+     * Marks a playback error in the UI state WITHOUT carrying the underlying
+     * [androidx.media3.common.PlaybackException.message]. That message may
+     * contain URI/path/provider/internal details and must never reach the UI.
+     * Callers should log the raw exception for developer diagnostics.
+     */
+    fun onPlayerError() {
+        _uiState.update { it.copy(hasPlayerError = true, isPlaying = false) }
     }
 
     fun clearPlayerError() {
-        _uiState.update { it.copy(playerError = null) }
+        _uiState.update { it.copy(hasPlayerError = false) }
     }
 
     override fun onCleared() {

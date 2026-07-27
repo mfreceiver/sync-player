@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao
 import cn.vectory.syncplayer.data.local.dao.PlaybackRecordDao
 import cn.vectory.syncplayer.data.local.dao.PendingSyncActionDao
@@ -11,11 +12,12 @@ import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
 import cn.vectory.syncplayer.storage.volume.MediaVolumeProvider
 import cn.vectory.syncplayer.storage.volume.MediaPaths
+import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.sync.SyncEngine
 import cn.vectory.syncplayer.ui.util.formatFileSize
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,6 +47,7 @@ class StorageManagementViewModel @Inject constructor(
     private val playbackRecordDao: PlaybackRecordDao,
     private val pendingSyncActionDao: PendingSyncActionDao,
     private val syncEngine: SyncEngine,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(StorageState())
@@ -59,13 +62,13 @@ class StorageManagementViewModel @Inject constructor(
             val treeUriStr = userPrefs.getMediaStorageTreeUri()
             val isExternal = treeUriStr != null
             val externalPath = if (isExternal) resolveTreeDisplayName(context, treeUriStr!!) else null
-            val count = withContext(Dispatchers.IO) {
+            val count = withContext(ioDispatcher) {
                 try { videoItemDao.getTotalItemCount() } catch (e: Exception) {
                     Log.w(TAG, "Failed to query file count", e)
                     Int.MAX_VALUE  // fail-closed: unknown → treat as "has files" → can't switch
                 }
             }
-            val usableSpaceLabel = withContext(Dispatchers.IO) {
+            val usableSpaceLabel = withContext(ioDispatcher) {
                 try {
                     val bytes = mediaVolumeProvider.current().usableSpace()
                     if (bytes < 0L) "—" else formatFileSize(bytes)
@@ -114,7 +117,7 @@ class StorageManagementViewModel @Inject constructor(
             try {
                 var deleted = 0
                 var failed = 0
-                withContext(Dispatchers.IO) {
+                withContext(ioDispatcher) {
                     // 🔴 Real mutex: prevents concurrent sync (executeSync/dryRun/executeDelete
                     // all acquire the same storageOperationMutex). Eliminates TOCTOU race.
                     syncEngine.storageOperationMutex.withLock {
@@ -143,12 +146,12 @@ class StorageManagementViewModel @Inject constructor(
                     }
                 }
                 // 🔴 Failure feedback: show warning if some files couldn't be deleted
-                val warning = if (failed > 0) "$deleted 个已删除，$failed 个无法删除" else null
+                val warning = if (failed > 0) context.getString(R.string.storage_reset_partial, deleted, failed) else null
                 _state.update { it.copy(isResetting = false, resetWarning = warning) }
                 refresh()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to reset storage", e)
-                _state.update { it.copy(isResetting = false, resetWarning = "重置失败: ${e.message}") }
+                _state.update { it.copy(isResetting = false, resetWarning = context.getString(R.string.storage_reset_failed)) }
             }
         }
     }

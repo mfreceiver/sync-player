@@ -5,6 +5,7 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import cn.vectory.syncplayer.R
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -45,11 +46,11 @@ class BiometricAuthManager @Inject constructor(
         val hasDeviceCredential = canAuth && !canClass3 && !canClass2
 
         val description = when {
-            canClass3 && canClass2 -> "Class 3 (强生物识别) + Class 2 (弱生物识别) + 锁屏密码"
-            canClass3 -> "Class 3 (强生物识别) + 锁屏密码"
-            canClass2 -> "Class 2 (弱生物识别) + 锁屏密码"
-            hasDeviceCredential -> "仅锁屏密码"
-            else -> "未设置任何认证方式"
+            canClass3 && canClass2 -> context.getString(R.string.biometric_capability_class3_class2)
+            canClass3 -> context.getString(R.string.biometric_capability_class3)
+            canClass2 -> context.getString(R.string.biometric_capability_class2)
+            hasDeviceCredential -> context.getString(R.string.biometric_capability_device_credential)
+            else -> context.getString(R.string.biometric_capability_none)
         }
 
         return AuthCapabilityInfo(
@@ -60,8 +61,8 @@ class BiometricAuthManager @Inject constructor(
 
     fun authenticate(
         activity: FragmentActivity,
-        title: String = "应用已锁定",
-        subtitle: String = "请验证身份以继续使用",
+        title: String = context.getString(R.string.biometric_title_lock),
+        subtitle: String = context.getString(R.string.biometric_subtitle_lock),
         onSuccess: () -> Unit,
         onError: () -> Unit
     ) {

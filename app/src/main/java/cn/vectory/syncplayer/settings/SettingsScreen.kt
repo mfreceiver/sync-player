@@ -14,6 +14,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -115,6 +116,13 @@ fun SettingsScreen(
                 supportingContent = { Text(stringResource(R.string.storage_management_desc, locationLabel)) },
                 leadingContent = { Icon(Icons.Default.Folder, contentDescription = null) },
                 modifier = Modifier.clickable { onNavigateToStorageManagement() }
+            )
+
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.settings_show_onboarding)) },
+                supportingContent = { Text(stringResource(R.string.settings_show_onboarding_desc)) },
+                leadingContent = { Icon(Icons.Default.Lightbulb, contentDescription = null) },
+                modifier = Modifier.clickable { viewModel.resetOnboardingDismissed() }
             )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))

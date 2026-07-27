@@ -5,7 +5,6 @@ import android.util.Log
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.debug.DebugLogger
 import cn.vectory.syncplayer.crypto.CryptoScheme
-import cn.vectory.syncplayer.data.model.ActiveDownload
 import cn.vectory.syncplayer.data.model.SyncAction
 import cn.vectory.syncplayer.data.model.SyncActionType
 import cn.vectory.syncplayer.data.model.SyncPhase
@@ -35,9 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -81,8 +78,10 @@ class SyncEngine @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
 
-    private val _progress = MutableStateFlow(SyncProgress())
-    val progress: StateFlow<SyncProgress> = _progress.asStateFlow()
+    // 进度状态已迁入 SyncProgressPublisher（上帝类拆分第一轮）。
+    // 对外仍暴露只读 StateFlow<SyncProgress>，签名不变；内部通过 progressPublisher 读写。
+    private val progressPublisher = SyncProgressPublisher()
+    val progress: StateFlow<SyncProgress> get() = progressPublisher.progress
 
     private val encryptedMediaStore: EncryptedMediaStore
         get() = encryptedMediaStoreLazy.get()
@@ -95,8 +94,8 @@ class SyncEngine @Inject constructor(
     private fun getMutexForRelation(relationId: Long): Mutex =
         syncMutexMap.computeIfAbsent(relationId) { Mutex() }
 
-    private val lastProgressUpdateMs = AtomicLong(0L)
-    private val PROGRESS_THROTTLE_MS = 500L
+    // 空间预检已迁入 SyncSpaceChecker（无状态、无 IO 副作用的判定 + 诊断日志）。
+    private val spaceChecker = SyncSpaceChecker()
 
     companion object {
         private const val TAG = "SyncEngine"
@@ -220,39 +219,9 @@ class SyncEngine @Inject constructor(
         task to success
     }
 
-    val isSyncRunning: Boolean get() = _progress.value.isRunning
+    val isSyncRunning: Boolean get() = progressPublisher.value.isRunning
 
     private fun getClient(protocol: SyncProtocol): RemoteFileClient = remoteFileClientFactory.create(protocol)
-
-    private fun formatSize(bytes: Long): String = when {
-        bytes >= 1024L * 1024 * 1024 -> "%.1f GB".format(bytes / (1024.0 * 1024 * 1024))
-        bytes >= 1024L * 1024 -> "%.0f MB".format(bytes / (1024.0 * 1024))
-        else -> "%.1f KB".format(bytes / 1024.0)
-    }
-
-    /**
-     * 计算 [actions] 中所有文件 AEAD 密文总大小，供空间预检使用。
-     * cipherLengthFor 对非法 fileSize 抛 IllegalArgumentException，此时返回 -1 降级；
-     * 求和溢出时也返回 -1 降级（跳过预检，等价于可用空间未知）。
-     */
-    private fun computeTotalCipherSizePrecheck(actions: List<SyncAction>): Long {
-        var total = 0L
-        for (action in actions) {
-            try {
-                val cipherLen = CryptoScheme.cipherLengthFor(action.fileSize)
-                val newTotal = total + cipherLen
-                if (newTotal < total) { // Long 溢出
-                    Log.w(TAG, "computeTotalCipherSize 溢出: total=$total + cipherLen=$cipherLen")
-                    return -1L
-                }
-                total = newTotal
-            } catch (e: IllegalArgumentException) {
-                Log.w(TAG, "cipherLengthFor(${action.fileSize}) 异常, 跳过空间预检", e)
-                return -1L
-            }
-        }
-        return total
-    }
 
     /**
      * P1-1: 把任意 Throwable 归一化为 [SyncException]。
@@ -283,7 +252,7 @@ class SyncEngine @Inject constructor(
             val source = syncSourceRepository.getById(relation.syncSourceId) ?: return DryRunResult(emptyList(), emptyList())
             val client = getClient(source.protocol)
 
-            _progress.value = SyncProgress(phase = SyncPhase.SCANNING, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
+            progressPublisher.value = SyncProgress(phase = SyncPhase.SCANNING, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
 
             val toDownload = mutableListOf<SyncAction>()
             val toDelete = mutableListOf<SyncAction>()
@@ -367,7 +336,7 @@ class SyncEngine @Inject constructor(
                     }
                 }
 
-                _progress.value = SyncProgress(phase = SyncPhase.CONFIRMING, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
+                progressPublisher.value = SyncProgress(phase = SyncPhase.CONFIRMING, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -377,7 +346,7 @@ class SyncEngine @Inject constructor(
                 // 单条目属性异常（详见 RemoteScanIncompleteException 与两个 listFilesRecursive）。
                 toDownload.clear()
                 toDelete.clear()
-                _progress.value = SyncProgress(phase = SyncPhase.FAILED, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
+                progressPublisher.value = SyncProgress(phase = SyncPhase.FAILED, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
                 syncLogRepository.log(
                     action = "SCAN",
                     relativePath = "",
@@ -430,30 +399,22 @@ class SyncEngine @Inject constructor(
         DebugLogger.i(TAG, "当前卷: ${store.volumeId}")
 
         val toActuallyDownload = toDownload
-        // E10: 空间预检使用 AEAD 密文大小而非明文大小。
-        // cipherLengthFor 对非法 fileSize 抛 IllegalArgumentException，用 -1 降级跳过预检；
-        // 求和用循环累加 + 溢出检测（单个文件 cipherLen 约 16B + plainLen × 1.00024，128TiB 内安全，
-        // 但多个大文件相加可能溢出 Long）。
-        val totalDownloadSize = computeTotalCipherSizePrecheck(toActuallyDownload)
-
-        // E2: usableSpace() 内部 runBlocking 阻塞，必须放到 Dispatchers.IO。
-        val availableSpace = withContext(Dispatchers.IO) { store.usableSpace() }
-        if (availableSpace >= 0 && totalDownloadSize >= 0) {
-            DebugLogger.i(TAG, "空间检查: 需要 ${formatSize(totalDownloadSize)}, 可用 ${formatSize(availableSpace)}")
-        }
-        // SafVolume.usableSpace() 在无法把 treeUri 解析到某个 StorageVolume 时返回 -1（未知），
-        // 例如 SAF 树指向 USB/云端 provider。此时不能拿 -1 当「空间不足」——那会让这些卷的
-        // 同步被永久阻塞，且文案误导。跳过预检、放行到下载阶段：每个文件写入失败会被
-        // 逐文件 catch 计为失败并清理临时文件，属于可恢复的优雅降级。
-        if (availableSpace < 0) {
-            Log.w(TAG, "可用空间未知（卷无法解析），跳过空间预检；下载失败将逐文件降级处理")
-        } else if (totalDownloadSize < 0) {
-            // cipherLengthFor 异常或求和溢出：降级跳过预检，等同可用空间未知。
-            Log.w(TAG, "AEAD 密文大小计算异常，跳过空间预检；下载失败将逐文件降级处理")
-        } else if (totalDownloadSize > availableSpace) {
+        // E10: 空间预检使用 AEAD 密文大小而非明文大小。预检逻辑（cipherLengthFor 调用、
+        // 溢出降级、unknown-space 跳过语义、诊断日志）已迁入 SyncSpaceChecker；此处只处理
+        // 「空间不足」这一需要 repository 副作用的判定分支，其余（Ok/Unknown/CipherFailed）
+        // 直接放行到逐文件下载降级处理——与原内联实现完全一致。
+        val spaceCheck = spaceChecker.checkSpace(toActuallyDownload, store)
+        if (spaceCheck is SyncSpaceChecker.Result.Insufficient) {
             DebugLogger.e(TAG, "空间不足，中止同步")
-            syncRelationRepository.updateLastSync(relationId, context.getString(R.string.sync_disk_space_insufficient, formatSize(totalDownloadSize), formatSize(availableSpace)))
-            _progress.value = SyncProgress(isRunning = false, phase = SyncPhase.FAILED, relationId = relationId, relationName = name, localBasePath = basePath)
+            syncRelationRepository.updateLastSync(
+                relationId,
+                context.getString(
+                    R.string.sync_disk_space_insufficient,
+                    formatSize(spaceCheck.needed),
+                    formatSize(spaceCheck.available)
+                )
+            )
+            progressPublisher.value = SyncProgress(isRunning = false, phase = SyncPhase.FAILED, relationId = relationId, relationName = name, localBasePath = basePath)
             return false
         }
 
@@ -463,11 +424,11 @@ class SyncEngine @Inject constructor(
         val failedDeleteCount = AtomicInteger(0)
         val totalBytesTransferred = AtomicLong(0L)
         val totalDownloadBytes = toDownload.sumOf { it.fileSize }
-        val activeDownloadsMutex = Mutex()
-        val activeDownloadsMap = mutableMapOf<String, ActiveDownload>()
-        val completedPathsSet = mutableSetOf<String>()
+        // activeDownloadsMap / completedPathsSet / 保护它们的 mutex 已迁入 SyncProgressPublisher。
+        // 它们原是本函数的局部变量（天然每轮新建），迁移为 publisher 实例状态后，必须每轮显式清空。
+        progressPublisher.beginSyncRun()
 
-        _progress.value = SyncProgress(
+        progressPublisher.value = SyncProgress(
             isRunning = true,
             totalFiles = totalActions,
             phase = SyncPhase.DOWNLOADING,
@@ -495,13 +456,15 @@ class SyncEngine @Inject constructor(
 
                                     workerClient.connect(source, relation.remotePath)
 
-                                    activeDownloadsMutex.withLock {
-                                        activeDownloadsMap[action.relativePath] = ActiveDownload(
-                                            fileName = fileName,
-                                            totalBytes = action.fileSize
-                                        )
-                                        updateActiveDownloadsState(activeDownloadsMap, totalBytesTransferred.get(), totalDownloadBytes, completedCount.get(), totalActions)
-                                    }
+                                    progressPublisher.beginDownload(
+                                        relativePath = action.relativePath,
+                                        fileName = fileName,
+                                        totalBytes = action.fileSize,
+                                        transferredSoFar = totalBytesTransferred.get(),
+                                        totalDownloadBytes = totalDownloadBytes,
+                                        completedFiles = completedCount.get(),
+                                        totalFiles = totalActions
+                                    )
 
                                     val existing = videoRepository.getByRelativePathAndRelationId(localRelPath, relationId)
                                     var downloadSuccess = false
@@ -566,34 +529,18 @@ class SyncEngine @Inject constructor(
                                         val sink = store.openEncryptSink(assignedId, iv, action.fileSize)
                                         try {
                                             downloadSuccess = workerClient.downloadTo(action.relativePath, sink) { transferred, total ->
-                                                val locked = activeDownloadsMutex.tryLock()
-                                                if (locked) {
-                                                    try {
-                                                        activeDownloadsMap[action.relativePath] = ActiveDownload(
-                                                            fileName = fileName,
-                                                            progress = if (total > 0) transferred.toFloat() / total else 0f,
-                                                            transferredBytes = transferred,
-                                                            totalBytes = action.fileSize
-                                                        )
-                                                        val now = System.currentTimeMillis()
-                                                        if (now - lastProgressUpdateMs.get() >= PROGRESS_THROTTLE_MS) {
-                                                            lastProgressUpdateMs.set(now)
-                                                            val currentTransferred = totalBytesTransferred.get() + activeDownloadsMap.values.sumOf { it.transferredBytes }
-                                                            val elapsed = System.currentTimeMillis() - _progress.value.startTimeMs
-                                                            val speed = if (elapsed > 1000) currentTransferred * 1000 / elapsed else 0L
-                                                            _progress.value = _progress.value.copy(
-                                                                activeDownloads = activeDownloadsMap.values.toList(),
-                                                                transferredBytes = currentTransferred,
-                                                                totalBytes = totalDownloadBytes,
-                                                                completedFiles = completedCount.get(),
-                                                                totalFiles = totalActions,
-                                                                speedBytesPerSec = speed
-                                                            )
-                                                        }
-                                                    } finally {
-                                                        activeDownloadsMutex.unlock()
-                                                    }
-                                                }
+                                                // onProgress 是普通（非 suspend）lambda，沿用 publisher 内的 tryLock/unlock 节流写入。
+                                                progressPublisher.reportDownloadProgress(
+                                                    relativePath = action.relativePath,
+                                                    fileName = fileName,
+                                                    transferred = transferred,
+                                                    total = total,
+                                                    fileTotalBytes = action.fileSize,
+                                                    transferredSoFar = totalBytesTransferred.get(),
+                                                    totalDownloadBytes = totalDownloadBytes,
+                                                    completedFiles = completedCount.get(),
+                                                    totalFiles = totalActions
+                                                )
                                             }
                                             sink.close()
                                             if (!downloadSuccess) throw SyncException(
@@ -625,9 +572,7 @@ class SyncEngine @Inject constructor(
                                         }
                                     }
 
-                                    activeDownloadsMutex.withLock {
-                                        activeDownloadsMap.remove(action.relativePath)
-                                    }
+                                    progressPublisher.removeActiveDownload(action.relativePath)
 
                                     totalBytesTransferred.addAndGet(action.fileSize)
                                     // finalize 成功后才写入最终元数据（iv/fileSize/remoteModifiedTime），
@@ -657,21 +602,18 @@ class SyncEngine @Inject constructor(
                                     )
                                     DebugLogger.d(TAG, "完成: $fileName")
                                     completedCount.incrementAndGet()
-                                    activeDownloadsMutex.withLock {
-                                        completedPathsSet.add(action.relativePath)
-                                        updateActiveDownloadsState(
-                                            activeDownloadsMap, totalBytesTransferred.get(),
-                                            totalDownloadBytes, completedCount.get(), totalActions,
-                                            completedPaths = completedPathsSet.toSet()
-                                        )
-                                    }
+                                    progressPublisher.completeDownload(
+                                        relativePath = action.relativePath,
+                                        transferredSoFar = totalBytesTransferred.get(),
+                                        totalDownloadBytes = totalDownloadBytes,
+                                        completedFiles = completedCount.get(),
+                                        totalFiles = totalActions
+                                    )
                                 } catch (e: CancellationException) {
                                     throw e
                                 } catch (e: Exception) {
                                     val localRelPath = storagePaths.toLocalRelativePath(relation.localBasePath, action.relativePath)
-                                    activeDownloadsMutex.withLock {
-                                        activeDownloadsMap.remove(action.relativePath)
-                                    }
+                                    progressPublisher.removeActiveDownload(action.relativePath)
                                     failedDownloadCount.incrementAndGet()
                                     // E3: 失败不再 incrementAndGet completedCount——completedFiles 只表示成功数。
                                     // Download 与 Delete 的失败计数器已分离，避免 successDownloadCount 被删除失败侵蚀。
@@ -695,10 +637,10 @@ class SyncEngine @Inject constructor(
                 }
             }
 
-            _progress.value = _progress.value.copy(phase = SyncPhase.DELETING)
+            progressPublisher.value = progressPublisher.value.copy(phase = SyncPhase.DELETING)
 
             for (action in toDelete) {
-                _progress.value = _progress.value.copy(
+                progressPublisher.value = progressPublisher.value.copy(
                     currentFileName = action.relativePath,
                     completedFiles = completedCount.get()
                 )
@@ -745,8 +687,7 @@ class SyncEngine @Inject constructor(
                             fileSize = action.fileSize
                         )
                         completedCount.incrementAndGet()
-                        completedPathsSet.add(action.relativePath)
-                        _progress.value = _progress.value.copy(completedPaths = completedPathsSet.toSet())
+                        progressPublisher.markDeleted(action.relativePath)
                     } else {
                         Log.w(TAG, "DELETE_LOCAL failed id=${videoItem.id}: mediaGone=$mediaGone thumbGone=$thumbGone")
                         failedDeleteCount.incrementAndGet()
@@ -771,15 +712,14 @@ class SyncEngine @Inject constructor(
                         fileSize = action.fileSize
                     )
                     completedCount.incrementAndGet()
-                    completedPathsSet.add(action.relativePath)
-                    _progress.value = _progress.value.copy(completedPaths = completedPathsSet.toSet())
+                    progressPublisher.markDeleted(action.relativePath)
                 }
             }
 
             val totalFailures = failedDownloadCount.get() + failedDeleteCount.get()
             val hadFailures = totalFailures > 0
             DebugLogger.i(TAG, "同步完成: 成功 ${completedCount.get()}, 失败 $totalFailures, 总计 $totalActions")
-            _progress.value = SyncProgress(
+            progressPublisher.value = SyncProgress(
                 isRunning = false,
                 phase = if (hadFailures) SyncPhase.PARTIAL_FAILED else SyncPhase.COMPLETED,
                 completedFiles = completedCount.get(),
@@ -789,8 +729,8 @@ class SyncEngine @Inject constructor(
                 relationId = relationId,
                 relationName = name,
                 localBasePath = basePath,
-                startTimeMs = _progress.value.startTimeMs,
-                completedPaths = completedPathsSet.toSet()
+                startTimeMs = progressPublisher.value.startTimeMs,
+                completedPaths = progressPublisher.completedPathsSnapshot()
             )
 
             val successDownloadCount = toActuallyDownload.size - failedDownloadCount.get()
@@ -801,7 +741,7 @@ class SyncEngine @Inject constructor(
             syncLogRepository.clearOldLogs()
             return !hadFailures
         } catch (e: CancellationException) {
-            _progress.value = SyncProgress(
+            progressPublisher.value = SyncProgress(
                 isRunning = false,
                 phase = SyncPhase.CANCELLED,
                 relationId = relationId,
@@ -811,7 +751,7 @@ class SyncEngine @Inject constructor(
             throw e
         } catch (e: Exception) {
             DebugLogger.e(TAG, "同步异常退出", e)
-            _progress.value = SyncProgress(
+            progressPublisher.value = SyncProgress(
                 isRunning = false,
                 phase = SyncPhase.FAILED,
                 relationId = relationId,
@@ -831,37 +771,15 @@ class SyncEngine @Inject constructor(
         }
     }
 
-    private fun updateActiveDownloadsState(
-        activeDownloadsMap: Map<String, ActiveDownload>,
-        transferredSoFar: Long,
-        totalDownloadBytes: Long,
-        completedFiles: Int,
-        totalFiles: Int,
-        completedPaths: Set<String> = _progress.value.completedPaths
-    ) {
-        val activeTransferred = activeDownloadsMap.values.sumOf { it.transferredBytes }
-        val totalTransferred = transferredSoFar + activeTransferred
-        _progress.value = _progress.value.copy(
-            activeDownloads = activeDownloadsMap.values.toList(),
-            transferredBytes = totalTransferred,
-            totalBytes = totalDownloadBytes,
-            completedFiles = completedFiles,
-            totalFiles = totalFiles,
-            currentFileName = activeDownloadsMap.values.firstOrNull()?.fileName ?: _progress.value.currentFileName,
-            currentFileProgress = activeDownloadsMap.values.firstOrNull()?.progress ?: _progress.value.currentFileProgress,
-            completedPaths = completedPaths
-        )
-    }
-
     fun resetProgress() {
-        _progress.value = SyncProgress()
+        progressPublisher.reset()
     }
 
     suspend fun dryRunDelete(relationId: Long): Pair<List<SyncAction>, String?> = getMutexForRelation(relationId).withLock {
             val relation = syncRelationRepository.getById(relationId) ?: return Pair(emptyList(), context.getString(R.string.sync_relation_not_found))
             val source = syncSourceRepository.getById(relation.syncSourceId) ?: return Pair(emptyList(), context.getString(R.string.sync_source_not_found))
             val client = getClient(source.protocol)
-            _progress.value = SyncProgress(phase = SyncPhase.SCANNING, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
+            progressPublisher.value = SyncProgress(phase = SyncPhase.SCANNING, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
 
             val toDelete = mutableListOf<SyncAction>()
 
@@ -887,12 +805,12 @@ class SyncEngine @Inject constructor(
                     }
                 }
 
-                _progress.value = SyncProgress(phase = SyncPhase.CONFIRMING, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
+                progressPublisher.value = SyncProgress(phase = SyncPhase.CONFIRMING, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
                 return Pair(toDelete, null)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _progress.value = SyncProgress(phase = SyncPhase.FAILED, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
+                progressPublisher.value = SyncProgress(phase = SyncPhase.FAILED, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
                 return Pair(emptyList(), syncErrorMessage(e, context))
             } finally {
                 client.disconnect()
@@ -911,7 +829,7 @@ class SyncEngine @Inject constructor(
         val totalActions = actions.size
         var completedActions = 0
 
-        _progress.value = SyncProgress(
+        progressPublisher.value = SyncProgress(
             isRunning = true,
             totalFiles = totalActions,
             phase = SyncPhase.DELETING,
@@ -926,7 +844,7 @@ class SyncEngine @Inject constructor(
             var failedActions = 0
 
             for (action in actions) {
-                _progress.value = _progress.value.copy(
+                progressPublisher.value = progressPublisher.value.copy(
                     currentFileName = action.relativePath,
                     completedFiles = completedActions
                 )
@@ -1009,7 +927,7 @@ class SyncEngine @Inject constructor(
             }
 
             val allOk = failedActions == 0
-            _progress.value = SyncProgress(
+            progressPublisher.value = SyncProgress(
                 isRunning = false,
                 phase = if (allOk) SyncPhase.COMPLETED else SyncPhase.PARTIAL_FAILED,
                 completedFiles = completedActions,
@@ -1036,7 +954,7 @@ class SyncEngine @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            _progress.value = SyncProgress(
+            progressPublisher.value = SyncProgress(
                 isRunning = false,
                 phase = SyncPhase.FAILED,
                 relationId = relationId,

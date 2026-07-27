@@ -18,6 +18,8 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,6 +42,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.res.stringResource
 import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.browser.UndoResult
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -79,6 +82,13 @@ fun PlayerScreen(
     val context = LocalContext.current
     val activity = context as? android.app.Activity ?: return
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val playerError by viewModel.playerError.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+    var pendingUndoTrigger by remember { mutableIntStateOf(0) }
+    // The video id captured at toggle time, used as expectedId for the undo Snackbar so a
+    // stale Snackbar (from an earlier video) never undoes a newer toggle.
+    var pendingUndoId by remember { mutableStateOf<Long?>(null) }
     // NOTE: currentPosition (200 ms high-frequency flow) is intentionally NOT
     // subscribed here. The only top-level consumer used to be `seekDisplayProgress`,
     // whose currentPosition branch was unreachable inside its sole use site
@@ -203,9 +213,10 @@ fun PlayerScreen(
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                val message = error.message ?: "Unknown playback error"
-                Log.e("PlayerScreen", "Playback error: $message", error)
-                viewModel.onPlayerError(message)
+                // Log raw error for developer diagnostics only; never surface
+                // error.message to the UI (it may carry URI/path/provider details).
+                Log.e("PlayerScreen", "Playback error", error)
+                viewModel.onPlayerError()
             }
         }
     }
@@ -353,7 +364,15 @@ fun PlayerScreen(
                         if (s.quickRecycle) {
                             val wasTrashed = s.playbackRecord?.isTrashed ?: false
                             viewModel.showOverlay(PlayerOverlay.TrashAction(!wasTrashed))
-                            viewModel.toggleTrashed()
+                            // Defer the Snackbar trigger until the async toggle succeeds.
+                            // The callback receives the FIXED video id captured at call time —
+                            // even if the user double-taps "next" before the toggle completes,
+                            // pendingUndoId will hold the original video, so the Snackbar can
+                            // never undo a toggle on the new (different) video.
+                            viewModel.toggleTrashed { completedId ->
+                                pendingUndoId = completedId
+                                pendingUndoTrigger++
+                            }
                         } else {
                             if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                         }
@@ -444,6 +463,51 @@ fun PlayerScreen(
 
     BackHandler { doExit() }
 
+    // Resolve strings outside the suspend context of LaunchedEffect.
+    val undoTrashMessage = stringResource(R.string.undo_trash_message)
+    val undoActionLabel = stringResource(R.string.undo_action)
+    val undoFailedMessage = stringResource(R.string.undo_failed_message)
+
+    // Show undo snackbar ONLY after the async trash toggle succeeded (the trigger is
+    // incremented inside the toggle's onSuccess callback, not at call time). This ensures a
+    // failed toggle never produces a misleading "moved to trash" Snackbar.
+    // pendingUndoId is the FIXED video id captured at toggle time (returned by the ViewModel
+    // callback) and used as expectedId so a stale Snackbar (e.g. from an earlier video after a
+    // double-tap next) never undoes a newer toggle. If the trigger fired but the id is null
+    // (defensive), do nothing rather than call undo with a null expectedId (which would undo a
+    // newer unrelated operation).
+    LaunchedEffect(pendingUndoTrigger) {
+        if (pendingUndoTrigger > 0) {
+            val expectedId = pendingUndoId ?: return@LaunchedEffect
+            val result = snackbarHostState.showSnackbar(
+                message = undoTrashMessage,
+                actionLabel = undoActionLabel,
+                duration = SnackbarDuration.Short
+            )
+            when (result) {
+                SnackbarResult.ActionPerformed -> {
+                    // expectedId protection: only undo if this operation is still the current one.
+                    val undoResult = viewModel.undoDelete(expectedId = expectedId)
+                    if (undoResult is UndoResult.Failed) {
+                        snackbarHostState.showSnackbar(undoFailedMessage)
+                    }
+                }
+                SnackbarResult.Dismissed -> {
+                    // Trash toggle is already applied; nothing to commit.
+                }
+            }
+        }
+    }
+
+    // Surface toggle/delete failures (resolved message already localized by the ViewModel;
+    // no underlying path/id/message leaks).
+    playerError?.let {
+        LaunchedEffect(it) {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearError()
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -497,7 +561,14 @@ fun PlayerScreen(
                     )
                     val isTrashed = uiState.playbackRecord?.isTrashed == true
                     IconButton(
-                        onClick = { viewModel.toggleTrashed() },
+                        onClick = {
+                            // Defer the Snackbar trigger until the async toggle succeeds.
+                            // The callback receives the FIXED video id captured at call time.
+                            viewModel.toggleTrashed { completedId ->
+                                pendingUndoId = completedId
+                                pendingUndoTrigger++
+                            }
+                        },
                         modifier = Modifier.size(48.dp)
                     ) {
                         Icon(
@@ -613,6 +684,11 @@ fun PlayerScreen(
 
         PlayerOverlayView(uiState.currentOverlay)
 
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
+
         if (uiState.speedOverlayMultiplier != null) {
             Box(
                 modifier = Modifier
@@ -646,7 +722,7 @@ fun PlayerScreen(
             }
         }
 
-        if (uiState.playerError != null) {
+        if (uiState.hasPlayerError) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -665,7 +741,7 @@ fun PlayerScreen(
                         modifier = Modifier.size(48.dp)
                     )
                     Text(
-                        text = uiState.playerError!!,
+                        text = stringResource(R.string.player_error_generic),
                         color = Color.White,
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.Center
@@ -759,7 +835,7 @@ private fun PlaybackControlRow(
                     onDirectionChange = { fullscreen ->
                         viewModel.setFullscreen(fullscreen)
                         viewModel.showOverlay(
-                            PlayerOverlay.Orientation(if (fullscreen) "FULLSCREEN" else "ROTATION")
+                            PlayerOverlay.Orientation(if (fullscreen) OrientationMode.FULLSCREEN else OrientationMode.ROTATION)
                         )
                         onDismissSettings()
                     },
@@ -1026,7 +1102,10 @@ private fun PlayerOverlayView(overlay: PlayerOverlay?) {
                     is PlayerOverlay.NoPrevious -> Icons.Filled.Block
                     is PlayerOverlay.NoNext -> Icons.Filled.Block
                     is PlayerOverlay.TrashAction -> if (overlay.isIn) Icons.Filled.Delete else Icons.Outlined.DeleteOutline
-                    is PlayerOverlay.Orientation -> if (overlay.label == "FULLSCREEN") Icons.Filled.Fullscreen else Icons.Filled.ScreenRotation
+                    is PlayerOverlay.Orientation -> when (overlay.mode) {
+                        OrientationMode.FULLSCREEN -> Icons.Filled.Fullscreen
+                        OrientationMode.ROTATION -> Icons.Filled.ScreenRotation
+                    }
                 }
                 Icon(
                     imageVector = icon,
@@ -1040,12 +1119,15 @@ private fun PlayerOverlayView(overlay: PlayerOverlay?) {
                     is PlayerOverlay.Volume -> "${overlay.percent}%"
                     is PlayerOverlay.Brightness -> "${overlay.percent}%"
                     is PlayerOverlay.SpeedUp -> "${overlay.multiplier}X"
-                    is PlayerOverlay.Previous -> "PREVIOUS"
-                    is PlayerOverlay.Next -> "NEXT"
-                    is PlayerOverlay.NoPrevious -> "NO PREVIOUS"
-                    is PlayerOverlay.NoNext -> "NO NEXT"
-                    is PlayerOverlay.TrashAction -> if (overlay.isIn) "IN" else "OUT"
-                    is PlayerOverlay.Orientation -> overlay.label
+                    is PlayerOverlay.Previous -> stringResource(R.string.player_overlay_previous)
+                    is PlayerOverlay.Next -> stringResource(R.string.player_overlay_next)
+                    is PlayerOverlay.NoPrevious -> stringResource(R.string.player_overlay_no_previous)
+                    is PlayerOverlay.NoNext -> stringResource(R.string.player_overlay_no_next)
+                    is PlayerOverlay.TrashAction -> if (overlay.isIn) stringResource(R.string.player_overlay_trash_in) else stringResource(R.string.player_overlay_trash_out)
+                    is PlayerOverlay.Orientation -> when (overlay.mode) {
+                        OrientationMode.FULLSCREEN -> stringResource(R.string.player_overlay_orientation_fullscreen)
+                        OrientationMode.ROTATION -> stringResource(R.string.player_overlay_orientation_rotation)
+                    }
                 }
                 Text(
                     text = text,

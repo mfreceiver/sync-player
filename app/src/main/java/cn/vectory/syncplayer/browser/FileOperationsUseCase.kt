@@ -19,6 +19,7 @@ import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.ui.util.getMimeType
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +35,23 @@ sealed class DeleteMediaResult {
     data class Success(val id: Long) : DeleteMediaResult()
     data class SkippedNotFound(val id: Long) : DeleteMediaResult()
     data class Failed(val id: Long, val error: SyncException) : DeleteMediaResult()
+}
+
+/**
+ * Outcome of a base-path-guarded trash-toggle.
+ *
+ * - [Success]: toggle applied; caller may record undo state and surface success.
+ * - [NotAllowed]: item is missing or not under any provided base path; caller surfaces the
+ *   "only base dir" message.
+ * - [Failed]: a real error occurred (DB / IO); caller surfaces the resolved message.
+ *
+ * CancellationException is NEVER represented here — it always propagates verbatim so structured
+ * concurrency is preserved (caller scope cancellation actually cancels in-flight toggles).
+ */
+internal sealed class ToggleTrashResult {
+    data object Success : ToggleTrashResult()
+    data object NotAllowed : ToggleTrashResult()
+    data class Failed(val error: SyncException) : ToggleTrashResult()
 }
 
 data class FolderDeleteSummary(
@@ -75,6 +93,8 @@ class FileOperationsUseCase @Inject constructor(
             try {
                 videoRepository.updateStar(videoItemId, star)
                 onSuccess()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to update star", e)
                 errorFlow.value = syncErrorMessage(e, context)
@@ -92,6 +112,8 @@ class FileOperationsUseCase @Inject constructor(
             try {
                 videoRepository.updateStarByPath(relativePath, star)
                 onSuccess()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to update star by path", e)
                 errorFlow.value = syncErrorMessage(e, context)
@@ -107,18 +129,50 @@ class FileOperationsUseCase @Inject constructor(
         onSuccess: () -> Unit = {}
     ) {
         scope.launch {
-            try {
-                val video = videoRepository.getById(videoItemId)
-                if (video == null || !isFileInBaseDir(video.relativePath, basePaths)) {
+            when (val result = toggleTrashedChecked(videoItemId, basePaths)) {
+                is ToggleTrashResult.Success -> onSuccess()
+                is ToggleTrashResult.NotAllowed ->
                     errorFlow.value = context.getString(R.string.error_only_base_dir_trash)
-                    return@launch
-                }
-                playbackRepository.toggleTrashed(videoItemId)
-                onSuccess()
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to toggle trashed", e)
-                errorFlow.value = syncErrorMessage(e, context)
+                is ToggleTrashResult.Failed ->
+                    errorFlow.value = syncErrorMessage(result.error, context)
             }
+        }
+    }
+
+    /**
+     * Suspend, base-path-guarded trash toggle.
+     *
+     * Returns a typed [ToggleTrashResult]. [CancellationException] is rethrown (never swallowed
+     * into Failed) so the caller's structured-concurrency cancellation actually cancels the
+     * in-flight toggle. [Mutex] serialization across concurrent toggles of the same id is the
+     * caller's responsibility (see [UndoDeleteUseCase]).
+     */
+    /**
+     * Suspend, base-path-guarded trash toggle.
+     *
+     * Returns a typed [ToggleTrashResult]. [CancellationException] is rethrown (never swallowed
+     * into Failed) so the caller's structured-concurrency cancellation actually cancels the
+     * in-flight toggle. [Mutex] serialization across concurrent toggles of the same id is the
+     * caller's responsibility (see [UndoDeleteUseCase]).
+     */
+    internal suspend fun toggleTrashedChecked(
+        videoItemId: Long,
+        basePaths: List<SyncRelationWithSource>
+    ): ToggleTrashResult {
+        return try {
+            val video = videoRepository.getById(videoItemId)
+            if (video == null || !isFileInBaseDir(video.relativePath, basePaths)) {
+                return ToggleTrashResult.NotAllowed
+            }
+            playbackRepository.toggleTrashed(videoItemId)
+            ToggleTrashResult.Success
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to toggle trashed id=$videoItemId", e)
+            ToggleTrashResult.Failed(
+                SyncException(SyncErrorCode.UNKNOWN, SyncOperation.DELETE, cause = e)
+            )
         }
     }
 
@@ -139,6 +193,8 @@ class FileOperationsUseCase @Inject constructor(
                         errorFlow.value = syncErrorMessage(result.error, context)
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to delete file id=$videoItemId", e)
                 errorFlow.value = syncErrorMessage(e, context)
@@ -157,6 +213,8 @@ class FileOperationsUseCase @Inject constructor(
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             Intent.createChooser(shareIntent, context.getString(R.string.context_share_file))
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Failed to build share intent", e)
             null
@@ -173,6 +231,8 @@ class FileOperationsUseCase @Inject constructor(
             try {
                 playbackRepository.markFolderCompleted(folderPath, read)
                 onSuccess()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to mark folder read", e)
                 errorFlow.value = syncErrorMessage(e, context)
@@ -219,6 +279,8 @@ class FileOperationsUseCase @Inject constructor(
                 } else {
                     onSuccess()
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to delete folder", e)
                 errorFlow.value = syncErrorMessage(e, context)
@@ -297,6 +359,8 @@ class FileOperationsUseCase @Inject constructor(
 
         val cipherMissing = try {
             !mediaStore.exists(id)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             // exists() itself failed — treat as IO error, do not wipe DB.
             Log.w(TAG, "exists() failed for id=$id", e)
@@ -312,6 +376,8 @@ class FileOperationsUseCase @Inject constructor(
                 if (!deleted) {
                     val stillThere = try {
                         mediaStore.exists(id)
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         Log.w(TAG, "exists() after delete failed for id=$id", e)
                         return DeleteMediaResult.Failed(
@@ -329,6 +395,8 @@ class FileOperationsUseCase @Inject constructor(
                 }
             } catch (e: FileNotFoundException) {
                 Log.i(TAG, "ciphertext already gone for id=$id")
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 if (isNotFound(e)) {
                     Log.i(TAG, "ciphertext not found for id=$id")
@@ -347,6 +415,8 @@ class FileOperationsUseCase @Inject constructor(
             if (!deleted) {
                 val stillThere = try {
                     mediaStore.thumbExists(id)
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Log.w(TAG, "thumbExists() after delete failed for id=$id", e)
                     return DeleteMediaResult.Failed(
@@ -361,6 +431,8 @@ class FileOperationsUseCase @Inject constructor(
                 }
                 // No thumb file → idempotent success (common: never generated)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             if (isNotFound(e)) {
                 // idempotent ok
@@ -376,6 +448,8 @@ class FileOperationsUseCase @Inject constructor(
             videoRepository.deleteMediaRecord(id)
             if (cipherMissing) DeleteMediaResult.SkippedNotFound(id)
             else DeleteMediaResult.Success(id)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Failed to delete DB rows for id=$id", e)
             DeleteMediaResult.Failed(
@@ -399,6 +473,8 @@ class FileOperationsUseCase @Inject constructor(
         return try {
             videoRepository.deleteMediaRecord(video.id)
             DeleteMediaResult.Success(video.id)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "deleteOtherVolumeIndex failed for id=$videoItemId", e)
             DeleteMediaResult.Failed(

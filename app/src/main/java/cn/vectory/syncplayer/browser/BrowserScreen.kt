@@ -1,96 +1,61 @@
 package cn.vectory.syncplayer.browser
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
-import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
-import androidx.compose.foundation.lazy.staggeredgrid.items
-import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Sort
-import androidx.compose.material.icons.filled.Apps
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Collections
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.FilterList
-import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.PlayCircleOutline
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SortByAlpha
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.SdCard
-import androidx.compose.material.icons.filled.FilterListOff
 import androidx.compose.material.icons.filled.Block
-import cn.vectory.syncplayer.ui.components.StarRatingInput
-import cn.vectory.syncplayer.ui.components.StarRatingDisplay
-import cn.vectory.syncplayer.ui.components.DirectoryTreeDialog
-import cn.vectory.syncplayer.ui.components.DirectoryNode
-import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.VideoFile
-import androidx.compose.material.icons.automirrored.filled.ViewList
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.zIndex
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.saveable.rememberSaveable
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.BrowseItem
-import cn.vectory.syncplayer.ui.components.FileStatusIcon
-import cn.vectory.syncplayer.ui.components.FolderGridItem
-import cn.vectory.syncplayer.ui.components.FolderIcon
+import cn.vectory.syncplayer.ui.components.DirectoryNode
+import cn.vectory.syncplayer.ui.components.DirectoryTreeDialog
+import cn.vectory.syncplayer.browser.UndoResult
 import cn.vectory.syncplayer.ui.components.FileContextMenuDialog
 import cn.vectory.syncplayer.ui.components.FolderContextMenuDialog
-import cn.vectory.syncplayer.ui.components.Thumbnail
-import cn.vectory.syncplayer.ui.components.VideoGridItem
-import cn.vectory.syncplayer.ui.components.gridVerticalScrollbar
-import cn.vectory.syncplayer.ui.components.verticalScrollbar
-import cn.vectory.syncplayer.ui.util.buildMetadataLineWithoutExtension
-import cn.vectory.syncplayer.ui.util.buildImageMetadataLine
-import cn.vectory.syncplayer.ui.util.isVideoFile
+import cn.vectory.syncplayer.ui.components.StarRatingInput
 import cn.vectory.syncplayer.ui.util.isImageFile
-import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.ui.util.isVideoFile
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import java.lang.Math
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserScreen(
     viewModel: BrowserViewModel = hiltViewModel(),
@@ -100,14 +65,20 @@ fun BrowserScreen(
     onNavigateToSearch: () -> Unit,
     onNavigateToPlaybackSettings: () -> Unit,
     onNavigateToSyncPreview: (relationId: Long) -> Unit,
+    onNavigateToCreateSyncSource: () -> Unit,
+    onNavigateToCreateSyncRelation: () -> Unit,
 ) {
     val browseItems by viewModel.browseItems.collectAsStateWithLifecycle()
     val browseItemsFolder by viewModel.browseItemsFolder.collectAsStateWithLifecycle()
     val hiddenByFilterCount by viewModel.hiddenByFilterCount.collectAsStateWithLifecycle()
+    val libraryEmpty by viewModel.libraryEmpty.collectAsStateWithLifecycle()
+    @Suppress("UNUSED_VARIABLE")
     val hasConfig by viewModel.hasConfig.collectAsStateWithLifecycle()
+    val firstRunState by viewModel.firstRunState.collectAsStateWithLifecycle()
+    val firstRelationId by viewModel.firstRelationId.collectAsStateWithLifecycle()
+    val onboardingDismissed by viewModel.onboardingDismissed.collectAsStateWithLifecycle()
     val sortMode by viewModel.sortMode.collectAsStateWithLifecycle()
     val filter by viewModel.filter.collectAsStateWithLifecycle()
-    // Additional UI state expected by the advanced sorting/filtering UI
     val browseMode by viewModel.browseMode.collectAsStateWithLifecycle()
     val starFilterValue by viewModel.starFilterValue.collectAsStateWithLifecycle()
     val starFilterMode by viewModel.starFilterMode.collectAsStateWithLifecycle()
@@ -122,9 +93,33 @@ fun BrowserScreen(
     var showFolderContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
     var showDirectoryTree by remember { mutableStateOf(false) }
     var showAdvancedFilter by remember { mutableStateOf(false) }
+    // Tracks the id of a file currently pending deferred hard delete, so the context
+    // menu can disable its delete action and prevent duplicate deferred deletions.
+    var pendingDeleteId by remember { mutableStateOf<Long?>(null) }
+    // The most recent id for which a deferred hard delete was initiated. Captured so the
+    // DisposableEffect below can commit it via the safety path if the composition disposes
+    // before the undo Snackbar's Dismissed branch ran (snackbar cancelled / nav away).
+    var latestPendingDeleteId by remember { mutableStateOf<Long?>(null) }
+    // True while this composition is active. The deleteFileWithUndo onSuccess callback reads
+    // this to decide between the Snackbar path (composition alive) and the safety-commit
+    // fallback (composition disposed — the composition scope is cancelled, so the Snackbar
+    // path is unreachable and would silently lose the deferred delete).
+    var compositionActive by remember { mutableStateOf(true) }
+
+    DisposableEffect(viewModel) {
+        compositionActive = true
+        onDispose {
+            compositionActive = false
+            // Fallback: commit any still-pending deferred hard delete via the safety path so
+            // it is never silently lost when leaving the Browser destination. expectedId
+            // protection keeps this a no-op if the Snackbar already resolved the operation
+            // (state cleared) or a newer operation now holds the slot.
+            latestPendingDeleteId?.let { viewModel.commitDeferredDeleteSafely(it) }
+        }
+    }
+
     val context = LocalContext.current
     val cannotPlayStr = stringResource(R.string.browser_cannot_play)
-
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -132,6 +127,31 @@ fun BrowserScreen(
         if (viewModel.currentFolder.value.isEmpty()) {
             viewModel.setFolder(currentFolder)
         }
+    }
+
+    // Stable navigation/callbacks — built once per identity change of their inputs.
+    val onOpenVideo: (BrowseItem) -> Unit = remember(viewModel, onNavigateToPlayer, scope, snackbarHostState, cannotPlayStr) {
+        { item ->
+            val id = item.videoItemId
+            if (id != null) {
+                onNavigateToPlayer(id, viewModel.getFolderVideoIds())
+            } else {
+                scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
+            }
+        }
+    }
+    val onOpenImage: (BrowseItem) -> Unit = remember(viewModel, onNavigateToImageViewer, scope, snackbarHostState, cannotPlayStr) {
+        { item ->
+            val id = item.videoItemId
+            if (id != null) {
+                onNavigateToImageViewer(id, viewModel.getFolderImageIds())
+            } else {
+                scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
+            }
+        }
+    }
+    val onCannotPlay: () -> Unit = remember(scope, snackbarHostState, cannotPlayStr) {
+        { scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) } }
     }
 
     // Support switching browse modes via back button as well
@@ -149,378 +169,90 @@ fun BrowserScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-                TopAppBar(
-                    navigationIcon = {
-                    if (folder.isEmpty()) {
-                        IconButton(onClick = {
-                            onNavigateToPlaybackSettings()
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = stringResource(R.string.browser_settings)
-                            )
-                        }
-                    } else {
-                        IconButton(onClick = {
-                            viewModel.setFolder("")
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.Home,
-                                contentDescription = stringResource(R.string.browser_root_dir)
-                            )
-                        }
-                    }
-                },
-                title = {
-                    val displayPath = folder.substringAfterLast('/')
-                    if (displayPath.isNotEmpty()) {
-                        Text(
-                            text = displayPath,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.clickable { showDirectoryTree = true }
-                        )
-                    } else {
-                        Text(
-                            text = "Sync Player",
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.clickable { showDirectoryTree = true }
-                        )
-                    }
-                },
-                    actions = {
-                        if (currentRelationId != null) {
-                            IconButton(onClick = {
-                                onNavigateToSyncPreview(currentRelationId!!)
-                            }) {
-                                Icon(
-                                    imageVector = Icons.Default.Sync,
-                                    contentDescription = stringResource(R.string.browser_sync)
-                                )
-                            }
-                        }
-                        IconButton(onClick = {
-                            onNavigateToSearch()
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = stringResource(R.string.browser_search)
-                            )
-                        }
-                        Box {
-                            val isAdvancedFilterActive = starFilterMode != BrowserViewModel.StarFilterMode.OFF
-                            if (isAdvancedFilterActive) {
-                                Box(
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .background(
-                                            MaterialTheme.colorScheme.secondaryContainer,
-                                            RoundedCornerShape(8.dp)
-                                        )
-                                )
-                            }
-                            IconButton(onClick = {
-                                showSortMenu = true
-                            }) {
-                                Icon(
-                                    imageVector = Icons.Default.FilterList,
-                                    contentDescription = stringResource(R.string.browser_sort_filter),
-                                    tint = if (isAdvancedFilterActive) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            SortFilterDropdown(
-                                expanded = showSortMenu,
-                                onDismiss = { showSortMenu = false },
-                                sortMode = sortMode,
-                                onSortChange = { viewModel.setSortMode(it) },
-                                filter = filter,
-                                onFilterChange = { viewModel.setFilter(it) },
-                                browseMode = browseMode,
-                                onBrowseModeChange = { viewModel.setBrowseMode(it) },
-                                viewMode = viewMode,
-                                onViewModeChange = { viewModel.setViewMode(it) },
-                                gridColumns = gridColumns,
-                                onGridColumnsChange = { viewModel.setGridColumns(it) },
-                                starFilterMode = starFilterMode,
-                                onClearStarFilter = {
-                                    viewModel.setStarFilterMode(BrowserViewModel.StarFilterMode.OFF)
-                                    viewModel.setStarFilterValue(0)
-                                },
-                                onAdvancedFilter = { showAdvancedFilter = true },
-                                folder = folder
-                            )
-                        }
-
-                    }
-                )
-            }
-        ) { paddingValues ->
-            if (viewMode == BrowserViewModel.ViewMode.GRID) {
-                val gridState = rememberLazyGridState()
-                BrowseScrollTracker(
-                    folder = folder,
-                    browseItemsFolder = browseItemsFolder,
-                    browseItemsNotEmpty = browseItems.isNotEmpty(),
-                    currentScrollPosition = { gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset },
-                    saveScrollPosition = { f, i, o -> viewModel.saveScrollPosition(f, i, o) },
-                    getSavedScrollPosition = { f -> viewModel.getScrollPosition(f) },
-                    scrollToPosition = { i, o -> gridState.scrollToItem(i, o) }
-                )
-                LazyVerticalGrid(
-                    columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(gridColumns),
-                    state = gridState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues)
-                        .gridVerticalScrollbar(gridState),
-                    contentPadding = PaddingValues(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(
-                        items = browseItems,
-                        key = { it.relativePath }
-                    ) { item ->
-                        if (item.isDirectory) {
-                            FolderGridItem(
-                                folderName = item.name,
-                                isSyncBaseDir = item.isSyncBaseDir,
-                                onClick = {
-                                    viewModel.setFolder(item.relativePath)
-                                },
-                                onLongClick = { showFolderContextMenu = item },
-                                videoItemIds = item.videoItemIds,
-                                gridDensity = when {
-                                    gridColumns <= 2 -> 3
-                                    else -> 2
-                                }
-                            )
-                        } else {
-                            VideoGridItem(
-                                videoItemId = item.videoItemId,
-                                fileName = item.name,
-                                duration = item.duration,
-                                width = item.width,
-                                height = item.height,
-                                playbackPosition = item.playbackPosition,
-                                playbackDuration = item.playbackDuration,
-                                isCompleted = item.isCompleted,
-                                isTrashed = item.isTrashed,
-                                isVideo = isVideoFile(item.name),
-                                isImage = isImageFile(item.name),
-                                star = item.star,
-                                onClick = {
-                                    when {
-                                        isVideoFile(item.name) -> {
-                                            viewModel.saveScrollPosition(folder, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
-                                            val id = item.videoItemId
-                                            if (id != null) {
-                                                onNavigateToPlayer(id, viewModel.getFolderVideoIds())
-                                            } else {
-                                                scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
-                                            }
-                                        }
-                                        isImageFile(item.name) -> {
-                                            viewModel.saveScrollPosition(folder, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
-                                            val id = item.videoItemId
-                                            if (id != null) {
-                                                onNavigateToImageViewer(id, viewModel.getFolderImageIds())
-                                            } else {
-                                                scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
-                                            }
-                                        }
-                                        else -> {
-                                            scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
-                                        }
-                                    }
-                                },
-                                onLongClick = { showContextMenu = item }
-                            )
-                        }
-                    }
-
-                    if (browseItems.isNotEmpty() && filter != BrowserViewModel.BrowseFilter.ALL && hiddenByFilterCount > 0) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            FilterCountFooter(hiddenByFilterCount)
-                        }
-                    }
-
-                    if (browseItems.isEmpty()) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(200.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                EmptyBrowseContent(filter, hiddenByFilterCount)
-                            }
-                        }
-                    }
+            BrowserTopBar(
+                folder = folder,
+                currentRelationId = currentRelationId,
+                starFilterActive = starFilterMode != BrowserViewModel.StarFilterMode.OFF,
+                onSettings = onNavigateToPlaybackSettings,
+                onHome = { viewModel.setFolder("") },
+                onTitleClick = { showDirectoryTree = true },
+                onSync = { currentRelationId?.let(onNavigateToSyncPreview) },
+                onSearch = onNavigateToSearch,
+                onSortFilterClick = { showSortMenu = true },
+                sortFilterDropdown = {
+                    SortFilterDropdown(
+                        expanded = showSortMenu,
+                        onDismiss = { showSortMenu = false },
+                        sortMode = sortMode,
+                        onSortChange = viewModel::setSortMode,
+                        filter = filter,
+                        onFilterChange = viewModel::setFilter,
+                        browseMode = browseMode,
+                        onBrowseModeChange = viewModel::setBrowseMode,
+                        viewMode = viewMode,
+                        onViewModeChange = viewModel::setViewMode,
+                        gridColumns = gridColumns,
+                        onGridColumnsChange = viewModel::setGridColumns,
+                        starFilterMode = starFilterMode,
+                        onClearStarFilter = {
+                            viewModel.setStarFilterMode(BrowserViewModel.StarFilterMode.OFF)
+                            viewModel.setStarFilterValue(0)
+                        },
+                        onAdvancedFilter = { showAdvancedFilter = true },
+                        folder = folder
+                    )
                 }
-            } else if (viewMode == BrowserViewModel.ViewMode.STAGGERED_GRID) {
-                val staggeredState = rememberLazyStaggeredGridState()
-                BrowseScrollTracker(
-                    folder = folder,
-                    browseItemsFolder = browseItemsFolder,
-                    browseItemsNotEmpty = browseItems.isNotEmpty(),
-                    currentScrollPosition = { staggeredState.firstVisibleItemIndex to staggeredState.firstVisibleItemScrollOffset },
-                    saveScrollPosition = { f, i, o -> viewModel.saveScrollPosition(f, i, o) },
-                    getSavedScrollPosition = { f -> viewModel.getScrollPosition(f) },
-                    scrollToPosition = { i, o -> staggeredState.scrollToItem(i, o) }
-                )
-                LazyVerticalStaggeredGrid(
-                    columns = StaggeredGridCells.Fixed(gridColumns),
-                    state = staggeredState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues),
-                    contentPadding = PaddingValues(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalItemSpacing = 8.dp
-                ) {
-                    items(
-                        items = browseItems,
-                        key = { it.relativePath }
-                    ) { item ->
-                        if (item.isDirectory) {
-                            FolderGridItem(
-                                folderName = item.name,
-                                isSyncBaseDir = item.isSyncBaseDir,
-                                onClick = { viewModel.setFolder(item.relativePath) },
-                                onLongClick = { showFolderContextMenu = item },
-                                videoItemIds = item.videoItemIds,
-                                gridDensity = when { gridColumns <= 2 -> 3 else -> 2 }
-                            )
-                        } else {
-                            VideoGridItem(
-                                videoItemId = item.videoItemId,
-                                fileName = item.name,
-                                duration = item.duration,
-                                width = item.width,
-                                height = item.height,
-                                playbackPosition = item.playbackPosition,
-                                playbackDuration = item.playbackDuration,
-                                isCompleted = item.isCompleted,
-                                isTrashed = item.isTrashed,
-                                isVideo = isVideoFile(item.name),
-                                isImage = isImageFile(item.name),
-                                star = item.star,
-                                staggeredMode = true,
-                                onClick = {
-                                    when {
-                                        isVideoFile(item.name) -> {
-                                            val id = item.videoItemId
-                                            if (id != null) {
-                                                onNavigateToPlayer(id, viewModel.getFolderVideoIds())
-                                            } else {
-                                                scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
-                                            }
-                                        }
-                                        isImageFile(item.name) -> {
-                                            val id = item.videoItemId
-                                            if (id != null) {
-                                                onNavigateToImageViewer(id, viewModel.getFolderImageIds())
-                                            } else {
-                                                scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
-                                            }
-                                        }
-                                        else -> {
-                                            scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
-                                        }
-                                    }
-                                },
-                                onLongClick = { showContextMenu = item }
-                            )
-                        }
-                    }
-                }
-            } else {
-                val listState = rememberLazyListState()
-                BrowseScrollTracker(
-                    folder = folder,
-                    browseItemsFolder = browseItemsFolder,
-                    browseItemsNotEmpty = browseItems.isNotEmpty(),
-                    currentScrollPosition = { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset },
-                    saveScrollPosition = { f, i, o -> viewModel.saveScrollPosition(f, i, o) },
-                    getSavedScrollPosition = { f -> viewModel.getScrollPosition(f) },
-                    scrollToPosition = { i, o -> listState.scrollToItem(i, o) }
-                )
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues)
-                        .verticalScrollbar(listState)
-                ) {
-                    items(
-                        items = browseItems,
-                        key = { it.relativePath }
-                    ) { item ->
-                        if (item.isDirectory) {
-                            FolderItem(
-                                item = item,
-                                onClick = {
-                                    viewModel.setFolder(item.relativePath)
-                                },
-                            onLongClick = { showFolderContextMenu = item }
-                            )
-                        } else {
-                            FileItem(
-                                item = item,
-                                onClick = {
-                                    when {
-                                        isVideoFile(item.name) -> {
-                                            viewModel.saveScrollPosition(folder, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
-                                            val id = item.videoItemId
-                                            if (id != null) {
-                                                onNavigateToPlayer(id, viewModel.getFolderVideoIds())
-                                            } else {
-                                                scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
-                                            }
-                                        }
-                                        isImageFile(item.name) -> {
-                                            viewModel.saveScrollPosition(folder, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
-                                            val id = item.videoItemId
-                                            if (id != null) {
-                                                onNavigateToImageViewer(id, viewModel.getFolderImageIds())
-                                            } else {
-                                                scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
-                                            }
-                                        }
-                                        else -> {
-                                            scope.launch { snackbarHostState.showSnackbar(cannotPlayStr) }
-                                        }
-                                    }
-                                },
-                                onLongClick = { showContextMenu = item }
-                            )
-                        }
-                    }
+            )
+        }
+    ) { paddingValues ->
+        // First-run guidance card: shown only at root, empty library, setup incomplete,
+        // and not previously dismissed. Replaces the plain EmptyBrowseContent so a new
+        // user can discover the source → relation → sync path without hunting in settings.
+        val resolvedState = firstRunState
+        val showOnboardingCard = folder.isEmpty()
+                && browseItems.isEmpty()
+                && libraryEmpty
+                && !onboardingDismissed
+                && resolvedState != null
+                && resolvedState != FirstRunState.READY
 
-                    if (browseItems.isNotEmpty() && filter != BrowserViewModel.BrowseFilter.ALL && hiddenByFilterCount > 0) {
-                        item {
-                            FilterCountFooter(hiddenByFilterCount)
-                        }
-                    }
-
-                    if (browseItems.isEmpty()) {
-                        item {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .fillParentMaxHeight()
-                                    .padding(vertical = 64.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                EmptyBrowseContent(filter, hiddenByFilterCount)
-                            }
-                        }
-                    }
-            }
+        if (showOnboardingCard) {
+            FirstRunOnboardingCard(
+                state = resolvedState!!,
+                targetRelationId = firstRelationId,
+                onNavigateToCreateSource = onNavigateToCreateSyncSource,
+                onNavigateToCreateRelation = onNavigateToCreateSyncRelation,
+                onNavigateToSyncPreview = onNavigateToSyncPreview,
+                onDismiss = viewModel::dismissOnboarding,
+                modifier = Modifier.padding(paddingValues)
+            )
+        } else {
+            BrowserContent(
+                viewMode = viewMode,
+                browseItems = browseItems,
+                folder = folder,
+                browseItemsFolder = browseItemsFolder,
+                filter = filter,
+                hiddenByFilterCount = hiddenByFilterCount,
+                gridColumns = gridColumns,
+                contentPadding = paddingValues,
+                onFolderClick = viewModel::setFolder,
+                onFolderLongClick = { showFolderContextMenu = it },
+                onFileOpenVideo = onOpenVideo,
+                onFileOpenImage = onOpenImage,
+                onCannotPlay = onCannotPlay,
+                onFileLongClick = { showContextMenu = it },
+                onSaveScrollPosition = viewModel::saveScrollPosition,
+                onGetScrollPosition = viewModel::getScrollPosition
+            )
         }
     }
+
+    // Resolve undo-related strings once (outside lambdas that are not @Composable).
+    val undoTrashMsg = stringResource(R.string.undo_trash_message)
+    val undoDeleteMsg = stringResource(R.string.undo_delete_message)
+    val undoActionLbl = stringResource(R.string.undo_action)
+    val undoFailedMsg = stringResource(R.string.undo_failed_message)
 
     showContextMenu?.let { item ->
         FileContextMenuDialog(
@@ -529,7 +261,45 @@ fun BrowserScreen(
             onDismiss = { showContextMenu = null },
             scope = scope,
             snackbarHostState = snackbarHostState,
-            context = context
+            context = context,
+            onTrashed = { id ->
+                // Defer the Snackbar until the async toggle actually succeeds: a failed toggle
+                // must never produce a misleading "moved to trash" Snackbar. Errors land in
+                // viewModel.error and are surfaced by the error Snackbar below.
+                viewModel.toggleTrashedWithUndo(id) {
+                    onTrashedInBrowser(
+                        scope, snackbarHostState, viewModel, id,
+                        undoTrashMsg, undoActionLbl, undoFailedMsg
+                    )
+                }
+            },
+            onDeleted = { id ->
+                // Guard against re-deleting a file that is already pending deletion.
+                if (pendingDeleteId == null) {
+                    pendingDeleteId = id
+                    latestPendingDeleteId = id
+                    viewModel.deleteFileWithUndo(id) {
+                        // onSuccess: the use-case recorded the pending delete and refreshed the
+                        // list. Only NOW show the undo Snackbar.
+                        if (compositionActive) {
+                            onDeletedInBrowser(
+                                scope, snackbarHostState, viewModel, id,
+                                onResolved = {
+                                    pendingDeleteId = null
+                                    latestPendingDeleteId = null
+                                },
+                                undoDeleteMsg, undoActionLbl, undoFailedMsg
+                            )
+                        } else {
+                            // Composition disposed before this callback fired (the composition
+                            // scope is cancelled → the Snackbar path is unreachable). Commit the
+                            // deferred delete via the safety path so it is not silently lost.
+                            viewModel.commitDeferredDeleteSafely(id)
+                            pendingDeleteId = null
+                        }
+                    }
+                }
+            }
         )
     }
 
@@ -542,67 +312,12 @@ fun BrowserScreen(
     }
 
     if (showAdvancedFilter) {
-        AlertDialog(
-            onDismissRequest = { showAdvancedFilter = false },
-            title = { Text(stringResource(R.string.browser_advanced_filter)) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(stringResource(R.string.browser_star_rating), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        val nextMode = when (starFilterMode) {
-                            BrowserViewModel.StarFilterMode.OFF -> BrowserViewModel.StarFilterMode.EQ
-                            BrowserViewModel.StarFilterMode.EQ -> BrowserViewModel.StarFilterMode.GT
-                            BrowserViewModel.StarFilterMode.GT -> BrowserViewModel.StarFilterMode.LT
-                            BrowserViewModel.StarFilterMode.LT -> BrowserViewModel.StarFilterMode.OFF
-                        }
-                        val modeIcon = when (starFilterMode) {
-                            BrowserViewModel.StarFilterMode.OFF -> Icons.Default.Block
-                            BrowserViewModel.StarFilterMode.EQ -> Icons.Default.Check
-                            BrowserViewModel.StarFilterMode.GT -> Icons.Default.ArrowUpward
-                            BrowserViewModel.StarFilterMode.LT -> Icons.Default.ArrowDownward
-                        }
-                        val modeLabel = when (starFilterMode) {
-                            BrowserViewModel.StarFilterMode.OFF -> ""
-                            BrowserViewModel.StarFilterMode.EQ -> "="
-                            BrowserViewModel.StarFilterMode.GT -> ">"
-                            BrowserViewModel.StarFilterMode.LT -> "<"
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (starFilterMode != BrowserViewModel.StarFilterMode.OFF)
-                                MaterialTheme.colorScheme.secondaryContainer
-                            else Color.Transparent,
-                            contentColor = if (starFilterMode != BrowserViewModel.StarFilterMode.OFF)
-                                MaterialTheme.colorScheme.onSecondaryContainer
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                            onClick = { viewModel.setStarFilterMode(nextMode) },
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                if (modeLabel.isNotEmpty()) {
-                                    Text(modeLabel, style = MaterialTheme.typography.labelMedium)
-                                } else {
-                                    Icon(modeIcon, null, modifier = Modifier.size(18.dp))
-                                }
-                            }
-                        }
-                        if (starFilterMode != BrowserViewModel.StarFilterMode.OFF) {
-                            StarRatingInput(
-                                rating = starFilterValue,
-                                onRatingChange = { viewModel.setStarFilterValue(it) },
-                                starSize = 28.dp,
-                                enabled = true
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showAdvancedFilter = false }) { Text(stringResource(R.string.common_confirm)) }
-            }
+        AdvancedFilterDialog(
+            starFilterValue = starFilterValue,
+            starFilterMode = starFilterMode,
+            onStarFilterModeChange = viewModel::setStarFilterMode,
+            onStarFilterValueChange = viewModel::setStarFilterValue,
+            onDismiss = { showAdvancedFilter = false }
         )
     }
 
@@ -635,482 +350,166 @@ fun BrowserScreen(
     }
 }
 
+/**
+ * Handle trash toggle in browser: the toggle is performed by the caller (via ViewModel →
+ * UndoDeleteUseCase which records the previous state). We show a Snackbar with undo action.
+ *
+ * @param id The video item id — used as expectedId to protect against stale snackbar actions.
+ * @param message Resolved "moved to trash" message (pre-resolved to avoid @Composable context).
+ * @param actionLabel Resolved "undo" label (pre-resolved to avoid @Composable context).
+ * @param failedMessage Resolved failure message (pre-resolved to avoid @Composable context).
+ */
+private fun onTrashedInBrowser(
+    scope: CoroutineScope,
+    snackbarHostState: SnackbarHostState,
+    viewModel: BrowserViewModel,
+    id: Long,
+    message: String,
+    actionLabel: String,
+    failedMessage: String
+) {
+    scope.launch {
+        snackbarHostState.currentSnackbarData?.dismiss()
+        val result = snackbarHostState.showSnackbar(
+            message = message,
+            actionLabel = actionLabel,
+            duration = SnackbarDuration.Short
+        )
+        when (result) {
+            SnackbarResult.ActionPerformed -> {
+                // expectedId protection: only undo if this operation is still the current one.
+                val undoResult = viewModel.undoDelete(expectedId = id)
+                if (undoResult is UndoResult.Failed) {
+                    snackbarHostState.showSnackbar(failedMessage)
+                }
+            }
+            SnackbarResult.Dismissed -> {
+                // Trash toggle is already applied; nothing to commit.
+            }
+        }
+    }
+}
+
+/**
+ * Handle hard delete in browser: the delete is deferred by UndoDeleteUseCase (UI already
+ * refreshed via refreshTrigger). We show a Snackbar with undo action.
+ * If the Snackbar is dismissed without undo, we commit the deferred delete.
+ *
+ * @param id The video item id — used as expectedId to protect against stale snackbar actions.
+ * @param onResolved Callback to clear the pending-delete guard in the UI.
+ * @param message Resolved "deleted" message (pre-resolved to avoid @Composable context).
+ * @param actionLabel Resolved "undo" label (pre-resolved to avoid @Composable context).
+ * @param failedMessage Resolved failure message (pre-resolved to avoid @Composable context).
+ */
+private fun onDeletedInBrowser(
+    scope: CoroutineScope,
+    snackbarHostState: SnackbarHostState,
+    viewModel: BrowserViewModel,
+    id: Long,
+    onResolved: () -> Unit,
+    message: String,
+    actionLabel: String,
+    failedMessage: String
+) {
+    scope.launch {
+        snackbarHostState.currentSnackbarData?.dismiss()
+        val result = snackbarHostState.showSnackbar(
+            message = message,
+            actionLabel = actionLabel,
+            duration = SnackbarDuration.Short
+        )
+        when (result) {
+            SnackbarResult.ActionPerformed -> {
+                // expectedId protection: only cancel if this operation is still the current one.
+                val undoResult = viewModel.undoDelete(expectedId = id)
+                if (undoResult is UndoResult.Failed) {
+                    snackbarHostState.showSnackbar(failedMessage)
+                }
+            }
+            SnackbarResult.Dismissed -> {
+                // expectedId protection: only commit if this operation is still the current one.
+                viewModel.commitDeferredDelete(expectedId = id)
+            }
+        }
+        // Clear the pending guard regardless of outcome — the operation is resolved.
+        onResolved()
+    }
+}
+
 @Composable
-private fun SortFilterDropdown(
-    expanded: Boolean,
-    onDismiss: () -> Unit,
-    sortMode: BrowserViewModel.SortMode,
-    onSortChange: (BrowserViewModel.SortMode) -> Unit,
-    filter: BrowserViewModel.BrowseFilter,
-    onFilterChange: (BrowserViewModel.BrowseFilter) -> Unit,
-    browseMode: BrowserViewModel.BrowseMode,
-    onBrowseModeChange: (BrowserViewModel.BrowseMode) -> Unit,
-    viewMode: BrowserViewModel.ViewMode,
-    onViewModeChange: (BrowserViewModel.ViewMode) -> Unit,
-    gridColumns: Int,
-    onGridColumnsChange: (Int) -> Unit,
+private fun AdvancedFilterDialog(
+    starFilterValue: Int,
     starFilterMode: BrowserViewModel.StarFilterMode,
-    onClearStarFilter: () -> Unit,
-    onAdvancedFilter: () -> Unit,
-    folder: String
+    onStarFilterModeChange: (BrowserViewModel.StarFilterMode) -> Unit,
+    onStarFilterValueChange: (Int) -> Unit,
+    onDismiss: () -> Unit
 ) {
-    DropdownMenu(
-        expanded = expanded,
+    AlertDialog(
         onDismissRequest = onDismiss,
-        modifier = Modifier.widthIn(max = 260.dp)
-    ) {
-        Text(
-            stringResource(R.string.browser_sort),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp)
-        )
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            SortFieldChip(
-                selected = sortMode == BrowserViewModel.SortMode.FILENAME_ASC || sortMode == BrowserViewModel.SortMode.FILENAME_DESC,
-                ascending = sortMode == BrowserViewModel.SortMode.FILENAME_ASC,
-                mainIcon = Icons.Default.SortByAlpha,
-                onClick = {
-                    val next = when (sortMode) {
-                        BrowserViewModel.SortMode.FILENAME_ASC -> BrowserViewModel.SortMode.FILENAME_DESC
-                        else -> BrowserViewModel.SortMode.FILENAME_ASC
-                    }
-                    onSortChange(next)
-                },
-                contentDescription = stringResource(R.string.browser_sort_filename)
-            )
-            SortFieldChip(
-                selected = sortMode == BrowserViewModel.SortMode.DURATION_ASC || sortMode == BrowserViewModel.SortMode.DURATION_DESC,
-                ascending = sortMode == BrowserViewModel.SortMode.DURATION_ASC,
-                mainIcon = Icons.Default.Schedule,
-                onClick = {
-                    val next = when (sortMode) {
-                        BrowserViewModel.SortMode.DURATION_ASC -> BrowserViewModel.SortMode.DURATION_DESC
-                        else -> BrowserViewModel.SortMode.DURATION_ASC
-                    }
-                    onSortChange(next)
-                },
-                contentDescription = stringResource(R.string.browser_sort_duration)
-            )
-            SortFieldChip(
-                selected = sortMode == BrowserViewModel.SortMode.FILE_SIZE_ASC || sortMode == BrowserViewModel.SortMode.FILE_SIZE_DESC,
-                ascending = sortMode == BrowserViewModel.SortMode.FILE_SIZE_ASC,
-                mainIcon = Icons.Default.SdCard,
-                onClick = {
-                    val next = when (sortMode) {
-                        BrowserViewModel.SortMode.FILE_SIZE_ASC -> BrowserViewModel.SortMode.FILE_SIZE_DESC
-                        else -> BrowserViewModel.SortMode.FILE_SIZE_ASC
-                    }
-                    onSortChange(next)
-                },
-                contentDescription = stringResource(R.string.browser_sort_size)
-            )
-        }
-        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-        Text(
-            stringResource(R.string.browser_filter),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
-        )
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            IconOptionChip(
-                selected = filter == BrowserViewModel.BrowseFilter.ALL,
-                onClick = { onFilterChange(BrowserViewModel.BrowseFilter.ALL); onDismiss() },
-                contentDescription = stringResource(R.string.browser_filter_all)
-            ) { Icon(Icons.AutoMirrored.Filled.InsertDriveFile, null, modifier = Modifier.size(20.dp)) }
-            IconOptionChip(
-                selected = filter == BrowserViewModel.BrowseFilter.MEDIA_ONLY,
-                onClick = { onFilterChange(BrowserViewModel.BrowseFilter.MEDIA_ONLY); onDismiss() },
-                contentDescription = stringResource(R.string.browser_filter_media_only)
-            ) { Icon(Icons.Default.Collections, null, modifier = Modifier.size(20.dp)) }
-            IconOptionChip(
-                selected = filter == BrowserViewModel.BrowseFilter.UNWATCHED,
-                onClick = { onFilterChange(BrowserViewModel.BrowseFilter.UNWATCHED); onDismiss() },
-                contentDescription = stringResource(R.string.browser_filter_unwatched)
-            ) { Icon(Icons.Default.PlayCircleOutline, null, modifier = Modifier.size(20.dp)) }
-        }
-        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-        if (browseMode == BrowserViewModel.BrowseMode.FILE || folder.isEmpty()) {
+        title = { Text(stringResource(R.string.browser_advanced_filter)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    stringResource(R.string.browser_browse),
+                    stringResource(R.string.browser_star_rating),
                     style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
-            )
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                IconOptionChip(
-                    selected = browseMode == BrowserViewModel.BrowseMode.DIRECTORY,
-                    onClick = { onBrowseModeChange(BrowserViewModel.BrowseMode.DIRECTORY); onDismiss() },
-                    contentDescription = stringResource(R.string.browser_browse_directory)
-                ) { Icon(Icons.Default.FolderOpen, null, modifier = Modifier.size(20.dp)) }
-                IconOptionChip(
-                    selected = browseMode == BrowserViewModel.BrowseMode.FILE,
-                    onClick = { onBrowseModeChange(BrowserViewModel.BrowseMode.FILE); onDismiss() },
-                    contentDescription = stringResource(R.string.browser_browse_file)
-                ) { Icon(Icons.Default.VideoFile, null, modifier = Modifier.size(20.dp)) }
-            }
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-        }
-        Text(
-            stringResource(R.string.browser_view),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
-        )
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            IconOptionChip(
-                selected = viewMode == BrowserViewModel.ViewMode.LIST,
-                onClick = { onViewModeChange(BrowserViewModel.ViewMode.LIST); onDismiss() },
-                contentDescription = stringResource(R.string.browser_view_list)
-            ) { Icon(Icons.AutoMirrored.Filled.ViewList, null, modifier = Modifier.size(20.dp)) }
-            IconOptionChip(
-                selected = viewMode == BrowserViewModel.ViewMode.GRID,
-                onClick = { onViewModeChange(BrowserViewModel.ViewMode.GRID); onDismiss() },
-                contentDescription = stringResource(R.string.browser_view_grid)
-            ) { Icon(Icons.Default.Apps, null, modifier = Modifier.size(20.dp)) }
-            IconOptionChip(
-                selected = viewMode == BrowserViewModel.ViewMode.STAGGERED_GRID,
-                onClick = { onViewModeChange(BrowserViewModel.ViewMode.STAGGERED_GRID); onDismiss() },
-                contentDescription = stringResource(R.string.browser_view_staggered)
-            ) {
-                Canvas(modifier = Modifier.size(20.dp)) {
-                    val barWidth = size.width / 5f
-                    val gap = barWidth
-                    drawRect(Color(0xFFFFFFFF), topLeft = Offset(0f, size.height * 0.15f), size = Size(barWidth, size.height * 0.85f))
-                    drawRect(Color(0xFFFFFFFF), topLeft = Offset(barWidth + gap, 0f), size = Size(barWidth, size.height * 0.6f))
-                    drawRect(Color(0xFFFFFFFF), topLeft = Offset(2 * (barWidth + gap), size.height * 0.3f), size = Size(barWidth, size.height * 0.7f))
-                }
-            }
-        }
-        if (viewMode == BrowserViewModel.ViewMode.GRID || viewMode == BrowserViewModel.ViewMode.STAGGERED_GRID) {
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                listOf(1, 2, 3, 4, 5).forEach { col ->
-                    GridColumnChip(
-                        selected = gridColumns == col,
-                        onClick = { onGridColumnsChange(col) },
-                        label = "$col"
-                    )
-                }
-            }
-        }
-        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp).fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            TextButton(
-                onClick = {
-                    onDismiss()
-                    onAdvancedFilter()
-                }
-            ) {
-                Text(stringResource(R.string.browser_advanced_filter), style = MaterialTheme.typography.bodySmall)
-            }
-            if (starFilterMode != BrowserViewModel.StarFilterMode.OFF) {
-                TextButton(
-                    onClick = onClearStarFilter
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text(stringResource(R.string.browser_clear_filter), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun BrowseScrollTracker(
-    folder: String,
-    browseItemsFolder: String,
-    browseItemsNotEmpty: Boolean,
-    currentScrollPosition: () -> Pair<Int, Int>,
-    saveScrollPosition: (String, Int, Int) -> Unit,
-    getSavedScrollPosition: (String) -> Pair<Int, Int>?,
-    scrollToPosition: suspend (Int, Int) -> Unit
-) {
-    var previousFolder by remember { mutableStateOf(folder) }
-    LaunchedEffect(folder) {
-        if (previousFolder != folder) {
-            val (index, offset) = currentScrollPosition()
-            saveScrollPosition(previousFolder, index, offset)
-        }
-        previousFolder = folder
-    }
-    LaunchedEffect(browseItemsFolder) {
-        if (browseItemsFolder == folder && browseItemsNotEmpty) {
-            val saved = getSavedScrollPosition(folder)
-            if (saved != null) {
-                scrollToPosition(saved.first, saved.second)
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyBrowseContent(
-    filter: BrowserViewModel.BrowseFilter,
-    hiddenByFilterCount: Int
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Icon(
-            imageVector = Icons.Default.FolderOpen,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-            modifier = Modifier.size(48.dp)
-        )
-        Text(
-            text = if (filter != BrowserViewModel.BrowseFilter.ALL && hiddenByFilterCount > 0)
-                stringResource(R.string.browser_hidden_by_filter, hiddenByFilterCount)
-            else stringResource(R.string.browser_empty_dir),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-private fun FilterCountFooter(hiddenCount: Int) {
-    Box(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = stringResource(R.string.browser_hidden_by_filter, hiddenCount),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun FolderItem(
-    item: BrowseItem,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit = {}
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick
-            )
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        FolderIcon(
-            isSyncBaseDir = item.isSyncBaseDir,
-            modifier = Modifier.size(40.dp)
-        )
-
-        Spacer(Modifier.width(12.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = item.name,
-                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            val infoText = buildString {
-                if (item.videoCount > 0) {
-                    append(stringResource(R.string.browser_video_count, item.videoCount))
-                    if (item.playedCount > 0) append(" · ${stringResource(R.string.browser_played_count, item.playedCount)}")
-                    if (item.trashedCount > 0) append(" · ${stringResource(R.string.browser_trashed_count, item.trashedCount)}")
-                }
-            }
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = infoText,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun FileItem(
-    item: BrowseItem,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick
-            )
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Thumbnail(
-            videoItemId = item.videoItemId,
-            isVideo = isVideoFile(item.name),
-            isImage = isImageFile(item.name),
-            modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(4.dp))
-        )
-
-        Spacer(Modifier.width(12.dp))
-
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.Center
-        ) {
-        Text(
-            text = item.name.substringBeforeLast('.'),
-            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-
-            val metadataPrefix = if (isImageFile(item.name)) {
-                buildImageMetadataLine(
-                    width = item.width,
-                    height = item.height,
-                    dateTaken = item.dateTaken,
-                    fileSize = item.fileSize
-                )
-            } else {
-                buildMetadataLineWithoutExtension(
-                    duration = item.duration,
-                    width = item.width,
-                    height = item.height,
-                    bitrate = item.bitrate,
-                    hasGainAdjusted = item.hasGainAdjusted
-                )
-            }
-            val extension = item.name.substringAfterLast('.', "").uppercase()
-            val hasContent = metadataPrefix.isNotEmpty() || item.star > 0 || extension.isNotEmpty()
-            if (hasContent) {
-                val metaStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (metadataPrefix.isNotEmpty()) {
-                        Text(text = metadataPrefix, style = metaStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val nextMode = when (starFilterMode) {
+                        BrowserViewModel.StarFilterMode.OFF -> BrowserViewModel.StarFilterMode.EQ
+                        BrowserViewModel.StarFilterMode.EQ -> BrowserViewModel.StarFilterMode.GT
+                        BrowserViewModel.StarFilterMode.GT -> BrowserViewModel.StarFilterMode.LT
+                        BrowserViewModel.StarFilterMode.LT -> BrowserViewModel.StarFilterMode.OFF
                     }
-                    if (item.star > 0) {
-                        if (metadataPrefix.isNotEmpty()) Text(" · ", style = metaStyle)
-                        StarRatingDisplay(rating = item.star, starSize = 10.dp, filled = true)
+                    val modeIcon = when (starFilterMode) {
+                        BrowserViewModel.StarFilterMode.OFF -> Icons.Default.Block
+                        BrowserViewModel.StarFilterMode.EQ -> Icons.Default.Check
+                        BrowserViewModel.StarFilterMode.GT -> Icons.Default.ArrowUpward
+                        BrowserViewModel.StarFilterMode.LT -> Icons.Default.ArrowDownward
                     }
-                    if (extension.isNotEmpty()) {
-                        if (metadataPrefix.isNotEmpty() || item.star > 0) Text(" · ", style = metaStyle)
-                        Text(extension, style = metaStyle, maxLines = 1)
+                    val modeLabel = when (starFilterMode) {
+                        BrowserViewModel.StarFilterMode.OFF -> ""
+                        BrowserViewModel.StarFilterMode.EQ -> "="
+                        BrowserViewModel.StarFilterMode.GT -> ">"
+                        BrowserViewModel.StarFilterMode.LT -> "<"
+                    }
+                    val colors = MaterialTheme.colorScheme
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (starFilterMode != BrowserViewModel.StarFilterMode.OFF)
+                            colors.secondaryContainer else Color.Transparent,
+                        contentColor = if (starFilterMode != BrowserViewModel.StarFilterMode.OFF)
+                            colors.onSecondaryContainer else colors.onSurfaceVariant,
+                        onClick = { onStarFilterModeChange(nextMode) },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            if (modeLabel.isNotEmpty()) {
+                                Text(modeLabel, style = MaterialTheme.typography.labelMedium)
+                            } else {
+                                Icon(modeIcon, null, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                    if (starFilterMode != BrowserViewModel.StarFilterMode.OFF) {
+                        StarRatingInput(
+                            rating = starFilterValue,
+                            onRatingChange = onStarFilterValueChange,
+                            starSize = 28.dp,
+                            enabled = true
+                        )
                     }
                 }
             }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_confirm)) }
         }
-
-        FileStatusIcon(
-            isCompleted = item.isCompleted,
-                    isTrashed = item.isTrashed,
-            playbackPosition = item.playbackPosition,
-            playbackDuration = item.playbackDuration
-        )
-    }
-}
-
-@Composable
-private fun IconOptionChip(
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    contentDescription: String,
-    icon: @Composable () -> Unit
-) {
-    Surface(
-        modifier = modifier
-            .size(40.dp)
-            .semantics { this.contentDescription = contentDescription },
-        shape = RoundedCornerShape(8.dp),
-        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-        contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-        onClick = onClick
-    ) {
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-            icon()
-        }
-    }
-}
-
-@Composable
-private fun SortFieldChip(
-    selected: Boolean,
-    ascending: Boolean,
-    mainIcon: ImageVector,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    contentDescription: String
-) {
-    IconOptionChip(selected = selected, onClick = onClick, modifier = modifier, contentDescription = contentDescription) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Icon(mainIcon, null, modifier = Modifier.size(18.dp))
-            if (selected) {
-                Icon(
-                    if (ascending) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
-                    null,
-                    modifier = Modifier.size(12.dp)
-                )
-            }
-        }
-    }
-}
-
-
-
-
-@Composable
-private fun GridColumnChip(
-    selected: Boolean,
-    onClick: () -> Unit,
-    label: String,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(8.dp),
-        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-        contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-        onClick = onClick
-    ) {
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(28.dp)) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                textAlign = TextAlign.Center
-            )
-        }
-    }
+    )
 }

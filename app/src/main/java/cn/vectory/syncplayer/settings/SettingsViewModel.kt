@@ -1,8 +1,10 @@
 package cn.vectory.syncplayer.settings
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
@@ -11,6 +13,7 @@ import cn.vectory.syncplayer.security.BiometricAuthManager
 import cn.vectory.syncplayer.storage.volume.MediaVolumeProvider
 import cn.vectory.syncplayer.ui.util.formatFileSize
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -30,6 +33,7 @@ data class SettingsState(
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val syncLogRepository: SyncLogRepository,
     private val userPrefs: UserPreferencesRepository,
     private val biometricAuthManager: BiometricAuthManager,
@@ -117,8 +121,12 @@ class SettingsViewModel @Inject constructor(
     fun authenticateAndToggle(activity: FragmentActivity, enable: Boolean) {
         biometricAuthManager.authenticate(
             activity = activity,
-            title = if (enable) "启用安全锁" else "关闭安全锁",
-            subtitle = "验证身份以${if (enable) "开启" else "关闭"}应用锁",
+            title = context.getString(
+                if (enable) R.string.biometric_title_enable_lock else R.string.biometric_title_disable_lock
+            ),
+            subtitle = context.getString(
+                if (enable) R.string.biometric_subtitle_enable_lock else R.string.biometric_subtitle_disable_lock
+            ),
             onSuccess = { setSecureLockEnabled(enable) },
             onError = { /* no-op on error */ }
         )
@@ -130,6 +138,17 @@ class SettingsViewModel @Inject constructor(
                 syncLogRepository.clearOldLogs()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to clear logs", e)
+            }
+        }
+    }
+
+    /** Re-enable the first-run onboarding card on the browser root. */
+    fun resetOnboardingDismissed() {
+        viewModelScope.launch {
+            try {
+                userPrefs.setOnboardingDismissed(false)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to reset onboarding dismissal", e)
             }
         }
     }

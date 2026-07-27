@@ -17,6 +17,8 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,6 +44,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
 import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.browser.UndoResult
 import kotlin.math.abs
 import java.io.File
 
@@ -65,6 +68,13 @@ fun ImageViewerScreen(
     val context = LocalContext.current
     val activity = context as? Activity ?: return
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val imageError by viewModel.imageError.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+    var pendingUndoTrigger by remember { mutableIntStateOf(0) }
+    // The image id captured at toggle time, used as expectedId for the undo Snackbar so a
+    // stale Snackbar (from an earlier image) never undoes a newer toggle.
+    var pendingUndoId by remember { mutableStateOf<Long?>(null) }
 
     var isExiting by remember { mutableStateOf(false) }
 
@@ -93,6 +103,49 @@ fun ImageViewerScreen(
     }
 
     BackHandler { doExit() }
+
+    // Resolve strings outside the suspend context of LaunchedEffect.
+    val undoTrashMessage = stringResource(R.string.undo_trash_message)
+    val undoActionLabel = stringResource(R.string.undo_action)
+    val undoFailedMessage = stringResource(R.string.undo_failed_message)
+
+    // Show undo snackbar ONLY after the async trash toggle succeeded (the trigger is
+    // incremented inside the toggle's onSuccess callback, not at call time). This ensures a
+    // failed toggle never produces a misleading "moved to trash" Snackbar.
+    // pendingUndoId is the FIXED image id captured at toggle time (returned by the ViewModel
+    // callback) and used as expectedId so a stale Snackbar never undoes a newer toggle. If the
+    // trigger fired but the id is null (defensive), do nothing rather than call undo with a null
+    // expectedId (which would undo a newer unrelated operation).
+    LaunchedEffect(pendingUndoTrigger) {
+        if (pendingUndoTrigger > 0) {
+            val expectedId = pendingUndoId ?: return@LaunchedEffect
+            val result = snackbarHostState.showSnackbar(
+                message = undoTrashMessage,
+                actionLabel = undoActionLabel,
+                duration = SnackbarDuration.Short
+            )
+            when (result) {
+                SnackbarResult.ActionPerformed -> {
+                    // expectedId protection: only undo if this operation is still the current one.
+                    val undoResult = viewModel.undoDelete(expectedId = expectedId)
+                    if (undoResult is UndoResult.Failed) {
+                        snackbarHostState.showSnackbar(undoFailedMessage)
+                    }
+                }
+                SnackbarResult.Dismissed -> {
+                    // Trash toggle is already applied; nothing to commit.
+                }
+            }
+        }
+    }
+
+    // Surface toggle/delete failures (resolved message already localized by the ViewModel).
+    imageError?.let {
+        LaunchedEffect(it) {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearError()
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -123,7 +176,12 @@ fun ImageViewerScreen(
             onDoubleTapCenter = {
                 val wasTrashed = uiState.playbackRecord?.isTrashed ?: false
                 viewModel.showOverlay(ImageOverlay.TrashAction(!wasTrashed))
-                viewModel.toggleTrashed()
+                // Defer the Snackbar trigger until the async toggle succeeds.
+                // The callback receives the FIXED image id captured at call time.
+                viewModel.toggleTrashed { completedId ->
+                    pendingUndoId = completedId
+                    pendingUndoTrigger++
+                }
             },
             onSwipeLeft = {
                 val nextId = viewModel.getNextImageId()
@@ -151,12 +209,24 @@ fun ImageViewerScreen(
                 filename = uiState.currentImage?.fileName?.substringBeforeLast(".") ?: "",
                 isTrashed = uiState.playbackRecord?.isTrashed == true,
                 onClose = { doExit() },
-                onTrashToggle = { viewModel.toggleTrashed() },
+                onTrashToggle = {
+                    // Defer the Snackbar trigger until the async toggle succeeds.
+                    // The callback receives the FIXED image id captured at call time.
+                    viewModel.toggleTrashed { completedId ->
+                        pendingUndoId = completedId
+                        pendingUndoTrigger++
+                    }
+                },
                 modifier = Modifier.align(Alignment.TopCenter)
             )
         }
 
         ImageOverlayView(uiState.currentOverlay)
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
     }
 }
 
@@ -402,11 +472,11 @@ private fun ImageOverlayView(overlay: ImageOverlay?) {
                 )
 
                 val text: String = when (overlay) {
-                    is ImageOverlay.Previous -> "PREVIOUS"
-                    is ImageOverlay.Next -> "NEXT"
-                    is ImageOverlay.NoPrevious -> "NO PREVIOUS"
-                    is ImageOverlay.NoNext -> "NO NEXT"
-                    is ImageOverlay.TrashAction -> if (overlay.isIn) "IN" else "OUT"
+                    is ImageOverlay.Previous -> stringResource(R.string.player_overlay_previous)
+                    is ImageOverlay.Next -> stringResource(R.string.player_overlay_next)
+                    is ImageOverlay.NoPrevious -> stringResource(R.string.player_overlay_no_previous)
+                    is ImageOverlay.NoNext -> stringResource(R.string.player_overlay_no_next)
+                    is ImageOverlay.TrashAction -> if (overlay.isIn) stringResource(R.string.player_overlay_trash_in) else stringResource(R.string.player_overlay_trash_out)
                 }
                 Text(
                     text = text,

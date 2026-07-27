@@ -13,6 +13,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import cn.vectory.syncplayer.data.model.OrientationPreference
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -40,11 +41,12 @@ class UserPreferencesRepository @Inject constructor(
         val QUICK_RECYCLE = booleanPreferencesKey("quick_recycle")
         val SECURE_LOCK_ENABLED = booleanPreferencesKey("secure_lock_enabled")
         val MEDIA_STORAGE_TREE_URI = stringPreferencesKey("media_storage_tree_uri")
+        val ONBOARDING_DISMISSED = booleanPreferencesKey("onboarding_dismissed")
     }
 
     val longPressSpeed: Flow<Float> = dataStore.data.map { it[Keys.LONG_PRESS_SPEED] ?: 2.0f }
 
-    val orientation: Flow<String?> = dataStore.data.map { it[Keys.ORIENTATION] }
+    val orientation: Flow<OrientationPreference?> = dataStore.data.map { it[Keys.ORIENTATION]?.let { name -> try { OrientationPreference.valueOf(name) } catch (_: IllegalArgumentException) { null } } }
 
     val defaultSortMode: Flow<String> = dataStore.data.map {
         it[Keys.DEFAULT_SORT_MODE] ?: "FILENAME_ASC"
@@ -97,6 +99,10 @@ class UserPreferencesRepository @Inject constructor(
 
     val mediaStorageTreeUri: Flow<String?> = dataStore.data.map { it[Keys.MEDIA_STORAGE_TREE_URI] }
 
+    val onboardingDismissed: Flow<Boolean> = dataStore.data.map {
+        it[Keys.ONBOARDING_DISMISSED] ?: false
+    }
+
     suspend fun getMediaStorageTreeUri(): String? = mediaStorageTreeUri.first()
 
     suspend fun setMediaStorageTreeUri(uri: String?) {
@@ -104,7 +110,7 @@ class UserPreferencesRepository @Inject constructor(
     }
 
     suspend fun getLongPressSpeed(): Float = longPressSpeed.first()
-    suspend fun getOrientation(): String? = orientation.first()
+    suspend fun getOrientation(): OrientationPreference? = orientation.first()
     suspend fun getDefaultSortMode(): String = defaultSortMode.first()
     suspend fun getDefaultFilter(): String = defaultFilter.first()
     suspend fun getMaxConcurrentDownloads(): Int = maxConcurrentDownloads.first()
@@ -124,8 +130,8 @@ class UserPreferencesRepository @Inject constructor(
         dataStore.edit { it[Keys.LONG_PRESS_SPEED] = speed }
     }
 
-    suspend fun setOrientation(pref: String) {
-        dataStore.edit { it[Keys.ORIENTATION] = pref }
+    suspend fun setOrientation(pref: OrientationPreference) {
+        dataStore.edit { it[Keys.ORIENTATION] = pref.name }
     }
 
     suspend fun setDefaultSortMode(mode: String) {
@@ -174,5 +180,11 @@ class UserPreferencesRepository @Inject constructor(
 
     suspend fun setBrowseMode(mode: String) {
         dataStore.edit { it[Keys.BROWSE_MODE] = mode }
+    }
+
+    suspend fun getOnboardingDismissed(): Boolean = onboardingDismissed.first()
+
+    suspend fun setOnboardingDismissed(dismissed: Boolean) {
+        dataStore.edit { it[Keys.ONBOARDING_DISMISSED] = dismissed }
     }
 }
