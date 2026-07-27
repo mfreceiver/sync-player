@@ -94,6 +94,32 @@ class EncryptedMediaStore(
 
     suspend fun openCiphertextRead(id: Long): SeekableReadHandle = volume().openRead(finalMedia(id))
 
+    /**
+     * Finalize 后的可读性探针：打开密文读句柄并校验 SPM2 magic。
+     *
+     * 用于在 finalize 成功后立即检测该卷是否真的能解密读取（SAF 不支持 seek 时 openRead
+     * 抛 UnsupportedOperationException；密文损坏/短读时校验失败）。任何失败都抛异常，
+     * 让调用方（SyncEngine）回滚 finalize，避免"下载成功但永远打不开"的幽灵文件。
+     *
+     * 注意：只验证 seek + read + magic 三件事，不解密 chunk（GCM 解密由 RangeDecryptor
+     * 在播放路径上做，key/iv 已在 DB 里，不在本探针职责内）。
+     */
+    suspend fun verifyReadable(id: Long) {
+        val h = openCiphertextRead(id)
+        try {
+            val magic = ByteArray(CryptoScheme.MAGIC.size)
+            val n = h.read(magic, 0, magic.size)
+            if (n != magic.size) {
+                throw java.io.IOException("read probe short read: got $n/${magic.size} bytes")
+            }
+            if (!magic.contentEquals(CryptoScheme.MAGIC)) {
+                throw java.io.IOException("read probe: header magic mismatch")
+            }
+        } finally {
+            try { h.close() } catch (_: Exception) {}
+        }
+    }
+
     suspend fun delete(id: Long): Boolean = volume().delete(finalMedia(id))
 
     suspend fun exists(id: Long): Boolean = volume().exists(finalMedia(id))

@@ -56,6 +56,44 @@ class EncryptedMediaStoreTest {
         assertFalse(store.exists(8L))
     }
 
+    @Test fun verifyReadableThrowsForMissingFile() = runTest {
+        val store = newStore()
+        // 未 finalize 的 id：finalMedia 位置无文件 → openRead 抛 FileNotFoundException
+        var caught: Throwable? = null
+        try {
+            store.verifyReadable(77L)
+        } catch (e: Throwable) {
+            caught = e
+        }
+        assertNotNull("verifyReadable must throw when ciphertext is absent", caught)
+    }
+
+    @Test fun verifyReadableSucceedsAfterFinalize() = runTest {
+        val store = newStore(); val id = 12L
+        val plain = ByteArray(2048) { (it and 0xFF).toByte() }
+        store.openEncryptSink(id, CryptoScheme.newIv(), plain.size.toLong()).use { it.write(plain) }
+        assertTrue(store.finalize(id))
+        // finalize 后密文有正确的 SPM2 magic → 探针不应抛
+        store.verifyReadable(id)
+    }
+
+    @Test fun verifyReadableDetectsCorruptHeader() = runTest {
+        val root = File(createTempDirectory().toFile(), "v").apply { mkdirs() }
+        val store = newStore(FileVolume(root)); val id = 13L
+        // 直接往 finalMedia 位置写一个非 SPM2 magic 的文件
+        val finalRel = MediaPaths.mediaRelPath(id)
+        FileVolume(root).openWrite(finalRel).use {
+            it.write(byteArrayOf(0x00, 0x01, 0x02, 0x03, 0x04, 0x05))
+        }
+        var caught: Throwable? = null
+        try {
+            store.verifyReadable(id)
+        } catch (e: IOException) {
+            caught = e
+        }
+        assertNotNull("verifyReadable must throw IOException on magic mismatch", caught)
+    }
+
     @Test fun twoArgSinkIsUnsupported() = runTest {
         val store = newStore()
         // openEncryptSink(id, iv) is suspend and must refuse without a plaintext length.

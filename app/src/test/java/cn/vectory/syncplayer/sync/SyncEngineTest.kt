@@ -30,6 +30,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Before
 import org.junit.Test
 import java.io.OutputStream
+import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SyncEngineTest {
@@ -199,5 +200,52 @@ class SyncEngineTest {
         // 失败应 cancel 并删除占位
         coVerify(atLeast = 1) { encryptedMediaStore.cancel(200L) }
         coVerify(atLeast = 1) { videoRepository.deleteById(200L) }
+    }
+
+    @Test
+    fun `executeSync rolls back finalize when read probe fails`() = runTest {
+        val relationId = 1L
+        val relation = mockk<SyncRelation>()
+        every { relation.id } returns relationId
+        every { relation.syncSourceId } returns 10L
+        every { relation.remotePath } returns "/remote"
+        every { relation.localBasePath } returns "/local"
+        every { relation.name } returns "rel"
+        val source = mockk<SyncSource>()
+        every { source.protocol } returns SyncProtocol.SFTP
+        every { source.id } returns 10L
+
+        coEvery { syncRelationRepository.getById(relationId) } returns relation
+        coEvery { syncSourceRepository.getById(10L) } returns source
+        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
+        every { encryptedMediaStore.volumeId } returns "test-vol"
+
+        val client = mockk<RemoteFileClient>(relaxed = true)
+        every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns client
+        coEvery { client.downloadTo(any(), any(), any()) } returns true
+        every { storagePaths.toLocalRelativePath("/local", "video.mp4") } returns "video.mp4"
+
+        // 新文件：existing == null → upsert 占位返回 id
+        coEvery { videoRepository.getByRelativePathAndRelationId("video.mp4", relationId) } returns null
+        coEvery { videoRepository.upsert(any()) } returns 300L
+        coEvery { videoRepository.deleteById(300L) } returns Unit
+
+        val sink = mockk<OutputStream>(relaxed = true)
+        coEvery { encryptedMediaStore.openEncryptSink(300L, any(), any()) } returns sink
+        coEvery { encryptedMediaStore.finalize(300L) } returns true
+        coEvery { encryptedMediaStore.cancel(300L) } returns Unit
+        // finalize 成功，但可读性探针失败（模拟 SAF 不支持 seek / 密文不可读）
+        coEvery { encryptedMediaStore.verifyReadable(300L) } throws IOException("simulated unreadable")
+        coEvery { encryptedMediaStore.delete(300L) } returns true
+
+        val action = SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "video.mp4", fileSize = 1000L)
+        val result = syncEngine.executeSync(relationId, listOf(action), emptyList())
+
+        // 探针失败 → 回滚 → 整体失败
+        assertEquals(false, result)
+        // 探针回滚：删除已 finalize 的密文 + 删除占位 DB 行
+        coVerify(atLeast = 1) { encryptedMediaStore.verifyReadable(300L) }
+        coVerify(atLeast = 1) { encryptedMediaStore.delete(300L) }
+        coVerify(atLeast = 1) { videoRepository.deleteById(300L) }
     }
 }

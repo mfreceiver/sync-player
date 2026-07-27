@@ -526,8 +526,9 @@ class SyncEngine @Inject constructor(
                                         }
                                         // AEAD v2 契约（跨 lane）：明文长度 = 远端源文件大小 = action.fileSize，
                                         // header 需要它来写 plaintextLength 字段。H2 在 EncryptedMediaStore 新增三参重载。
-                                        val sink = store.openEncryptSink(assignedId, iv, action.fileSize)
+                                        var sink: java.io.OutputStream? = null
                                         try {
+                                            sink = store.openEncryptSink(assignedId, iv, action.fileSize)
                                             downloadSuccess = workerClient.downloadTo(action.relativePath, sink) { transferred, total ->
                                                 // onProgress 是普通（非 suspend）lambda，沿用 publisher 内的 tryLock/unlock 节流写入。
                                                 progressPublisher.reportDownloadProgress(
@@ -553,13 +554,23 @@ class SyncEngine @Inject constructor(
                                                 SyncOperation.DOWNLOAD,
                                                 path = action.relativePath
                                             )
+                                            // 可读性探针（Bug 2 修复）：finalize 成功后立即验证文件能 seek + read + SPM2 magic。
+                                            // SAF 不支持 seek / 任何读取失败 → 回滚 finalize（删 .enc + 删 DB 行）+ 抛 STORAGE_ERROR。
+                                            // 不在重试白名单 → 立即抛到 outer catch 计 failedDownloadCount；下次 dryRun 因 DB 行已删重下。
+                                            try {
+                                                store.verifyReadable(assignedId)
+                                            } catch (e: Exception) {
+                                                try { store.delete(assignedId) } catch (_: Exception) {}
+                                                videoRepository.deleteById(assignedId)
+                                                throw SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DOWNLOAD, path = action.relativePath, cause = e)
+                                            }
                                         } catch (e: CancellationException) {
-                                            try { sink.close() } catch (_: Exception) {}
+                                            try { sink?.close() } catch (_: Exception) {}
                                             store.cancel(assignedId)
                                             if (existing == null) videoRepository.deleteById(assignedId)
                                             throw e
                                         } catch (e: Exception) {
-                                            try { sink.close() } catch (_: Exception) {}
+                                            try { sink?.close() } catch (_: Exception) {}
                                             store.cancel(assignedId)
                                             if (existing == null) videoRepository.deleteById(assignedId)
                                             // P1-2: 终态错误（AUTH/ACCESS/PATH_NOT_FOUND/SPACE/FINALIZE/...）

@@ -141,17 +141,24 @@ class SafVolume(
     }
 
     override suspend fun rename(from: String, to: String): Boolean = withContext(Dispatchers.IO) {
-        val fromDocId = resolveDocId(from) ?: return@withContext false
-        val fromUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, fromDocId)
-        val toName = to.substringAfterLast('/')
-        val toDirPath = to.substringBeforeLast('/', "")
-        val fromParentDocId = resolveDocId(from.substringBeforeLast('/', "")) ?: return@withContext false
-        val toParentDocId = resolveDocId(toDirPath) ?: return@withContext false
-        // 仅支持同目录重命名（父目录 docId 相等）
-        if (fromParentDocId != toParentDocId) return@withContext false
-        val newUri = DocumentsContract.renameDocument(context.contentResolver, fromUri, toName) ?: return@withContext false
-        // 确认新文件存在且源文件已消失
-        isDocumentExists(newUri) && !isDocumentExists(fromUri)
+        try {
+            val fromDocId = resolveDocId(from) ?: return@withContext false
+            val fromUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, fromDocId)
+            val toName = to.substringAfterLast('/')
+            val toDirPath = to.substringBeforeLast('/', "")
+            val fromParentDocId = resolveDocId(from.substringBeforeLast('/', "")) ?: return@withContext false
+            val toParentDocId = resolveDocId(toDirPath) ?: return@withContext false
+            // 仅支持同目录重命名（父目录 docId 相等）
+            if (fromParentDocId != toParentDocId) return@withContext false
+            val newUri = DocumentsContract.renameDocument(context.contentResolver, fromUri, toName) ?: return@withContext false
+            // 确认新文件存在且源文件已消失
+            isDocumentExists(newUri) && !isDocumentExists(fromUri)
+        } catch (_: Exception) {
+            // 某些 SAF provider 不支持 rename（如外置 SD 卡/OTG 的某些实现）会抛
+            // UnsupportedOperationException；归一化为 false 让调用方走 FINALIZE_FAILED，
+            // 而不是让裸 UOE 传出。
+            false
+        }
     }
 
     /**
