@@ -68,10 +68,11 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Launcher icon label = "Sync Player <version>-<commit>" (git-derived, e.g. "Sync Player 12.0.3-ae7f0bb").
+        // Launcher icon label is the stable app name "Sync Player".
+        // Full git-derived version (e.g. "12.0.3-ae7f0bb") is shown on the About screen via BuildConfig.VERSION_NAME.
         // Uses manifestPlaceholders (AGP 9.x disables resValue by default); AndroidManifest.xml
         // references ${appName} instead of @string/app_name.
-        manifestPlaceholders["appName"] = "Sync Player $gitVersionName"
+        manifestPlaceholders["appName"] = "Sync Player"
     }
 
     buildTypes {
