@@ -3,19 +3,23 @@ package cn.vectory.syncplayer.browser
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.core.content.FileProvider
 import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.crypto.CryptoScheme
+import cn.vectory.syncplayer.crypto.RangeDecryptor
 import cn.vectory.syncplayer.data.model.FolderStats
 import cn.vectory.syncplayer.data.model.SyncRelationWithSource
+import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
-import cn.vectory.syncplayer.provider.MediaUris
 import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
 import cn.vectory.syncplayer.sync.SyncErrorCode
 import cn.vectory.syncplayer.sync.SyncException
 import cn.vectory.syncplayer.sync.SyncOperation
 import cn.vectory.syncplayer.sync.SyncEngine
 import cn.vectory.syncplayer.sync.syncErrorMessage
+import cn.vectory.syncplayer.ui.util.ShareTempFiles
 import cn.vectory.syncplayer.ui.util.getMimeType
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -26,7 +30,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.io.FileNotFoundException
+import java.io.FileOutputStream
+import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -202,10 +209,59 @@ class FileOperationsUseCase @Inject constructor(
         }
     }
 
+    /**
+     * Build an [Intent.ACTION_SEND] chooser that shares [videoItemId] as a real, decrypted file
+     * exposed via [FileProvider].
+     *
+     * Why a temp file (not the internal `content://...media/<id>` URI): many third-party apps
+     * (WeChat, QQ, some file managers) ignore `ContentResolver.query()` for DISPLAY_NAME and just
+     * take the URI's last path segment. The internal media URI ends in a bare numeric id, so the
+     * recipient sees a name like `1734567890123` with no extension. Decrypting into a temp file
+     * named with the entity's original [VideoItemEntity.fileName] makes the name + extension
+     * visible to every recipient, regardless of how they read the URI.
+     *
+     * Flow:
+     *  1. Refuse if the entity is missing, on a non-active volume, or has a malformed iv
+     *     (fail-closed per the storage-security red lines — never decrypt ciphertext whose
+     *     ownership is unconfirmed or whose format is unexpected).
+     *  2. Sweep stale share temp files (>1h old) from the previous sessions.
+     *  3. Decrypt the whole ciphertext into `cacheDir/share/<sanitized-name>` via [decryptWholeTo].
+     *  4. Hand the [FileProvider] URI to a SEND intent with read permission.
+     *
+     * [CancellationException] always propagates (red line #3). Any other failure is logged
+     * (without sensitive data — no fileName / path / underlying message) and surfaces as `null`,
+     * which the UI maps to a "cannot share" message.
+     */
     suspend fun buildShareIntent(videoItemId: Long): Intent? {
         val video = videoRepository.getById(videoItemId) ?: return null
+
+        // Fail-closed volume ownership: ciphertext lives only on the active volume; a record with
+        // an empty/unknown/mismatched volumeId must not drive decryption on the active store.
+        val currentVolumeId = try {
+            mediaStore.volumeId
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "buildShareIntent: volumeId lookup failed for id=$videoItemId", e)
+            return null
+        }
+        if (video.volumeId != currentVolumeId) {
+            Log.w(TAG, "buildShareIntent: id=$videoItemId volume mismatch, refusing to share")
+            return null
+        }
+        if (video.iv.size != CryptoScheme.IV_LEN) {
+            Log.w(TAG, "buildShareIntent: id=$videoItemId iv length ${video.iv.size} != ${CryptoScheme.IV_LEN}")
+            return null
+        }
+
         return try {
-            val uri = MediaUris.mediaUri(videoItemId)
+            ShareTempFiles.cleanupOldShareTempFiles(context)
+            val safeName = ShareTempFiles.sanitizeFileName(video.fileName)
+            val outFile = File(ShareTempFiles.shareDir(context), safeName)
+            decryptWholeTo(video, outFile)
+
+            val authority = "${context.packageName}.fileprovider"
+            val uri = FileProvider.getUriForFile(context, authority, outFile)
             val mimeType = getMimeType(video.fileName)
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = mimeType
@@ -216,8 +272,69 @@ class FileOperationsUseCase @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to build share intent", e)
+            Log.e(TAG, "buildShareIntent failed for id=$videoItemId", e)
             null
+        }
+    }
+
+    /**
+     * Decrypt the **entire** plaintext of [video] into [outFile] using the AEAD v2 chunk format.
+     *
+     * Reuses [EncryptedMediaStore.openCiphertextRead] + [RangeDecryptor] — the same primitives
+     * the playback path ([DecryptingFdCallback] / [MediaContentProvider]) uses — but walks every
+     * chunk sequentially instead of serving random ranges.
+     *
+     * Failure contract (security red lines #4 / #5):
+     *  - [RangeDecryptor] never returns unauthenticated bytes: any header/chunk tamper, truncation,
+     *    or short read throws before this method returns. We never write a half-decrypted file.
+     *  - If anything throws after [outFile] is opened, [outFile] is deleted in the cleanup
+     *    `catch` so a partial result can never be handed to FileProvider.
+     *  - [CancellationException] propagates verbatim (the cleanup `runCatching { outFile.delete() }`
+     *    runs and the exception is rethrown, not swallowed).
+     *  - After a successful write we still assert the byte count matches [video.fileSize]
+     *    (paranoid guard; RangeDecryptor already enforces this cryptographically).
+     *
+     * Runs on [Dispatchers.IO] since [EncryptedMediaStore.openCiphertextRead] and
+     * [RangeDecryptor.readRange] perform blocking SAF/FD IO.
+     */
+    private suspend fun decryptWholeTo(video: VideoItemEntity, outFile: File) {
+        require(video.iv.size == CryptoScheme.IV_LEN) {
+            "iv length ${video.iv.size} != ${CryptoScheme.IV_LEN}"
+        }
+        val store = mediaStore
+        withContext(Dispatchers.IO) {
+            val handle = store.openCiphertextRead(video.id)
+            try {
+                val key = store.contentKey()
+                val decryptor = RangeDecryptor(key, video.iv, video.fileSize)
+                var written = 0L
+                try {
+                    FileOutputStream(outFile).use { out ->
+                        var offset = 0L
+                        val size = video.fileSize
+                        while (offset < size) {
+                            // CHUNK_SIZE fits in Int (64 KiB); (size - offset) is at most one chunk.
+                            val len = minOf(CryptoScheme.CHUNK_SIZE, (size - offset).toInt())
+                            val plain = decryptor.readRange(handle, offset, len)
+                            out.write(plain)
+                            offset += plain.size
+                            written += plain.size
+                        }
+                    }
+                    // Paranoid length check; RangeDecryptor already enforces this via GCM/truncation.
+                    check(written == video.fileSize) {
+                        "decryption wrote $written bytes, expected ${video.fileSize}"
+                    }
+                } catch (e: Throwable) {
+                    // Never leave a partial file behind: delete unconditionally, then rethrow.
+                    // CancellationException still propagates (runCatching swallows only the delete's
+                    // own failure, not `e`).
+                    runCatching { outFile.delete() }
+                    throw e
+                }
+            } finally {
+                try { handle.close() } catch (_: Exception) {}
+            }
         }
     }
 

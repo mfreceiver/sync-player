@@ -42,6 +42,22 @@
             android:grantUriPermissions="true"
             android:readPermission="cn.vectory.syncplayer.permission.READ_MEDIA" />
 
+        <!--
+            FileProvider used ONLY by buildShareIntent to expose decrypted share temp files.
+            Authority "${applicationId}.fileprovider" is intentionally distinct from the
+            MediaContentProvider authority (cn.vectory.syncplayer.media) so the two coexist.
+            Only the cacheDir/share/ subtree is exposed (see @xml/file_paths).
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
     </application>
 
 </manifest>

@@ -7,6 +7,8 @@ import cn.vectory.syncplayer.data.model.SyncRelationWithSource
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.crypto.CryptoScheme
+import cn.vectory.syncplayer.storage.volume.SeekableReadHandle
 import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
 import cn.vectory.syncplayer.sync.SyncEngine
 import dagger.Lazy
@@ -31,7 +33,13 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.security.SecureRandom
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * Focused regression tests for [FileOperationsUseCase] CancellationException handling.
@@ -50,6 +58,9 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class FileOperationsUseCaseTest {
 
+    @get:Rule
+    val tmp = TemporaryFolder()
+
     private val videoRepository = mockk<VideoRepository>(relaxed = true)
     private val playbackRepository = mockk<PlaybackRepository>(relaxed = true)
     private val syncRelationRepository = mockk<SyncRelationRepository>(relaxed = true)
@@ -58,6 +69,8 @@ class FileOperationsUseCaseTest {
     private val syncEngine = mockk<SyncEngine>(relaxed = true)
 
     private lateinit var useCase: FileOperationsUseCase
+    private lateinit var context: android.content.Context
+    private lateinit var cacheRoot: File
 
     @Before
     fun setup() {
@@ -66,13 +79,18 @@ class FileOperationsUseCaseTest {
         every { syncEngine.storageOperationMutex } returns kotlinx.coroutines.sync.Mutex()
         every { encryptedMediaStoreLazy.get() } returns encryptedMediaStore
         every { encryptedMediaStore.volumeId } returns "vol-active"
+        cacheRoot = tmp.newFolder("cache")
+        context = mockk(relaxed = true)
+        // ShareTempFiles resolves cacheDir on every call; pin it to an isolated temp dir so
+        // buildShareIntent tests have a real filesystem under cacheDir/share.
+        every { context.cacheDir } returns cacheRoot
         useCase = FileOperationsUseCase(
             videoRepository = videoRepository,
             playbackRepository = playbackRepository,
             syncRelationRepository = syncRelationRepository,
             encryptedMediaStoreLazy = encryptedMediaStoreLazy,
             syncEngine = syncEngine,
-            context = mockk(relaxed = true)
+            context = context
         )
     }
 
@@ -390,5 +408,152 @@ class FileOperationsUseCaseTest {
         assertNotNull("non-cancellation exception must surface to errorFlow", errorFlow.value)
         assertFalse(onSuccessCalled)
         scope.cancel()
+    }
+
+    // ===================================================================================
+    // Tests — buildShareIntent (FileProvider temp-file path)
+    // ===================================================================================
+    //
+    // Coverage focus: the security-critical branches of buildShareIntent — missing entity,
+    // fail-closed volume ownership, iv length guard, and the red-line #3 CancellationException
+    // propagation through every catch site. The happy path (decrypt + FileProvider.getUriForFile)
+    // is intentionally not unit-tested here: FileProvider needs a real Android Context (resource
+    // lookup for @xml/file_paths) which is unavailable under plain JUnit4. It is verified on
+    // device via the buildShareIntent UI flow.
+
+    /** Entity with a valid 8-byte iv (the default `videoEntity` helper leaves iv empty). */
+    private fun videoEntityWithIv(
+        id: Long,
+        fileSize: Long = 1000L,
+        volumeId: String = "vol-active",
+        fileName: String = "movie.mp4",
+    ): VideoItemEntity = VideoItemEntity(
+        id = id,
+        relativePath = "/base/$fileName",
+        fileName = fileName,
+        fileSize = fileSize,
+        volumeId = volumeId,
+        iv = CryptoScheme.newIv(),
+    )
+
+    @Test
+    fun `buildShareIntent returns null when video is missing`() = runTest {
+        val id = 100L
+        coEvery { videoRepository.getById(id) } returns null
+
+        assertNull(useCase.buildShareIntent(id))
+    }
+
+    @Test
+    fun `buildShareIntent returns null on volume mismatch (fail-closed)`() = runTest {
+        // Red line #2: a record on a non-active volume must NEVER drive ciphertext decryption
+        // on the active store. Pinned by returning null (not throwing, not decrypting).
+        val id = 101L
+        coEvery { videoRepository.getById(id) } returns videoEntityWithIv(id, volumeId = "vol-other")
+
+        assertNull(useCase.buildShareIntent(id))
+    }
+
+    @Test
+    fun `buildShareIntent returns null when iv length is wrong`() = runTest {
+        // videoEntity() leaves iv = byteArrayOf() (size 0), failing the IV_LEN==8 guard.
+        val id = 102L
+        coEvery { videoRepository.getById(id) } returns videoEntity(id)
+
+        assertNull(useCase.buildShareIntent(id))
+    }
+
+    @Test
+    fun `buildShareIntent returns null on non-cancellation volumeId lookup failure`() = runBlocking {
+        val id = 103L
+        coEvery { videoRepository.getById(id) } returns videoEntityWithIv(id)
+        every { encryptedMediaStore.volumeId } throws java.io.IOException("volume resolve fail")
+
+        assertNull(useCase.buildShareIntent(id))
+    }
+
+    @Test
+    fun `buildShareIntent propagates CancellationException when volumeId lookup cancels`() {
+        // Red line #3: CancellationException from volumeId lookup must propagate, NOT be swallowed
+        // into `return null`. Otherwise scope cancellation would silently complete the share flow.
+        val id = 104L
+        coEvery { videoRepository.getById(id) } returns videoEntityWithIv(id)
+        every { encryptedMediaStore.volumeId } throws CancellationException("cancel")
+
+        val propagated = propagatesCancellation { useCase.buildShareIntent(id) }
+        assertTrue("CancellationException from volumeId must propagate", propagated)
+    }
+
+    @Test
+    fun `buildShareIntent propagates CancellationException when openCiphertextRead cancels`() {
+        val id = 105L
+        coEvery { videoRepository.getById(id) } returns videoEntityWithIv(id)
+        coEvery { encryptedMediaStore.openCiphertextRead(id) } throws CancellationException("cancel")
+
+        val propagated = propagatesCancellation { useCase.buildShareIntent(id) }
+        assertTrue("CancellationException from openCiphertextRead must propagate", propagated)
+    }
+
+    @Test
+    fun `buildShareIntent returns null when openCiphertextRead throws IOException`() = runBlocking {
+        val id = 106L
+        coEvery { videoRepository.getById(id) } returns videoEntityWithIv(id)
+        coEvery { encryptedMediaStore.openCiphertextRead(id) } throws java.io.IOException("io fail")
+
+        assertNull(useCase.buildShareIntent(id))
+    }
+
+    @Test
+    fun `buildShareIntent returns null and deletes partial temp file when ciphertext is truncated`() = runBlocking {
+        // Red line #5: random-read / decryption failure MUST throw (never return dirty plaintext).
+        // Here we build a real ciphertext, truncate it, and assert decryption fails AND the
+        // partially-written temp file is deleted so a half-written file can never reach FileProvider.
+        val id = 107L
+        val plain = ByteArray(100_000) { (it and 0xFF).toByte() } // ~2 chunks (64 KiB + tail)
+        val master = SecretKeySpec(ByteArray(32).also { SecureRandom().nextBytes(it) }, "AES")
+        val contentKey = CryptoScheme.deriveContentKey(master)
+        val iv = CryptoScheme.newIv()
+
+        // Build a real v2 ciphertext, then drop the last 50 bytes (truncates the final chunk's GCM tag).
+        val cipherBuf = ByteArrayOutputStream()
+        CryptoScheme.encryptStream(contentKey, iv, plain.size.toLong(), cipherBuf)
+            .use { it.write(plain) }
+        val truncated = cipherBuf.toByteArray().let { it.copyOfRange(0, it.size - 50) }
+
+        val handle = MemSeekableHandle(truncated)
+        coEvery { encryptedMediaStore.openCiphertextRead(id) } returns handle
+        every { encryptedMediaStore.contentKey() } returns contentKey
+
+        val video = VideoItemEntity(
+            id = id,
+            relativePath = "/base/movie.mp4",
+            fileName = "movie.mp4",
+            fileSize = plain.size.toLong(),
+            volumeId = "vol-active",
+            iv = iv,
+        )
+        coEvery { videoRepository.getById(id) } returns video
+
+        val intent = useCase.buildShareIntent(id)
+
+        assertNull("truncated ciphertext must surface as null Intent", intent)
+        val shareDir = File(cacheRoot, "share")
+        val leftover = shareDir.listFiles().orEmpty().filter { it.name == "movie.mp4" }
+        assertEquals("no leftover partial file after decrypt failure", 0, leftover.size)
+    }
+
+    /** In-memory SeekableReadHandle backed by a fixed byte array (mirrors RangeDecryptorTest's). */
+    private class MemSeekableHandle(private val buf: ByteArray) : SeekableReadHandle {
+        private var pos = 0L
+        override fun seek(position: Long) { pos = position }
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            val n = minOf(length.toLong(), (buf.size - pos).coerceAtLeast(0)).toInt()
+            if (n <= 0) return -1
+            System.arraycopy(buf, pos.toInt(), buffer, offset, n)
+            pos += n
+            return n
+        }
+        override fun size(): Long = buf.size.toLong()
+        override fun close() {}
     }
 }
