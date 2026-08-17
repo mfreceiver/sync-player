@@ -40,6 +40,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.IOException
 import java.io.OutputStream
 
 /**
@@ -202,6 +203,79 @@ class SyncEngineBoundaryTest {
         // On the cancellation path, neither markCompleted nor markFailed should run.
         coVerify(exactly = 0) { pendingSyncActionDao.markCompleted(relationId) }
         coVerify(exactly = 0) { pendingSyncActionDao.markFailed(relationId) }
+    }
+
+    @Test
+    fun `consumeAndExecute cancellation still deletes relation when markCancelled fails`() = runTest {
+        val pendingEntities = listOf(
+            PendingSyncActionEntity(
+                relationId = relationId, relationName = "rel", localBasePath = "/local",
+                actionGroup = 0, actionType = "DOWNLOAD", relativePath = "slow.mp4",
+                fileSize = 1000L, status = "PENDING"
+            )
+        )
+        coEvery { pendingSyncActionDao.resetRunningToPending(relationId) } returns Unit
+        coEvery { pendingSyncActionDao.getPendingByRelationId(relationId) } returns pendingEntities
+        coEvery { pendingSyncActionDao.markRunning(relationId) } returns Unit
+        coEvery { pendingSyncActionDao.markCancelled(relationId) } throws IOException("db")
+        coEvery { pendingSyncActionDao.deleteByRelationId(relationId) } returns Unit
+
+        val started = CompletableDeferred<Unit>()
+        hangingClient(started)
+        stubSuccessfulDownload("slow.mp4", assignedId = 301L)
+
+        val parentJob = Job()
+        val scope = CoroutineScope(testDispatcher + parentJob)
+        var caught: CancellationException? = null
+        scope.launch {
+            try {
+                syncEngine.consumeAndExecute(relationId)
+            } catch (e: CancellationException) {
+                caught = e
+            }
+        }
+
+        started.await()
+        parentJob.cancelAndJoin()
+
+        assertTrue("CancellationException must propagate", caught != null)
+        coVerify(exactly = 1) { pendingSyncActionDao.deleteByRelationId(relationId) }
+    }
+
+    @Test
+    fun `consumeAndExecute cancellation propagates when deleteByRelationId fails`() = runTest {
+        val pendingEntities = listOf(
+            PendingSyncActionEntity(
+                relationId = relationId, relationName = "rel", localBasePath = "/local",
+                actionGroup = 0, actionType = "DOWNLOAD", relativePath = "slow.mp4",
+                fileSize = 1000L, status = "PENDING"
+            )
+        )
+        coEvery { pendingSyncActionDao.resetRunningToPending(relationId) } returns Unit
+        coEvery { pendingSyncActionDao.getPendingByRelationId(relationId) } returns pendingEntities
+        coEvery { pendingSyncActionDao.markRunning(relationId) } returns Unit
+        coEvery { pendingSyncActionDao.markCancelled(relationId) } returns Unit
+        coEvery { pendingSyncActionDao.deleteByRelationId(relationId) } throws IOException("db")
+
+        val started = CompletableDeferred<Unit>()
+        hangingClient(started)
+        stubSuccessfulDownload("slow.mp4", assignedId = 302L)
+
+        val parentJob = Job()
+        val scope = CoroutineScope(testDispatcher + parentJob)
+        var caught: CancellationException? = null
+        scope.launch {
+            try {
+                syncEngine.consumeAndExecute(relationId)
+            } catch (e: CancellationException) {
+                caught = e
+            }
+        }
+
+        started.await()
+        parentJob.cancelAndJoin()
+
+        assertTrue("CancellationException must propagate", caught != null)
     }
 
     // ===========================================================================

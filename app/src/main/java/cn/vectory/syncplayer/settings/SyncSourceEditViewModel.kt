@@ -12,6 +12,7 @@ import cn.vectory.syncplayer.sync.RemoteFileClientFactory
 import cn.vectory.syncplayer.sync.syncErrorMessage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -91,6 +92,8 @@ class SyncSourceEditViewModel @Inject constructor(
                 val client = remoteFileClientFactory.create(source.protocol)
                 client.testConnection(source, "/")
                 _testResult.value = context.getString(R.string.source_connect_success)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _testResult.value = context.getString(R.string.source_connect_failed, syncErrorMessage(e, context))
             } finally {
@@ -106,6 +109,8 @@ class SyncSourceEditViewModel @Inject constructor(
             try {
                 syncSourceRepository.save(buildSource())
                 _saveResult.value = context.getString(R.string.source_save_success)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _saveResult.value = context.getString(R.string.source_save_failed, syncErrorMessage(e, context))
             } finally {
@@ -126,6 +131,8 @@ class SyncSourceEditViewModel @Inject constructor(
                     syncSourceRepository.delete(sourceId)
                     _saveResult.value = context.getString(R.string.source_delete_success)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _saveResult.value = context.getString(R.string.source_delete_failed, syncErrorMessage(e, context))
             } finally {

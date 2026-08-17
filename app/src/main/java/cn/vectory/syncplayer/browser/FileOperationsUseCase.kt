@@ -232,8 +232,8 @@ class FileOperationsUseCase @Inject constructor(
      * (without sensitive data — no fileName / path / underlying message) and surfaces as `null`,
      * which the UI maps to a "cannot share" message.
      */
-    suspend fun buildShareIntent(videoItemId: Long): Intent? {
-        val video = videoRepository.getById(videoItemId) ?: return null
+    suspend fun buildShareIntent(videoItemId: Long): Intent? = withContext(Dispatchers.IO) {
+        val video = videoRepository.getById(videoItemId) ?: return@withContext null
 
         // Fail-closed volume ownership: ciphertext lives only on the active volume; a record with
         // an empty/unknown/mismatched volumeId must not drive decryption on the active store.
@@ -243,18 +243,18 @@ class FileOperationsUseCase @Inject constructor(
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "buildShareIntent: volumeId lookup failed for id=$videoItemId", e)
-            return null
+            return@withContext null
         }
         if (video.volumeId != currentVolumeId) {
             Log.w(TAG, "buildShareIntent: id=$videoItemId volume mismatch, refusing to share")
-            return null
+            return@withContext null
         }
         if (video.iv.size != CryptoScheme.IV_LEN) {
             Log.w(TAG, "buildShareIntent: id=$videoItemId iv length ${video.iv.size} != ${CryptoScheme.IV_LEN}")
-            return null
+            return@withContext null
         }
 
-        return try {
+        try {
             ShareTempFiles.cleanupOldShareTempFiles(context)
             val safeName = ShareTempFiles.sanitizeFileName(video.fileName)
             val outFile = File(ShareTempFiles.shareDir(context), safeName)
@@ -468,8 +468,8 @@ class FileOperationsUseCase @Inject constructor(
         // never clean via the app. Index-only delete is the honest, recoverable choice.
         val currentVolumeId = mediaStore.volumeId
         if (video.volumeId != currentVolumeId) {
-            Log.w(TAG, "deleteMediaById: id=$id volume='${video.volumeId}' not confirmed on " +
-                "active='$currentVolumeId' (different or empty/unknown); index-only delete, " +
+            Log.w(TAG, "deleteMediaById: id=$id volume not confirmed " +
+                "(stored volumeId differs from or is unknown for active volume); index-only delete, " +
                 "ciphertext untouched")
             return deleteOtherVolumeIndexLocked(id)
         }

@@ -147,26 +147,4 @@ class StoragePathsTest {
     fun normalize_blank_after_trim_returns_empty() {
         assertEquals("", storagePaths.normalizeAndValidateRelativePath("  /  "))
     }
-
-    // ======== isPathSafe ========
-
-    @Test
-    fun isPathSafe_false_for_traversal() {
-        assertFalse(storagePaths.isPathSafe("../evil"))
-    }
-
-    @Test
-    fun isPathSafe_true_for_normal_path() {
-        assertTrue(storagePaths.isPathSafe("movies/action"))
-    }
-
-    @Test
-    fun isPathSafe_true_for_empty() {
-        assertTrue(storagePaths.isPathSafe(""))
-    }
-
-    @Test
-    fun isPathSafe_false_for_parent_escape() {
-        assertFalse(storagePaths.isPathSafe("foo/../../../etc"))
-    }
 }

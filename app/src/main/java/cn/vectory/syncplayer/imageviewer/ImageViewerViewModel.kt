@@ -51,10 +51,10 @@ class ImageViewerViewModel @Inject constructor(
     val allImageIds: StateFlow<List<Long>> = _allImageIds.asStateFlow()
 
     /** Error flow for undo/delete operations — surfaced via Snackbar in the UI. */
-    val _imageErrorFlow = MutableStateFlow<String?>(null)
+    private val _imageErrorFlow = MutableStateFlow<String?>(null)
 
     /** Read-only view of [_imageErrorFlow] for the UI to collect. */
-    val imageError: StateFlow<String?> get() = _imageErrorFlow
+    val imageError: StateFlow<String?> = _imageErrorFlow.asStateFlow()
 
     /** Clear the image error after the UI has shown it. */
     fun clearError() {
@@ -83,6 +83,8 @@ class ImageViewerViewModel @Inject constructor(
                     ) }
                     markCompleted(image.id)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load image $imageItemId", e)
             }
@@ -171,6 +173,8 @@ class ImageViewerViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 playbackRepository.saveProgress(imageId, 1L, 1L)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to mark image completed", e)
             }

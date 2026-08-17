@@ -5,6 +5,7 @@ import cn.vectory.syncplayer.sync.SyncErrorCode
 import cn.vectory.syncplayer.sync.SyncException
 import cn.vectory.syncplayer.sync.SyncOperation
 import javax.crypto.SecretKey
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -133,8 +134,10 @@ class EncryptedMediaStore(
      */
     suspend fun checkExistence(id: Long): MediaExistence = try {
         if (volume().exists(finalMedia(id))) MediaExistence.EXISTS else MediaExistence.NOT_FOUND
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: Exception) {
-        MediaExistence.IO_ERROR(e.message ?: e.javaClass.simpleName)
+        MediaExistence.IO_ERROR(e.javaClass.simpleName)
     }
 
     fun usableSpace(): Long = runBlocking { volume().usableSpace() }
@@ -191,12 +194,13 @@ class EncryptedMediaStore(
      * closing delimiter.
      *
      * **Deliberately NOT deleted** (fail-closed):
-     *  - `*.enc.tmp` partial downloads. [purgeLegacyIfNeeded] runs concurrently with active
-     *    sync downloads (invoked from app startup on a background coroutine, with no mutex
-     *    between purge and the sync service). A leftover `.tmp` is harmlessly
-     *    overwritten/truncated on the next [openEncryptSink] for that id, so deleting it buys
-     *    nothing but reintroduces a delete-while-writing race (the very race that made the
-     *    prior implementation unsafe). See task 1.
+     *  - `*.enc.tmp` partial downloads. The one-shot startup purge is invoked from
+     *    `SyncPlayerApp` on a background coroutine under `storageOperationMutex` (the same
+     *    mutex that serializes sync/delete workflows), so it does not race an active download.
+     *    A leftover `.tmp` is kept regardless — a strict fail-closed / anti-mistaken-delete
+     *    strategy: it is harmlessly overwritten/truncated on the next [openEncryptSink] for
+     *    that id, so deleting it buys nothing but would reintroduce a delete-while-writing
+     *    race on any future path that forgets the mutex. See task 1.
      *  - any `.enc` file whose header could not be read in full (transient IO error, SAF
      *    permission flap, truncated/short file). Only a *confirmed* non-v2 header authorizes
      *    deletion; a read failure preserves the file so a temporarily-unreadable v2 file is
@@ -212,9 +216,9 @@ class EncryptedMediaStore(
      * [MediaPaths.mediaRelPath] (`0/`, `1/`, …) and the `thumbs/` directory are touched; no
      * other user data is enumerated or deleted.
      *
-     * **Wiring (not done here):** must be invoked once after v2 upgrade (e.g. from
-     * `SyncPlayerApp.onCreate` on a background coroutine). Not auto-wired to avoid editing app
-     * startup code outside this module. Returns the number of files deleted.
+     * **Wiring:** invoked once from `SyncPlayerApp.onCreate` through
+     * `purgeLegacyCiphertext()`, on a background coroutine under
+     * `SyncEngine.storageOperationMutex`. Returns the number of files deleted.
      */
     suspend fun purgeLegacyIfNeeded(): Int {
         val vol = volume()
@@ -237,7 +241,13 @@ class EncryptedMediaStore(
             // any other top-level entry is outside MediaPaths' layout — ignored
         }
         // place marker so we never scan again on this volume; best-effort
-        runCatching { vol.openWrite(purgeMarker).use { it.write(byteArrayOf(1)) } }
+        try {
+            vol.openWrite(purgeMarker).use { it.write(byteArrayOf(1)) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // marker write is best-effort
+        }
         return deleted
     }
 
@@ -318,6 +328,8 @@ class EncryptedMediaStore(
             val mediaRel = MediaPaths.mediaRelPath(id)
             val mediaAlive = try {
                 vol.exists(mediaRel) && !isLegacyOrphan(vol, mediaRel)
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
                 // Unknown state — fail closed and preserve the thumbnail.
                 true
@@ -346,6 +358,8 @@ class EncryptedMediaStore(
             if (n != b.size) return@use false // short read → unknown → preserve
             !b.contentEquals(CryptoScheme.MAGIC)
         }
+    } catch (e: CancellationException) {
+        throw e
     } catch (_: Exception) {
         false
     }

@@ -12,6 +12,7 @@ import cn.vectory.syncplayer.data.model.SyncProgress
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -82,6 +83,8 @@ class SyncPreviewViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 _allRelations.value = syncRelationRepository.getAllWithSource().map { it.relation }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _error.value = syncErrorMessage(e, context)
             }
@@ -90,6 +93,8 @@ class SyncPreviewViewModel @Inject constructor(
             try {
                 val relation = syncRelationRepository.getById(relationId)
                 _currentRelationName.value = relation?.name ?: ""
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _error.value = syncErrorMessage(e, context)
             }
@@ -139,6 +144,8 @@ class SyncPreviewViewModel @Inject constructor(
                     }
                 }
                 _previewLoaded.value = true
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _error.value = syncErrorMessage(e, context)
             } finally {
@@ -162,6 +169,8 @@ class SyncPreviewViewModel @Inject constructor(
                 _error.value = null
                 SyncService.start(context, relationId)
                 observeSyncCompletion()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _error.value = syncErrorMessage(e, context)
             }
@@ -187,6 +196,8 @@ class SyncPreviewViewModel @Inject constructor(
                     _error.value = context.getString(R.string.sync_preview_cancelled)
                 }
                 _syncComplete.value = true
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _error.value = syncErrorMessage(e, context)
                 _isSyncing.value = false
@@ -221,6 +232,8 @@ class SyncPreviewViewModel @Inject constructor(
                 } else {
                     _error.value = context.getString(R.string.sync_preview_delete_failed)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _error.value = syncErrorMessage(e, context)
             } finally {

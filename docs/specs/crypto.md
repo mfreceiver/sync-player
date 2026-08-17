@@ -60,7 +60,8 @@ cipherLen(plainLen) = 16 + ceil(plainLen/65536)*16 + plainLen
 - v1 密文（AES/CTR，无 magic）升级后**不可读**。
 - `RangeDecryptor` 在缺失 `SPM2` magic 时抛 `LegacyCiphertextException`。
 - 迁移是**破坏性**的（`fallbackToDestructiveMigration(dropAllTables=true)`）：schema 变更时 DB 清空，用户重新同步产生 v2 密文。
-- `SyncPlayerApp` 在首次 v2 启动时一次性 purge 遗留 `media/`+`thumb/`（DataStore flag `crypto_v2_purged`）。
+- `SyncPlayerApp` 在首次 v2 启动时一次性 purge 遗留 `media/`+`thumb/` 密文（`EncryptedMediaStore.purgeLegacyIfNeeded`）。
+- 幂等由**卷根 marker 文件** `.spm2_purged` 保证：purge 完成后 best-effort 写入该 marker，同一卷再次启动时检测到 marker 即跳过扫描（按卷幂等，非全局 flag）。marker 写入失败无妨——下次启动重新 purge，扫描本身幂等。
 
 ## Thumbnail Format
 

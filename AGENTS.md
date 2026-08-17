@@ -70,7 +70,7 @@ Always run a build after code changes to verify compilation — there is no LSP 
 ## 安全红线（改代码时不可违背）
 
 1. **E8 扫描失败保护**：部分远端快照绝不推导 DELETE_LOCAL。
-2. **卷所有权 fail-closed**：volumeId 不匹配不删文件，但计 FAILED。
+2. **卷所有权 fail-closed**：volumeId 不匹配（含空/未知）不删密文。SyncEngine 同步流程中不匹配须计 FAILED；浏览器/手动删除路径的 index-only delete（仅删索引、密文不动）返回成功为合法语义（防误删产生不可恢复的孤儿密文）。
 3. **CancellationException 始终先传播**，不被 `catch(Exception)` 吞。
 4. **AEAD v2 格式不变**：header/AAD/nonce/chunk size/明文坐标是存储契约。
 5. **随机读失败必须抛异常**，不返回脏明文。

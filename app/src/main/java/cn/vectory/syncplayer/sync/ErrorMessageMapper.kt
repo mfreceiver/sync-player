@@ -84,16 +84,10 @@ fun syncErrorMessage(e: Throwable, context: Context, host: String? = null): Stri
             context.getString(R.string.sync_error_not_connected)
         SyncErrorCode.SCAN_INCOMPLETE ->
             context.getString(R.string.sync_error_scan_incomplete)
-        SyncErrorCode.DOWNLOAD_FAILED -> {
-            val path = (e as? SyncException)?.path
-            if (path != null) context.getString(R.string.sync_error_download_failed_path, path)
-            else context.getString(R.string.sync_error_download_failed)
-        }
-        SyncErrorCode.REMOTE_DELETE_FAILED -> {
-            val path = (e as? SyncException)?.path
-            if (path != null) context.getString(R.string.sync_error_remote_delete_failed_path, path)
-            else context.getString(R.string.sync_error_remote_delete_failed)
-        }
+        SyncErrorCode.DOWNLOAD_FAILED ->
+            context.getString(R.string.sync_error_download_failed)
+        SyncErrorCode.REMOTE_DELETE_FAILED ->
+            context.getString(R.string.sync_error_remote_delete_failed)
         SyncErrorCode.INVALID_FILE_SIZE ->
             context.getString(R.string.sync_error_invalid_file_size)
         SyncErrorCode.INSUFFICIENT_SPACE -> {

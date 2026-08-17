@@ -7,6 +7,7 @@ import android.os.storage.StorageManager
 import android.os.storage.StorageVolume
 import android.provider.DocumentsContract
 import java.io.OutputStream
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -129,6 +130,8 @@ class SafVolume(
         val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
         try {
             context.contentResolver.delete(uri, null) > 0
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) { false }
     }
 
@@ -153,6 +156,8 @@ class SafVolume(
             val newUri = DocumentsContract.renameDocument(context.contentResolver, fromUri, toName) ?: return@withContext false
             // 确认新文件存在且源文件已消失
             isDocumentExists(newUri) && !isDocumentExists(fromUri)
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             // 某些 SAF provider 不支持 rename（如外置 SD 卡/OTG 的某些实现）会抛
             // UnsupportedOperationException；归一化为 false 让调用方走 FINALIZE_FAILED，

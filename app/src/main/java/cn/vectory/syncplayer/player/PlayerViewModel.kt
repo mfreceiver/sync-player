@@ -80,10 +80,10 @@ class PlayerViewModel @Inject constructor(
     val currentPosition: StateFlow<Long> = _currentPosition.asStateFlow()
 
     /** Error flow for undo/delete operations — surfaced via Snackbar in the UI. */
-    val _playerErrorFlow = MutableStateFlow<String?>(null)
+    private val _playerErrorFlow = MutableStateFlow<String?>(null)
 
     /** Read-only view of [_playerErrorFlow] for the UI to collect. */
-    val playerError: StateFlow<String?> get() = _playerErrorFlow
+    val playerError: StateFlow<String?> = _playerErrorFlow.asStateFlow()
 
     /** Clear the player error after the UI has shown it. */
     fun clearError() {
@@ -108,6 +108,8 @@ class PlayerViewModel @Inject constructor(
                 val vb = userPrefs.getVolumeBalance()
                 val qr = userPrefs.getQuickRecycle()
                 _uiState.update { it.copy(volumeBalance = vb, quickRecycle = qr) }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load preferences", e)
             }
@@ -137,6 +139,8 @@ class PlayerViewModel @Inject constructor(
                     // later non-empty SavedStateHandle emissions still win.
                     try {
                         _allVideoIds.value = videoRepository.getAllIdsSorted()
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to load video IDs", e)
                     }
@@ -166,6 +170,8 @@ class PlayerViewModel @Inject constructor(
                     ) }
                     _currentPosition.value = record?.position ?: 0L
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load video $videoItemId", e)
             }
@@ -188,6 +194,8 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 playbackRepository.saveProgress(videoId, position, duration)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save progress", e)
             }

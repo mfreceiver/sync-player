@@ -49,7 +49,9 @@ SyncException(code, operation, path?, host?, expectedBytes?/actualBytes?/availab
 `RemoteScanIncompleteException`（或任何扫描异常）→ `dryRun` 清空 `toDownload` **和** `toDelete`。部分远端快照**绝不**推导 `DELETE_LOCAL`（删除真实本地密文 + DB 行，不可恢复）。`SyncEngineDryRunTest` 锁定。
 
 ### 卷所有权 fail-closed
-`entity.volumeId != store.volumeId` 时删除**跳过**（密文属于另一个卷——不删不属于自己的东西），但计为 **FAILED**（保证 `completedFiles+failedFiles == totalFiles`，relation 显示 PARTIAL_FAILED 而非假 SUCCESS）。状态日志 = `SKIPPED`。
+`entity.volumeId != store.volumeId` 时删除**跳过**（密文属于另一个卷——不删不属于自己的东西）；**空/未知 volumeId 同样视为不匹配**，绝不按"猜测属于活跃卷"删密文。计为 **FAILED** 仅限 **SyncEngine 同步流程**（保证 `completedFiles+failedFiles == totalFiles`，relation 显示 PARTIAL_FAILED 而非假 SUCCESS），状态日志 = `SKIPPED`。
+
+**浏览器/手动删除路径**（`FileOperationsUseCase.deleteMediaById`，非 SyncEngine 流程）对不匹配卷使用 **index-only delete**（仅删索引、密文不动），返回成功为合法语义——防误删产生不可恢复的孤儿密文（真实密文可能位于非活跃卷）。设计依据：`FileOperationsUseCase.kt` 的 `deleteMediaById` KDoc 已记录该决策表。
 
 ### 取消优先
 `CancellationException` **始终**先于普通 Exception 传播。清理在 `NonCancellable` 中完成（pending task markCancelled + deleteByRelationId）。

@@ -17,6 +17,7 @@ import cn.vectory.syncplayer.sync.SyncEngine
 import cn.vectory.syncplayer.ui.util.formatFileSize
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -63,7 +64,9 @@ class StorageManagementViewModel @Inject constructor(
             val isExternal = treeUriStr != null
             val externalPath = if (isExternal) resolveTreeDisplayName(context, treeUriStr!!) else null
             val count = withContext(ioDispatcher) {
-                try { videoItemDao.getTotalItemCount() } catch (e: Exception) {
+                try { videoItemDao.getTotalItemCount() } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
                     Log.w(TAG, "Failed to query file count", e)
                     Int.MAX_VALUE  // fail-closed: unknown → treat as "has files" → can't switch
                 }
@@ -72,6 +75,8 @@ class StorageManagementViewModel @Inject constructor(
                 try {
                     val bytes = mediaVolumeProvider.current().usableSpace()
                     if (bytes < 0L) "—" else formatFileSize(bytes)
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (_: Exception) { "—" }
             }
             val syncRunning = syncEngine.progress.value.isRunning
@@ -149,6 +154,8 @@ class StorageManagementViewModel @Inject constructor(
                 val warning = if (failed > 0) context.getString(R.string.storage_reset_partial, deleted, failed) else null
                 _state.update { it.copy(isResetting = false, resetWarning = warning) }
                 refresh()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to reset storage", e)
                 _state.update { it.copy(isResetting = false, resetWarning = context.getString(R.string.storage_reset_failed)) }

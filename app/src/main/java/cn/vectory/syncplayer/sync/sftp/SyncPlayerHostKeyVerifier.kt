@@ -48,7 +48,15 @@ class SyncPlayerHostKeyVerifier(context: Context) : HostKeyVerifier {
                 } else {
                     Log.i("HostKeyVerifier", "First time connecting to $keyLabel, saving fingerprint: $fingerprint")
                     props.setProperty(keyLabel, fingerprint)
-                    savePropsLocked()
+                    try {
+                        savePropsLocked()
+                    } catch (e: Exception) {
+                        // 保存失败（TOFU 未持久化）即不建立信任：回滚内存记录并重抛。
+                        // 若不回滚，本实例后续 verify 会从 props 读到残留指纹直接放行，
+                        // 从此不再尝试持久化——「保存失败即拒绝信任」的 TOFU 语义被破坏。
+                        props.remove(keyLabel)
+                        throw e
+                    }
                     true
                 }
             }
@@ -81,15 +89,20 @@ class SyncPlayerHostKeyVerifier(context: Context) : HostKeyVerifier {
     /**
      * 在锁内执行原子替换写入。
      * 临时文件名带唯一后缀，避免多个实例写同一临时文件。
-     * 若 [File.renameTo] 失败则上抛 [IOException]，使调用方感知 TOFU 未持久化。
+     * 任一失败路径（[Properties.store] 抛异常 / [File.renameTo] 失败 / 其他异常）：
+     * 先删除残留临时文件再重抛异常，使调用方感知 TOFU 未持久化，且不遗留 `.tmp` 孤儿。
      */
     private fun savePropsLocked() {
         val tmpFile = File(hostsFile.parentFile, "${hostsFile.name}.${UUID.randomUUID()}.tmp")
-        tmpFile.outputStream().use { props.store(it, "SyncPlayer SFTP Known Hosts") }
-        if (!tmpFile.renameTo(hostsFile)) {
-            // 删除残留临时文件（非强制，renameTo 在跨文件系统时不可靠应已失败）
+        try {
+            tmpFile.outputStream().use { props.store(it, "SyncPlayer SFTP Known Hosts") }
+            if (!tmpFile.renameTo(hostsFile)) {
+                throw IOException("Failed to atomically replace known_hosts (rename to ${hostsFile.name} failed)")
+            }
+        } catch (e: Exception) {
+            // 统一清理后重抛；重抛保证异常（含 CancellationException）照常传播，不被吞。
             tmpFile.delete()
-            throw IOException("Failed to atomically replace known_hosts (rename to ${hostsFile.name} failed)")
+            throw e
         }
     }
 

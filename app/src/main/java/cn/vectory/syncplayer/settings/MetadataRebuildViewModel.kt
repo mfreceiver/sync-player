@@ -8,6 +8,7 @@ import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.browser.DeleteMediaResult
 import cn.vectory.syncplayer.browser.FileOperationsUseCase
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
+import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
 import cn.vectory.syncplayer.storage.volume.MediaExistence
@@ -20,7 +21,7 @@ import cn.vectory.syncplayer.ui.util.isVideoFile
 import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -53,6 +54,7 @@ class MetadataRebuildViewModel @Inject constructor(
     private val fileOps: FileOperationsUseCase,
     private val syncEngine: SyncEngine,
     @ApplicationContext private val context: Context,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
 
     private val mediaStore: EncryptedMediaStore get() = encryptedMediaStoreLazy.get()
@@ -96,7 +98,7 @@ class MetadataRebuildViewModel @Inject constructor(
             _discoveryResult.value = null
             _cleanupSummary.value = null
             try {
-                withContext(Dispatchers.IO) {
+                withContext(ioDispatcher) {
                     syncEngine.storageOperationMutex.withLock {
                         val dbRecords = videoRepository.getAll()
                         val activeVolumeId = mediaStore.volumeId
@@ -163,7 +165,7 @@ class MetadataRebuildViewModel @Inject constructor(
             _cleanupSummary.value = null
 
             try {
-                withContext(Dispatchers.IO) {
+                withContext(ioDispatcher) {
                     syncEngine.storageOperationMutex.withLock {
                         var fail = 0
                         val failures = mutableListOf<Pair<Long, String>>()
@@ -185,6 +187,8 @@ class MetadataRebuildViewModel @Inject constructor(
                             try {
                                 if (isImageFile(fresh.fileName)) imageMetadataExtractor.extractAndSave(fresh)
                                 else videoMetadataExtractor.extractAndSave(fresh)
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
                             } catch (e: Exception) {
                                 Log.w(TAG, "Failed to extract metadata for ${record.fileName}", e)
                                 fail++
@@ -239,7 +243,7 @@ class MetadataRebuildViewModel @Inject constructor(
             _totalCount.value = targets.size
             _error.value = null
             try {
-                withContext(Dispatchers.IO) {
+                withContext(ioDispatcher) {
                     syncEngine.storageOperationMutex.withLock {
                         var success = 0
                         val failures = mutableListOf<Pair<Long, String>>()

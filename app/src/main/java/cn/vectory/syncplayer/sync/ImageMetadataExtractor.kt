@@ -16,6 +16,7 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 
 @Singleton
 class ImageMetadataExtractor @Inject constructor(
@@ -58,6 +59,8 @@ class ImageMetadataExtractor @Inject constructor(
                     dateTaken = parseExifDate(exif)
                 } catch (_: Exception) { }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Image metadata extraction failed for ${item.fileName}", e)
             return item

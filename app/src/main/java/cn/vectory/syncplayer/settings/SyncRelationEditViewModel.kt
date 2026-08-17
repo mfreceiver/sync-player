@@ -14,6 +14,7 @@ import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
+import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.RemoteFileClientFactory
 import cn.vectory.syncplayer.sync.classifyRemoteError
@@ -21,10 +22,13 @@ import cn.vectory.syncplayer.sync.RemoteBrowseError
 import cn.vectory.syncplayer.sync.syncErrorMessage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 data class StorageInfo(
@@ -40,6 +44,7 @@ class SyncRelationEditViewModel @Inject constructor(
     private val storagePaths: StoragePaths,
     private val userPreferencesRepository: UserPreferencesRepository,
     @ApplicationContext private val context: Context,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -180,12 +185,19 @@ class SyncRelationEditViewModel @Inject constructor(
             try {
                 client.connect(source, _currentRemoteBrowsePath.value)
                 _remoteDirectories.value = client.listDirectories(_currentRemoteBrowsePath.value)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _browseError.value = classifyRemoteError(e)
                 _remoteDirectories.value = emptyList()
             } finally {
                 _isBrowsing.value = false
-                try { client.disconnect() } catch (_: Exception) {}
+                try {
+                    client.disconnect()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
             }
         }
     }
@@ -214,6 +226,8 @@ class SyncRelationEditViewModel @Inject constructor(
                 client.connect(source, path)
                 client.listDirectories(path)
                 _testResult.value = context.getString(R.string.relation_dir_accessible)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _testResult.value = when (classifyRemoteError(e)) {
                     RemoteBrowseError.PATH_NOT_FOUND -> context.getString(R.string.relation_dir_not_exist)
@@ -222,7 +236,12 @@ class SyncRelationEditViewModel @Inject constructor(
                 }
             } finally {
                 _isTesting.value = false
-                try { client.disconnect() } catch (_: Exception) {}
+                try {
+                    client.disconnect()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
             }
         }
     }
@@ -258,7 +277,9 @@ class SyncRelationEditViewModel @Inject constructor(
                 return@launch
             }
             val normalizedBasePath = try {
-                storagePaths.normalizeAndValidateRelativePath(_localBasePath.value)
+                withContext(ioDispatcher) {
+                    storagePaths.normalizeAndValidateRelativePath(_localBasePath.value)
+                }
             } catch (e: SecurityException) {
                 _error.value = context.getString(R.string.relation_invalid_base_path)
                 return@launch
@@ -282,6 +303,8 @@ class SyncRelationEditViewModel @Inject constructor(
                     )
                 )
                 _saveResult.value = context.getString(R.string.relation_save_success)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _error.value = context.getString(R.string.relation_save_failed, syncErrorMessage(e, context))
             } finally {

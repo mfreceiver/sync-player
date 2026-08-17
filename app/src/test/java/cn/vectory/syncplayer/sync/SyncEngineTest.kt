@@ -5,6 +5,7 @@ import cn.vectory.syncplayer.data.local.entity.PendingSyncActionEntity
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.model.SyncAction
 import cn.vectory.syncplayer.data.model.SyncActionType
+import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncRelation
 import cn.vectory.syncplayer.data.model.SyncSource
@@ -16,11 +17,9 @@ import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
 import dagger.Lazy
-import io.mockk.coEvery
-import io.mockk.coVerify
-import io.mockk.every
-import io.mockk.mockk
+import io.mockk.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -247,5 +246,159 @@ class SyncEngineTest {
         coVerify(atLeast = 1) { encryptedMediaStore.verifyReadable(300L) }
         coVerify(atLeast = 1) { encryptedMediaStore.delete(300L) }
         coVerify(atLeast = 1) { videoRepository.deleteById(300L) }
+    }
+
+    @Test
+    fun `executeSync propagates CancellationException from read probe without failed download`() = runTest {
+        val relationId = 1L
+        val relation = mockk<SyncRelation>()
+        every { relation.id } returns relationId
+        every { relation.syncSourceId } returns 10L
+        every { relation.remotePath } returns "/remote"
+        every { relation.localBasePath } returns "/local"
+        every { relation.name } returns "rel"
+        val source = mockk<SyncSource>()
+        every { source.protocol } returns SyncProtocol.SFTP
+        every { source.id } returns 10L
+
+        coEvery { syncRelationRepository.getById(relationId) } returns relation
+        coEvery { syncSourceRepository.getById(10L) } returns source
+        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
+        every { encryptedMediaStore.volumeId } returns "test-vol"
+
+        val client = mockk<RemoteFileClient>(relaxed = true)
+        every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns client
+        coEvery { client.downloadTo(any(), any(), any()) } returns true
+        every { storagePaths.toLocalRelativePath("/local", "video.mp4") } returns "video.mp4"
+        coEvery { videoRepository.getByRelativePathAndRelationId("video.mp4", relationId) } returns null
+        coEvery { videoRepository.upsert(any()) } returns 301L
+        coEvery { videoRepository.deleteById(301L) } returns Unit
+
+        val sink = mockk<OutputStream>(relaxed = true)
+        coEvery { encryptedMediaStore.openEncryptSink(301L, any(), any()) } returns sink
+        coEvery { encryptedMediaStore.finalize(301L) } returns true
+        coEvery { encryptedMediaStore.verifyReadable(any()) } coAnswers {
+            throw CancellationException("cancel")
+        }
+
+        val action = SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "video.mp4", fileSize = 1000L)
+        val thrown = try {
+            syncEngine.executeSync(relationId, listOf(action), emptyList())
+            null
+        } catch (e: Throwable) {
+            e
+        }
+        coVerify(exactly = 1) { encryptedMediaStore.verifyReadable(any()) }
+
+        assertEquals(SyncPhase.CANCELLED, syncEngine.progress.value.phase)
+        assertNotNull(thrown)
+        assertEquals(CancellationException::class, thrown!!::class)
+        assertEquals(0, syncEngine.progress.value.failedFiles)
+    }
+
+    @Test
+    fun `executeSync propagates CancellationException from read probe rollback delete without failed download`() = runTest {
+        val relationId = 1L
+        val relation = mockk<SyncRelation>()
+        every { relation.id } returns relationId
+        every { relation.syncSourceId } returns 10L
+        every { relation.remotePath } returns "/remote"
+        every { relation.localBasePath } returns "/local"
+        every { relation.name } returns "rel"
+        val source = mockk<SyncSource>()
+        every { source.protocol } returns SyncProtocol.SFTP
+        every { source.id } returns 10L
+
+        coEvery { syncRelationRepository.getById(relationId) } returns relation
+        coEvery { syncSourceRepository.getById(10L) } returns source
+        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
+        every { encryptedMediaStore.volumeId } returns "test-vol"
+
+        val client = mockk<RemoteFileClient>(relaxed = true)
+        every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns client
+        coEvery { client.downloadTo(any(), any(), any()) } returns true
+        every { storagePaths.toLocalRelativePath("/local", "video.mp4") } returns "video.mp4"
+        coEvery { videoRepository.getByRelativePathAndRelationId("video.mp4", relationId) } returns null
+        coEvery { videoRepository.upsert(any()) } returns 302L
+        coEvery { videoRepository.deleteById(302L) } returns Unit
+
+        val sink = mockk<OutputStream>(relaxed = true)
+        coEvery { encryptedMediaStore.openEncryptSink(302L, any(), any()) } returns sink
+        coEvery { encryptedMediaStore.finalize(302L) } returns true
+        coEvery { encryptedMediaStore.verifyReadable(any()) } coAnswers {
+            throw IOException("simulated unreadable")
+        }
+        coEvery { encryptedMediaStore.delete(any()) } coAnswers {
+            throw CancellationException("cancel during rollback")
+        }
+
+        val action = SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "video.mp4", fileSize = 1000L)
+        val thrown = try {
+            syncEngine.executeSync(relationId, listOf(action), emptyList())
+            null
+        } catch (e: Throwable) {
+            e
+        }
+        coVerify(exactly = 1) { encryptedMediaStore.verifyReadable(any()) }
+
+        assertEquals(SyncPhase.CANCELLED, syncEngine.progress.value.phase)
+        assertEquals(CancellationException::class, thrown!!::class)
+        assertEquals(0, syncEngine.progress.value.failedFiles)
+        coVerify(exactly = 1) { encryptedMediaStore.delete(302L) }
+    }
+
+    @Test
+    fun `executeSync preserves CancellationException when cancellation cleanup fails`() = runTest {
+        val relationId = 1L
+        val relation = mockk<SyncRelation>()
+        every { relation.id } returns relationId
+        every { relation.syncSourceId } returns 10L
+        every { relation.remotePath } returns "/remote"
+        every { relation.localBasePath } returns "/local"
+        every { relation.name } returns "rel"
+        val source = mockk<SyncSource>()
+        every { source.protocol } returns SyncProtocol.SFTP
+        every { source.id } returns 10L
+
+        coEvery { syncRelationRepository.getById(relationId) } returns relation
+        coEvery { syncSourceRepository.getById(10L) } returns source
+        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
+        every { encryptedMediaStore.volumeId } returns "test-vol"
+
+        val client = mockk<RemoteFileClient>(relaxed = true)
+        every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns client
+        coEvery { client.downloadTo(any(), any(), any()) } returns true
+        every { storagePaths.toLocalRelativePath("/local", "video.mp4") } returns "video.mp4"
+        coEvery { videoRepository.getByRelativePathAndRelationId("video.mp4", relationId) } returns null
+        coEvery { videoRepository.upsert(any()) } returns 303L
+        coEvery { videoRepository.deleteById(303L) } returns Unit
+
+        val sink = mockk<OutputStream>(relaxed = true)
+        coEvery { encryptedMediaStore.openEncryptSink(303L, any(), any()) } returns sink
+        coEvery { encryptedMediaStore.finalize(303L) } returns true
+        coEvery { encryptedMediaStore.verifyReadable(any()) } coAnswers {
+            throw IOException("simulated unreadable")
+        }
+        coEvery { encryptedMediaStore.delete(any()) } coAnswers {
+            throw CancellationException("cancel during rollback")
+        }
+        coEvery { encryptedMediaStore.cancel(303L) } coAnswers {
+            throw IOException("cleanup failed")
+        }
+
+        val action = SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "video.mp4", fileSize = 1000L)
+        val thrown = try {
+            syncEngine.executeSync(relationId, listOf(action), emptyList())
+            null
+        } catch (e: Throwable) {
+            e
+        }
+
+        assertEquals(CancellationException::class, thrown!!::class)
+        assertEquals(SyncPhase.CANCELLED, syncEngine.progress.value.phase)
+        assertEquals(0, syncEngine.progress.value.failedFiles)
+        coVerify(exactly = 1) { encryptedMediaStore.delete(303L) }
+        coVerify(exactly = 1) { encryptedMediaStore.cancel(303L) }
+        coVerify(exactly = 1) { videoRepository.deleteById(303L) }
     }
 }

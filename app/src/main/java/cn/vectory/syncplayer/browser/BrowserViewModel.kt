@@ -24,6 +24,7 @@ import cn.vectory.syncplayer.ui.components.FileContextMenuActions
 import cn.vectory.syncplayer.ui.components.FolderContextMenuActions
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -113,22 +114,30 @@ class BrowserViewModel @Inject constructor(
         viewModelScope.launch {
             _sortMode.value = try {
                 SortMode.valueOf(userPrefs.getDefaultSortMode())
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
                 SortMode.FILENAME_ASC
             }
             _filter.value = try {
                 BrowseFilter.valueOf(userPrefs.getDefaultFilter().replace("VIDEO_ONLY", "MEDIA_ONLY"))
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
                 BrowseFilter.ALL
             }
             _viewMode.value = try {
                 ViewMode.valueOf(userPrefs.getViewMode())
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
                 ViewMode.LIST
             }
             _gridColumns.value = userPrefs.getGridColumns()
             _browseMode.value = try {
                 BrowseMode.valueOf(userPrefs.getBrowseMode())
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
                 BrowseMode.DIRECTORY
             }
@@ -171,6 +180,8 @@ class BrowserViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 userPrefs.setOnboardingDismissed(true)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to persist onboarding dismissal", e)
             }
@@ -182,6 +193,8 @@ class BrowserViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 userPrefs.setOnboardingDismissed(false)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to reset onboarding dismissal", e)
             }
@@ -395,6 +408,8 @@ class BrowserViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 userPrefs.setDefaultSortMode(mode.name)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save sort mode", e)
             }
@@ -406,6 +421,8 @@ class BrowserViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 userPrefs.setDefaultFilter(filter.name)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save filter", e)
             }
@@ -417,6 +434,8 @@ class BrowserViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 userPrefs.setViewMode(mode.name)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save view mode", e)
             }
@@ -428,6 +447,8 @@ class BrowserViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 userPrefs.setGridColumns(columns)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save grid columns", e)
             }
@@ -448,6 +469,8 @@ class BrowserViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 userPrefs.setBrowseMode(mode.name)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save browse mode", e)
             }

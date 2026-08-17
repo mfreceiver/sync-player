@@ -90,6 +90,8 @@ class GainAnalysisViewModel @Inject constructor(
                 if (videos.isEmpty()) {
                     _isComplete.value = true
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _error.value = syncErrorMessage(e, context)
             } finally {

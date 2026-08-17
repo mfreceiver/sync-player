@@ -14,6 +14,7 @@ import cn.vectory.syncplayer.storage.volume.MediaVolumeProvider
 import cn.vectory.syncplayer.ui.util.formatFileSize
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -68,6 +69,8 @@ class SettingsViewModel @Inject constructor(
                     _settingsState.value = base
                     refreshUsableSpace()
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load settings", e)
             }
@@ -78,6 +81,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 userPrefs.setVolumeBalance(enabled)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to set volume balance", e)
             }
@@ -88,6 +93,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 userPrefs.setQuickRecycle(enabled)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to set quick recycle", e)
             }
@@ -98,6 +105,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 userPrefs.setSecureLockEnabled(enabled)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to set secure lock", e)
             }
@@ -108,6 +117,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 userPrefs.setMediaStorageTreeUri(uri)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to set media storage tree uri", e)
             }
@@ -136,6 +147,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 syncLogRepository.clearOldLogs()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to clear logs", e)
             }
@@ -147,6 +160,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 userPrefs.setOnboardingDismissed(false)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to reset onboarding dismissal", e)
             }
@@ -159,6 +174,8 @@ class SettingsViewModel @Inject constructor(
                 try {
                     val bytes = mediaVolumeProvider.current().usableSpace()
                     if (bytes < 0L) "—" else formatFileSize(bytes)
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to read usable space", e)
                     "—"

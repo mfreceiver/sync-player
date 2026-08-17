@@ -93,17 +93,6 @@ class StoragePaths @Inject constructor(
     }
 
     /**
-     * Non-throwing variant of [normalizeAndValidateRelativePath] for UI pre-checks.
-     * Returns true if the path is safe, false otherwise.
-     */
-    fun isPathSafe(relativePath: String): Boolean = try {
-        normalizeAndValidateRelativePath(relativePath)
-        true
-    } catch (_: Exception) {
-        false
-    }
-
-    /**
      * Returns [file.canonicalFile], falling back to [file.absoluteFile] on [java.io.IOException].
      * Canonical resolution may throw IOException on broken filesystem entries;
      * absolute path is a safe fallback since the starts-with containment check still works.

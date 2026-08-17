@@ -369,8 +369,8 @@ class UndoDeleteUseCase @Inject constructor(
             }
             val currentVolumeId = mediaStore.volumeId
             if (video.volumeId != currentVolumeId) {
-                Log.w(TAG, "undo trash toggle: id=${state.id} volume='${video.volumeId}' " +
-                    "not confirmed on active='$currentVolumeId'; skip restore (fail-closed)")
+                Log.w(TAG, "undo trash toggle: id=${state.id} volume not confirmed " +
+                    "(stored volumeId differs from active); skip restore (fail-closed)")
                 return UndoResult.Failed(SyncException(
                     SyncErrorCode.STORAGE_ERROR,
                     SyncOperation.DELETE,

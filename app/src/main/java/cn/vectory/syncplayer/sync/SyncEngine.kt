@@ -28,6 +28,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -208,8 +209,14 @@ class SyncEngine @Inject constructor(
         } catch (e: CancellationException) {
             // NonCancellable: ensure DAO cleanup executes even in cancelled coroutine state.
             withContext(NonCancellable) {
-                pendingSyncActionDao.markCancelled(relationId)
-                pendingSyncActionDao.deleteByRelationId(relationId)
+                try {
+                    pendingSyncActionDao.markCancelled(relationId)
+                } catch (_: Exception) {
+                }
+                try {
+                    pendingSyncActionDao.deleteByRelationId(relationId)
+                } catch (_: Exception) {
+                }
             }
             throw e
         }
@@ -445,6 +452,7 @@ class SyncEngine @Inject constructor(
                 if (toActuallyDownload.isNotEmpty()) {
                     val semaphore = Semaphore(maxConcurrency)
                     coroutineScope {
+                        val workerScope = this
                         for (action in toActuallyDownload) {
                             semaphore.acquire()
                             launch(Dispatchers.IO) {
@@ -477,7 +485,9 @@ class SyncEngine @Inject constructor(
                                         if (attempts > 1) {
                                             // E5: 重试前重连——上次失败的下载可能已损坏底层传输（SMB session/SFTP channel），
                                             // 复用旧 client 会再次失败。先断开再建新连接。
-                                            try { workerClient.disconnect() } catch (_: Exception) {}
+                                            try { workerClient.disconnect() } catch (e: CancellationException) {
+                                                throw e
+                                            } catch (_: Exception) {}
                                             workerClient.connect(source, relation.remotePath)
                                         }
                                         // E9: 每个文件下载前复检可用空间（3 并发下载途中磁盘可能被耗尽）。
@@ -559,15 +569,26 @@ class SyncEngine @Inject constructor(
                                             // 不在重试白名单 → 立即抛到 outer catch 计 failedDownloadCount；下次 dryRun 因 DB 行已删重下。
                                             try {
                                                 store.verifyReadable(assignedId)
+                                            } catch (e: CancellationException) {
+                                                throw e
                                             } catch (e: Exception) {
-                                                try { store.delete(assignedId) } catch (_: Exception) {}
+                                                try {
+                                                    store.delete(assignedId)
+                                                } catch (e: CancellationException) {
+                                                    throw e
+                                                } catch (_: Exception) {
+                                                }
                                                 videoRepository.deleteById(assignedId)
                                                 throw SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DOWNLOAD, path = action.relativePath, cause = e)
                                             }
                                         } catch (e: CancellationException) {
                                             try { sink?.close() } catch (_: Exception) {}
-                                            store.cancel(assignedId)
-                                            if (existing == null) videoRepository.deleteById(assignedId)
+                                            withContext(NonCancellable) {
+                                                try { store.cancel(assignedId) } catch (_: Exception) {}
+                                                if (existing == null) {
+                                                    try { videoRepository.deleteById(assignedId) } catch (_: Exception) {}
+                                                }
+                                            }
                                             throw e
                                         } catch (e: Exception) {
                                             try { sink?.close() } catch (_: Exception) {}
@@ -600,6 +621,8 @@ class SyncEngine @Inject constructor(
                                         videoRepository.upsert(withMeta)
                                         try {
                                             extractMetadata(withMeta)
+                                        } catch (e: CancellationException) {
+                                            throw e
                                         } catch (e: Exception) {
                                             Log.w(TAG, "Metadata extraction failed for ${withMeta.fileName}", e)
                                         }
@@ -621,6 +644,7 @@ class SyncEngine @Inject constructor(
                                         totalFiles = totalActions
                                     )
                                 } catch (e: CancellationException) {
+                                    workerScope.cancel(e)
                                     throw e
                                 } catch (e: Exception) {
                                     val localRelPath = storagePaths.toLocalRelativePath(relation.localBasePath, action.relativePath)
@@ -639,8 +663,17 @@ class SyncEngine @Inject constructor(
                                     Log.e(TAG, "Download failed code=${(e as? SyncException)?.code} path=${action.relativePath}", e)
                                     DebugLogger.w(TAG, "失败: ${action.relativePath.substringAfterLast("/")} - ${e.javaClass.simpleName}")
                                 } finally {
-                                    try { workerClient.close() } catch (_: Exception) {}
-                                    semaphore.release()
+                                    try {
+                                        try {
+                                            workerClient.close()
+                                        } catch (e: CancellationException) {
+                                            workerScope.cancel(e)
+                                            throw e
+                                        } catch (_: Exception) {
+                                        }
+                                    } finally {
+                                        semaphore.release()
+                                    }
                                 }
                             }
                         }
@@ -669,7 +702,7 @@ class SyncEngine @Inject constructor(
                     Log.w(
                         TAG,
                         "DELETE_LOCAL skipped (volume mismatch): path=${action.relativePath} " +
-                            "entity.volumeId=${videoItem.volumeId} store.volumeId=${store.volumeId}"
+                            "stored volumeId differs from active volume"
                     )
                     syncLogRepository.log(
                         action = "DELETE_LOCAL",
@@ -677,10 +710,7 @@ class SyncEngine @Inject constructor(
                         status = "SKIPPED",
                         dryRun = false,
                         fileSize = action.fileSize,
-                        errorMessage = context.getString(
-                            R.string.sync_error_volume_mismatch,
-                            videoItem.volumeId, store.volumeId
-                        )
+                        errorMessage = context.getString(R.string.sync_error_volume_mismatch)
                     )
                     continue
                 }
@@ -869,7 +899,7 @@ class SyncEngine @Inject constructor(
                     Log.w(
                         TAG,
                         "DELETE_BOTH skipped (volume mismatch): path=${action.relativePath} " +
-                            "entity.volumeId=${videoItem.volumeId} store.volumeId=${store.volumeId}"
+                            "stored volumeId differs from active volume"
                     )
                     syncLogRepository.log(
                         action = "DELETE_BOTH",
@@ -877,10 +907,7 @@ class SyncEngine @Inject constructor(
                         status = "SKIPPED",
                         dryRun = false,
                         fileSize = action.fileSize,
-                        errorMessage = context.getString(
-                            R.string.sync_error_volume_mismatch,
-                            videoItem.volumeId, store.volumeId
-                        )
+                        errorMessage = context.getString(R.string.sync_error_volume_mismatch)
                     )
                     continue
                 }
@@ -957,7 +984,7 @@ class SyncEngine @Inject constructor(
             } else {
                 syncRelationRepository.updateLastSync(
                     relationId,
-                    context.getString(R.string.sync_delete_failed, "local/remote incomplete: ok=$completedActions fail=$failedActions")
+                    context.getString(R.string.sync_delete_failed, completedActions, failedActions)
                 )
             }
             syncLogRepository.clearOldLogs()
@@ -995,10 +1022,14 @@ class SyncEngine @Inject constructor(
             val deleted = store.delete(id)
             if (deleted) true
             else !store.exists(id)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Failed to delete media id=$id", e)
             try {
                 !store.exists(id)
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
                 false
             }
@@ -1013,10 +1044,14 @@ class SyncEngine @Inject constructor(
             val deleted = store.deleteThumb(id)
             if (deleted) true
             else !store.thumbExists(id)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Failed to delete thumb id=$id", e)
             try {
                 !store.thumbExists(id)
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
                 false
             }

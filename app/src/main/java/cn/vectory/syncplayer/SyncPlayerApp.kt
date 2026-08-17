@@ -6,6 +6,7 @@ import cn.vectory.syncplayer.security.AppLockManager
 import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
 import cn.vectory.syncplayer.sync.SyncEngine
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,13 +46,16 @@ class SyncPlayerApp : Application() {
      */
     private fun purgeLegacyCiphertext() {
         appScope.launch {
-            runCatching {
-                syncEngine.storageOperationMutex.withLock {
+            try {
+                val removed = syncEngine.storageOperationMutex.withLock {
                     encryptedMediaStore.get().purgeLegacyIfNeeded()
                 }
+                if (removed > 0) Log.i(TAG, "legacy v1 ciphertext purge: removed $removed file(s)")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "legacy v1 ciphertext purge skipped", e)
             }
-                .onSuccess { if (it > 0) Log.i(TAG, "legacy v1 ciphertext purge: removed $it file(s)") }
-                .onFailure { Log.w(TAG, "legacy v1 ciphertext purge skipped", it) }
         }
     }
 

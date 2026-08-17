@@ -13,6 +13,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.ByteArrayOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 
 @Singleton
 class VideoMetadataExtractor @Inject constructor(
@@ -42,6 +43,8 @@ class VideoMetadataExtractor @Inject constructor(
                 frameRate = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)?.toFloatOrNull()
                 generateThumbnail(mmr, videoItem)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Metadata extraction failed for ${videoItem.fileName}", e)
             return videoItem
@@ -62,6 +65,8 @@ class VideoMetadataExtractor @Inject constructor(
                 mmr.setDataSource(context, uri)
                 generateThumbnail(mmr, videoItem)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Thumbnail repair failed for ${videoItem.fileName}", e)
         }
@@ -77,6 +82,8 @@ class VideoMetadataExtractor @Inject constructor(
                 store.writeThumb(videoItem.id, baos.toByteArray())
                 bitmap.recycle()
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Thumbnail generation failed for ${videoItem.fileName}", e)
         }
