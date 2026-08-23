@@ -4,7 +4,7 @@
 **Audit date:** 2026-08-23
 **Repository:** Sync Player
 **Baseline:** `main` at `7dc00fc0eb862696dc93a16508580656dddf0152` (`v12.1.0`)
-**Remediation status (2026-08-23):** IMPLEMENTED at `main` @ `d67882d` — CQ-001 fixed, all remediation goals landed (see §13). **Release `v12.2.0`: pending.**
+**Remediation status (2026-08-23):** RELEASED as `v12.2.0` at commit `3854bdc` — CQ-001 fixed, all remediation goals landed, Gitea Actions run `#35` succeeded, and the signed APK plus `SHA256SUMS` were published (see §13).
 
 ## 1. Executive Summary
 
@@ -12,7 +12,7 @@ The audited baseline builds, passes its complete JVM unit-test suite, and passes
 
 One verified correctness issue remains: cancellation can be converted into a transport failure when a non-cooperative SMB/SFTP operation completes exceptionally after its coroutine has already been cancelled. The result is a user-visible FAILED/error outcome instead of cancellation on several core sync-preview and delete paths. No data corruption was demonstrated; the E8 scan-failure guard still clears derived actions.
 
-> **Remediation status (2026-08-23):** the paragraph above and the table below describe the **audit baseline** (`7dc00fc`, `v12.1.0`); "remains" is to be read as "remains at the audited baseline". The single verified finding (CQ-001) has since been fixed at `main` @ `d67882d` (commit `31d9869`); see §13. Release `v12.2.0`: pending.
+> **Remediation status (2026-08-23):** the paragraph above and the table below describe the **audit baseline** (`7dc00fc`, `v12.1.0`); "remains" is to be read as "remains at the audited baseline". The single verified finding (CQ-001) was fixed by `31d9869`, and the completed remediation was released as `v12.2.0` at `3854bdc`; see §13.
 
 | Severity | Count |
 |---|---:|
@@ -341,11 +341,11 @@ Final `git status --short --untracked-files=all` contains only `?? docs/automati
 
 > Added post-audit. Sections 1–12 above are the **unchanged audit baseline evidence** for `7dc00fc` (`v12.1.0`); severity levels, triggers, and evidence were not altered. This section is the centralized implementation record of the v12.2.0 remediation cycle (design: [`docs/ocmar/specs/2026-08-23-sync-player-12.2.0-remediation-design.md`](../ocmar/specs/2026-08-23-sync-player-12.2.0-remediation-design.md); plan: [`docs/ocmar/plans/2026-08-23-sync-player-12.2.0-remediation.md`](../ocmar/plans/2026-08-23-sync-player-12.2.0-remediation.md)).
 
-**Status: code / docs / local gates COMPLETE at implementation HEAD `d67882d`; release `v12.2.0` PENDING** — tag, release CI, and Release APK do not exist yet and are not claimed (see §13.5).
+**Status: RELEASED as `v12.2.0` at `3854bdc`** — code, docs, local gates, annotated tag, release CI, and signed APK publication are complete (see §13.5).
 
 ### 13.1 Baseline → implementation
 
-- Audit baseline: `7dc00fc` (`v12.1.0`); implementation HEAD: `d67882d` (`v12.1.0-6-gd67882d`); design commit: `a80a7a8`.
+- Audit baseline: `7dc00fc` (`v12.1.0`); implementation HEAD: `d67882d`; release/tag HEAD: `3854bdc`; design commit: `a80a7a8`; remediation outcome docs commit included in the tag: `3854bdc`.
 - Remediation commits:
   - `31d9869` fix(sync): preserve cancellation across SMB and SFTP boundaries
   - `3cdc672` refactor(browser): remove unscoped star-by-path dead path
@@ -378,10 +378,9 @@ Command: `JAVA_HOME=/home/mar/android-studio/jbr ./gradlew compileDebugKotlin co
 - Log: `/home/mar/personal_projects/sync-player/.ocmar/workflows/v12.2.0-final-verify/verify-1787494440.log`.
 - Supplementary integrity check: `git diff v12.1.0..HEAD --stat -- app/src/main/java/cn/vectory/syncplayer/crypto/` is empty (crypto/AEAD v2 domain untouched).
 
-### 13.5 Pending (release — NOT yet executed)
+### 13.5 Release outcome
 
-1. Main agent commits the three remediation docs and pushes `main`.
-2. `./scripts/release.sh 12.2.0` → annotated tag `v12.2.0` + push.
-3. Confirm `release.yml` CI is green and the signed Release APK exists on the Releases page.
-
-Until these complete, release status remains **pending**; this report claims no tag/CI/APK success.
+- Remediation docs were committed as `3854bdc` and `main` was pushed cleanly.
+- `JAVA_HOME=/home/mar/android-studio/jbr ./scripts/release.sh 12.2.0` passed its local `compileDebugKotlin + testDebugUnitTest + lintDebug` gate (BUILD SUCCESSFUL in 2m17s), created annotated tag `v12.2.0`, and pushed it. The tag peels to `3854bdc`.
+- Gitea Actions release run [`#35`](https://git.vectory.cn:18443/mfreceiver/sync-player/actions/runs/35) completed with conclusion **success** (`2026-08-23 22:36:42+08:00` → `22:45:49+08:00`).
+- Release [`v12.2.0`](https://git.vectory.cn:18443/mfreceiver/sync-player/releases/tag/v12.2.0) is published (not draft/prerelease) with `sync-player-12.2.0-3854bdc.apk` (13,437,831 bytes) and `SHA256SUMS`.
