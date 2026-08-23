@@ -1,0 +1,259 @@
+package cn.vectory.syncplayer.sync
+
+import android.content.Context
+import android.util.Log
+import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.data.model.SyncAction
+import cn.vectory.syncplayer.data.model.SyncProgress
+import cn.vectory.syncplayer.data.model.SyncProtocol
+import cn.vectory.syncplayer.data.model.SyncPhase
+import cn.vectory.syncplayer.data.repository.PlaybackRepository
+import cn.vectory.syncplayer.data.repository.SyncLogRepository
+import cn.vectory.syncplayer.data.repository.SyncRelationRepository
+import cn.vectory.syncplayer.data.repository.SyncSourceRepository
+import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.storage.StoragePaths
+import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import dagger.Lazy
+import kotlinx.coroutines.CancellationException
+
+/**
+ * DELETE_BOTH 执行域（从 [SyncEngine] 上帝类渐进拆分，plan 12.2.0 Task 5）。
+ *
+ * 职责：回收站清理流程中「本地密文 + 缩略图 + DB 行 + 远端文件」四位一体的删除执行，
+ * 以及可复用的存储删除原语（[deleteStoreMedia]/[deleteStoreThumb]，Task 7 的下载管线
+ * DELETE_LOCAL tail 复用同一实现）。
+ *
+ * **不持有任何锁**：`executeDeleteLocked` 的双层互斥（`storageOperationMutex` +
+ * relation mutex）由 [SyncEngine] 门面持有后调用——一次同步的生命周期编排留在 Engine。
+ *
+ * 迁移不变量（与原 [SyncEngine] 内联实现逐条等价）：
+ *  1. 卷不匹配（含空/未知 volumeId）→ 不删本地、不删远端、failedActions++、SKIPPED 日志
+ *     （红线 2：volume ownership fail-closed）。
+ *  2. local-first：本地密文/缩略图未删净不触远端。
+ *  3. 远端 `deleteFile` 幂等（返回 false 表示「本来就不存在」，按成功语义处理）。
+ *  4. CancellationException rethrow 分支保留；finally `disconnect()` 保留。
+ *  5. 进度上报走传入的 [progressPublisher]（Engine 构造一次并共享的同一实例）。
+ */
+internal class SyncDeleteExecutor(
+    private val syncRelationRepository: SyncRelationRepository,
+    private val syncSourceRepository: SyncSourceRepository,
+    private val videoRepository: VideoRepository,
+    private val playbackRepository: PlaybackRepository,
+    private val syncLogRepository: SyncLogRepository,
+    private val remoteFileClientFactory: RemoteFileClientFactory,
+    private val storagePaths: StoragePaths,
+    private val encryptedMediaStoreLazy: Lazy<EncryptedMediaStore>,
+    private val context: Context,
+    private val progressPublisher: SyncProgressPublisher
+) {
+
+    private val encryptedMediaStore: EncryptedMediaStore
+        get() = encryptedMediaStoreLazy.get()
+
+    private fun getClient(protocol: SyncProtocol): RemoteFileClient =
+        remoteFileClientFactory.create(protocol)
+
+    /** 迁自原 [SyncEngine.executeDeleteLocked]（无 relation-mutex 壳，互斥由 Engine 持有）。 */
+    suspend fun executeDeleteLocked(relationId: Long, actions: List<SyncAction>): Boolean {
+        val relation = syncRelationRepository.getById(relationId) ?: return false
+        val source = syncSourceRepository.getById(relation.syncSourceId) ?: return false
+        val client = getClient(source.protocol)
+        // E2: encryptedMediaStore 是 Hilt Lazy 纯属性读取，无阻塞，无需 withContext(IO)。
+        val store = encryptedMediaStore
+
+        val totalActions = actions.size
+        var completedActions = 0
+
+        progressPublisher.value = SyncProgress(
+            isRunning = true,
+            totalFiles = totalActions,
+            phase = SyncPhase.DELETING,
+            relationId = relationId,
+            relationName = relation.name,
+            localBasePath = relation.localBasePath
+        )
+
+        try {
+            client.connect(source, relation.remotePath)
+
+            var failedActions = 0
+
+            for (action in actions) {
+                progressPublisher.value = progressPublisher.value.copy(
+                    currentFileName = action.relativePath,
+                    completedFiles = completedActions
+                )
+
+                // 1) Local first — never touch remote if local ciphertext/thumb still present.
+                val videoItem = videoRepository.getByRelativePathAndRelationId(action.relativePath, relationId)
+                // 卷一致性防护（同 executeSync 删除路径）：entity 属于另一卷时跳过整个 DELETE_BOTH，
+                // 既不删本地（不属于当前 store 管辖）也不删远端，避免产生半完成状态。
+                if (videoItem != null && videoItem.volumeId != store.volumeId) {
+                    failedActions++
+                    Log.w(
+                        TAG,
+                        "DELETE_BOTH skipped (volume mismatch): path=${action.relativePath} " +
+                            "stored volumeId differs from active volume"
+                    )
+                    syncLogRepository.log(
+                        action = "DELETE_BOTH",
+                        relativePath = action.relativePath,
+                        status = "SKIPPED",
+                        dryRun = false,
+                        fileSize = action.fileSize,
+                        errorMessage = context.getString(R.string.sync_error_volume_mismatch)
+                    )
+                    continue
+                }
+                if (videoItem != null) {
+                    val mediaGone = deleteStoreMedia(store, videoItem.id)
+                    val thumbGone = deleteStoreThumb(store, videoItem.id)
+                    if (!(mediaGone && thumbGone)) {
+                        failedActions++
+                        Log.w(TAG, "DELETE_BOTH local failed id=${videoItem.id}: mediaGone=$mediaGone thumbGone=$thumbGone")
+                        syncLogRepository.log(
+                            action = "DELETE_BOTH",
+                            relativePath = action.relativePath,
+                            status = "FAILED",
+                            dryRun = false,
+                            fileSize = action.fileSize,
+                            errorMessage = context.getString(
+                                R.string.sync_error_local_delete_incomplete, mediaGone, thumbGone
+                            )
+                        )
+                        continue
+                    }
+                    playbackRepository.deleteByVideoId(videoItem.id)
+                    videoRepository.deleteByRelativePathAndRelationId(action.relativePath, relationId)
+                }
+
+                // 2) Remote — false from SMB means "already gone" (idempotent); exceptions are real failures.
+                val remoteRelPath = storagePaths.toPathUnderBase(relation.localBasePath, action.relativePath)
+                try {
+                    client.deleteFile(remoteRelPath)
+                    // true = deleted; false (SMB !exists) = already gone → both OK
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failedActions++
+                    Log.w(TAG, "DELETE_BOTH remote failed code=${(e as? SyncException)?.code} path=$remoteRelPath", e)
+                    syncLogRepository.log(
+                        action = "DELETE_BOTH",
+                        relativePath = action.relativePath,
+                        status = "FAILED",
+                        dryRun = false,
+                        fileSize = action.fileSize,
+                        errorMessage = syncErrorMessage(e, context)
+                    )
+                    continue
+                }
+
+                syncLogRepository.log(
+                    action = "DELETE_BOTH",
+                    relativePath = action.relativePath,
+                    status = "SUCCESS",
+                    dryRun = false,
+                    fileSize = action.fileSize
+                )
+                completedActions++
+            }
+
+            val allOk = failedActions == 0
+            progressPublisher.value = SyncProgress(
+                isRunning = false,
+                phase = if (allOk) SyncPhase.COMPLETED else SyncPhase.PARTIAL_FAILED,
+                completedFiles = completedActions,
+                totalFiles = totalActions,
+                failedFiles = failedActions,
+                relationId = relationId,
+                relationName = relation.name,
+                localBasePath = relation.localBasePath
+            )
+
+            if (allOk) {
+                syncRelationRepository.updateLastSync(
+                    relationId,
+                    context.getString(R.string.sync_delete_success, completedActions)
+                )
+            } else {
+                syncRelationRepository.updateLastSync(
+                    relationId,
+                    context.getString(R.string.sync_delete_failed, completedActions, failedActions)
+                )
+            }
+            syncLogRepository.clearOldLogs()
+            return allOk
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            progressPublisher.value = SyncProgress(
+                isRunning = false,
+                phase = SyncPhase.FAILED,
+                relationId = relationId,
+                relationName = relation.name,
+                localBasePath = relation.localBasePath
+            )
+            syncRelationRepository.updateLastSync(relationId, syncErrorMessage(e, context))
+            syncLogRepository.log(
+                action = "DELETE_BOTH",
+                relativePath = "",
+                status = "FAILED",
+                dryRun = false,
+                errorMessage = syncErrorMessage(e, context)
+            )
+            return false
+        } finally {
+            client.disconnect()
+        }
+    }
+
+    /**
+     * Delete ciphertext; [Boolean] false is ambiguous (missing vs fail) — re-check [EncryptedMediaStore.exists].
+     * @return true if media is gone (deleted or never present); false if still present after failed delete.
+     */
+    suspend fun deleteStoreMedia(store: EncryptedMediaStore, id: Long): Boolean {
+        return try {
+            val deleted = store.delete(id)
+            if (deleted) true
+            else !store.exists(id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to delete media id=$id", e)
+            try {
+                !store.exists(id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
+
+    /**
+     * Delete thumb; missing thumb is success. Still-present after false → failure.
+     */
+    suspend fun deleteStoreThumb(store: EncryptedMediaStore, id: Long): Boolean {
+        return try {
+            val deleted = store.deleteThumb(id)
+            if (deleted) true
+            else !store.thumbExists(id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to delete thumb id=$id", e)
+            try {
+                !store.thumbExists(id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
+
+    companion object {
+        private const val TAG = "SyncEngine"
+    }
+}
