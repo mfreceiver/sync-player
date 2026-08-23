@@ -5,7 +5,6 @@ import android.content.Intent
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
 import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.data.model.FolderStats
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
@@ -13,35 +12,40 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
-import cn.vectory.syncplayer.data.model.SyncRelationWithSource
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.ui.util.isVideoFile
 import cn.vectory.syncplayer.ui.util.isImageFile
-import cn.vectory.syncplayer.ui.util.fileNameComparator
 import cn.vectory.syncplayer.ui.components.DirectoryNode
 import cn.vectory.syncplayer.ui.components.FileContextMenuActions
 import cn.vectory.syncplayer.ui.components.FolderContextMenuActions
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
-@OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
+/**
+ * Browser screen ViewModel.
+ *
+ * Since the remediation plan Task 8 extraction, the content pipeline (folder / filter /
+ * sort / star / view state, the browseItems Flow chain, preference hydration and
+ * persistence) lives in [BrowserContentCoordinator], constructed here with this
+ * ViewModel's [viewModelScope] so sharing and cancellation semantics are identical to
+ * the previous inline implementation. Every public StateFlow and method below keeps its
+ * exact pre-extraction name and type; the delegation is a pure equivalence refactor.
+ *
+ * The ViewModel retains what is genuinely view-model concerns: the transient [_error]
+ * channel written by file-operation callbacks, the scroll-position cache, onboarding
+ * state, and the undo / context-menu operations.
+ */
 @HiltViewModel
 class BrowserViewModel @Inject constructor(
     private val videoRepository: VideoRepository,
-    private val playbackRepository: PlaybackRepository,
-    private val syncRelationRepository: SyncRelationRepository,
+    playbackRepository: PlaybackRepository,
+    syncRelationRepository: SyncRelationRepository,
     private val syncSourceRepository: SyncSourceRepository,
     private val userPrefs: UserPreferencesRepository,
     private val fileOps: FileOperationsUseCase,
@@ -57,48 +61,52 @@ class BrowserViewModel @Inject constructor(
     // Browse mode controls how items are presented
     enum class BrowseMode { DIRECTORY, FILE }
 
-    private val _currentFolder = MutableStateFlow("")
-    val currentFolder: StateFlow<String> = _currentFolder.asStateFlow()
+    private val coordinator = BrowserContentCoordinator(
+        videoRepository = videoRepository,
+        playbackRepository = playbackRepository,
+        syncRelationRepository = syncRelationRepository,
+        userPrefs = userPrefs,
+        scope = viewModelScope
+    )
 
-    private val _sortMode = MutableStateFlow(SortMode.FILENAME_ASC)
-    val sortMode: StateFlow<SortMode> = _sortMode.asStateFlow()
+    // === Content state, owned and exposed by the coordinator (read-only StateFlows) ===
 
-    private val _filter = MutableStateFlow(BrowseFilter.ALL)
-    val filter: StateFlow<BrowseFilter> = _filter.asStateFlow()
+    val currentFolder: StateFlow<String> = coordinator.currentFolder
+
+    val sortMode: StateFlow<SortMode> = coordinator.sortMode
+
+    val filter: StateFlow<BrowseFilter> = coordinator.filter
 
     // Star and browse mode related state
-    private val _starFilterMode = MutableStateFlow(StarFilterMode.OFF)
-    val starFilterMode: StateFlow<StarFilterMode> = _starFilterMode.asStateFlow()
+    val starFilterMode: StateFlow<StarFilterMode> = coordinator.starFilterMode
 
-    private val _starFilterValue = MutableStateFlow(0)
-    val starFilterValue: StateFlow<Int> = _starFilterValue.asStateFlow()
+    val starFilterValue: StateFlow<Int> = coordinator.starFilterValue
 
-    private val _browseMode = MutableStateFlow(BrowseMode.DIRECTORY)
-    val browseMode: StateFlow<BrowseMode> = _browseMode.asStateFlow()
+    val browseMode: StateFlow<BrowseMode> = coordinator.browseMode
 
-    private val _flatTotalCount = MutableStateFlow(0)
-    val flatTotalCount: StateFlow<Int> = _flatTotalCount.asStateFlow()
+    val flatTotalCount: StateFlow<Int> = coordinator.flatTotalCount
 
-    private val _viewMode = MutableStateFlow(ViewMode.LIST)
-    val viewMode: StateFlow<ViewMode> = _viewMode.asStateFlow()
+    val viewMode: StateFlow<ViewMode> = coordinator.viewMode
 
-    private val _gridColumns = MutableStateFlow(3)
-    val gridColumns: StateFlow<Int> = _gridColumns.asStateFlow()
+    val gridColumns: StateFlow<Int> = coordinator.gridColumns
+
+    val browseItemsFolder: StateFlow<String> = coordinator.browseItemsFolder
+
+    val hiddenByFilterCount: StateFlow<Int> = coordinator.hiddenByFilterCount
+
+    val browseItems: StateFlow<List<BrowseItem>> = coordinator.browseItems
+
+    /** ID of the first sync relation, used as the sync target in the NEEDS_SYNC card. */
+    val firstRelationId: StateFlow<Long?> = coordinator.firstRelationId
+
+    val currentRelationId: StateFlow<Long?> = coordinator.currentRelationId
+
+    // === View-model-owned transient state ===
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
-    private val _refreshTrigger = MutableStateFlow(0L)
-
-    private val effectiveFolder = combine(_currentFolder, _refreshTrigger) { folder, _ -> folder }
-
     private val _scrollPositions = mutableMapOf<String, Pair<Int, Int>>()
-
-    private val _browseItemsFolder = MutableStateFlow("")
-    val browseItemsFolder: StateFlow<String> = _browseItemsFolder.asStateFlow()
-
-    private val _hiddenByFilterCount = MutableStateFlow(0)
-    val hiddenByFilterCount: StateFlow<Int> = _hiddenByFilterCount.asStateFlow()
 
     fun saveScrollPosition(folder: String, firstVisibleItemIndex: Int, firstVisibleItemScrollOffset: Int) {
         _scrollPositions[folder] = Pair(firstVisibleItemIndex, firstVisibleItemScrollOffset)
@@ -109,42 +117,6 @@ class BrowserViewModel @Inject constructor(
     fun clearScrollPosition(folder: String) {
         _scrollPositions.remove(folder)
     }
-
-    init {
-        viewModelScope.launch {
-            _sortMode.value = try {
-                SortMode.valueOf(userPrefs.getDefaultSortMode())
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                SortMode.FILENAME_ASC
-            }
-            _filter.value = try {
-                BrowseFilter.valueOf(userPrefs.getDefaultFilter().replace("VIDEO_ONLY", "MEDIA_ONLY"))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                BrowseFilter.ALL
-            }
-            _viewMode.value = try {
-                ViewMode.valueOf(userPrefs.getViewMode())
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                ViewMode.LIST
-            }
-            _gridColumns.value = userPrefs.getGridColumns()
-            _browseMode.value = try {
-                BrowseMode.valueOf(userPrefs.getBrowseMode())
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                BrowseMode.DIRECTORY
-            }
-        }
-    }
-
-
 
     val hasConfig: StateFlow<Boolean> = syncRelationRepository.getAllWithSourceFlow()
         .map { it.isNotEmpty() }
@@ -201,308 +173,42 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    // Playback records will be loaded on-demand per-folder to avoid loading all into memory
-    // private val playbackRecords removed in favor of per-folder queries
+    // === Content setters, delegated to the coordinator (state update + preference persist) ===
 
-    private val basePaths = syncRelationRepository.getAllWithSourceFlow()
-        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    fun setFolder(folder: String) = coordinator.setFolder(folder)
 
-    /** ID of the first sync relation, used as the sync target in the NEEDS_SYNC card. */
-    val firstRelationId: StateFlow<Long?> = basePaths
-        .map { it.firstOrNull()?.relation?.id }
-        .stateIn(viewModelScope, SharingStarted.Lazily, null)
+    fun navigateUp(): Boolean = coordinator.navigateUp()
 
-    private val basePathToRelationId = basePaths.map { list ->
-        list.associate { it.relation.localBasePath to it.relation.id }
-    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyMap())
+    fun setSortMode(mode: SortMode) = coordinator.setSortMode(mode)
 
-    val currentRelationId: StateFlow<Long?> = combine(effectiveFolder, basePathToRelationId) { folder, pathMap ->
-        pathMap.entries.firstOrNull { (basePath, _) ->
-            folder == basePath || folder.startsWith("$basePath/")
-        }?.value
-    }.stateIn(viewModelScope, SharingStarted.Lazily, null)
+    fun setFilter(filter: BrowseFilter) = coordinator.setFilter(filter)
 
-    // Debounce only sort/filter/star (rapid user input). Folder switches are discrete events
-    // and must pass through, otherwise every navigation pays a fixed 300ms latency floor.
-    private data class FilterBundle(
-        val mode: SortMode,
-        val filterVal: BrowseFilter,
-        val starMode: StarFilterMode,
-        val starValue: Int
-    )
+    fun setViewMode(mode: ViewMode) = coordinator.setViewMode(mode)
 
-    @OptIn(FlowPreview::class)
-    private val debouncedFilters: Flow<FilterBundle> = combine(
-        _sortMode, _filter, _starFilterMode, _starFilterValue
-    ) { mode, filterVal, starMode, starValue ->
-        FilterBundle(mode, filterVal, starMode, starValue)
-    }.debounce(300)
-
-    // flatMapLatest ties records+relations to each folder emission, preventing the
-    // "new folder + stale records" race that used to trigger two builds per switch.
-    private data class FolderData(
-        val folder: String,
-        val records: List<PlaybackRecordEntity>,
-        val relations: List<SyncRelationWithSource>
-    )
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private val folderData: Flow<FolderData> = effectiveFolder.flatMapLatest { folder ->
-        combine(
-            playbackRepository.getByFolderFlow(folder),
-            basePaths
-        ) { records, relations ->
-            FolderData(folder, records, relations)
-        }
-    }
-
-    @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
-    val browseItems: StateFlow<List<BrowseItem>> = combine(
-        folderData,
-        debouncedFilters,
-        _browseMode
-    ) { data, filters, browseModeVal ->
-        BuildRequest(data, filters, browseModeVal)
-    }
-    // mapLatest cancels the previous build when a new folder switch arrives, freeing IO and
-    // preventing stale results from overwriting fresher ones during rapid navigation.
-    .mapLatest { req ->
-        val baseDirSet = req.data.relations.map { it.relation.localBasePath }.toSet()
-        val output = buildBrowseItems(
-            folder = req.data.folder,
-            mode = req.filters.mode,
-            filterVal = req.filters.filterVal,
-            starMode = req.filters.starMode,
-            starValue = req.filters.starValue,
-            browseModeVal = req.browseModeVal,
-            records = req.data.records,
-            baseDirSet = baseDirSet
-        )
-        // Forward the builder's scalar outputs to the StateFlows. flatTotalCount is null in
-        // DIRECTORY mode on purpose — preserves the "retain last FILE-mode value" behavior.
-        output.flatTotalCount?.let { _flatTotalCount.value = it }
-        _hiddenByFilterCount.value = output.hiddenByFilterCount
-        BrowseResult(req.data.folder, output.items)
-    }
-    // Stamp the folder that produced this list (NOT _currentFolder.value) to avoid scroll-restore
-    // misattribution when a slow build completes after the user has already navigated away.
-    .onEach { _browseItemsFolder.value = it.folder }
-    .map { it.items }
-    .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-
-    private data class BuildRequest(
-        val data: FolderData,
-        val filters: FilterBundle,
-        val browseModeVal: BrowseMode
-    )
-
-    private data class BrowseResult(val folder: String, val items: List<BrowseItem>)
-
-    /**
-     * Gathers the DAO rows the [BrowseItemBuilder] needs for the current request, then delegates
-     * the pure filter/sort/star/folder combination to it. All I/O (DB queries) and all state
-     * mutation (the two scalar counts) live here; the builder itself is side-effect free.
-     *
-     * Kept as a thin orchestration shell so the Flow chain above (debounce / flatMapLatest /
-     * mapLatest / stateIn timing) is unchanged — only the in-memory build logic moved out.
-     */
-    private suspend fun buildBrowseItems(
-        folder: String,
-        mode: SortMode,
-        filterVal: BrowseFilter,
-        starMode: StarFilterMode,
-        starValue: Int,
-        browseModeVal: BrowseMode,
-        records: List<PlaybackRecordEntity>,
-        baseDirSet: Set<String>
-    ): BrowseItemBuilder.Output = withContext(Dispatchers.IO) {
-        // === FILE MODE: flat list, no folders. The DAO applies star/unwatched/media filters
-        // and the duration/size ORDER BY; the builder only remaps + filename-sorts. ===
-        if (browseModeVal == BrowseMode.FILE) {
-            val totalCount = videoRepository.getTotalItemCount()
-            val mediaOnly = filterVal == BrowseFilter.MEDIA_ONLY || filterVal == BrowseFilter.UNWATCHED
-            val unwatchedOnly = filterVal == BrowseFilter.UNWATCHED
-            val sortCol = when (mode) {
-                SortMode.DURATION_ASC -> "duration_asc"
-                SortMode.DURATION_DESC -> "duration_desc"
-                SortMode.FILE_SIZE_ASC -> "fileSize_asc"
-                SortMode.FILE_SIZE_DESC -> "fileSize_desc"
-                else -> ""
-            }
-            val dbItems = videoRepository.getFlatItemsFiltered(
-                mediaOnly = mediaOnly,
-                unwatchedOnly = unwatchedOnly,
-                starMode = starMode.name,
-                starValue = starValue,
-                sortCol = sortCol
-            )
-            return@withContext BrowseItemBuilder.build(
-                BrowseItemBuilder.Input(
-                    folder = folder,
-                    sortMode = mode,
-                    filter = filterVal,
-                    starMode = starMode,
-                    starValue = starValue,
-                    browseMode = browseModeVal,
-                    flatTotalCount = totalCount,
-                    flatItems = dbItems,
-                    subFolders = emptyList(),
-                    itemsInFolder = emptyList(),
-                    childVideoStats = emptyList(),
-                    folderHasSubDirs = emptyMap(),
-                    records = records,
-                    baseDirSet = baseDirSet
-                )
-            )
-        }
-
-        // === DIRECTORY MODE: DB is the sole truth source (no physical disk scan) ===
-        val dbFolderNames = videoRepository.getSubFolders(folder).first()
-        val videoEntities = videoRepository.getItemsInFolder(folder).first()
-        val childStats = videoRepository.getChildVideoStats(folder)
-        // Subfolder presence: one deep-parentPath query, computed in memory (no N+1). Sort order
-        // of directChildNames does not affect the resulting map, but matches the original call.
-        val allFolderNames = dbFolderNames.sortedWith(fileNameComparator)
-        val folderHasSubDirs = videoRepository.getDirectChildFolderHasSubFolders(folder, allFolderNames)
-
-        BrowseItemBuilder.build(
-            BrowseItemBuilder.Input(
-                folder = folder,
-                sortMode = mode,
-                filter = filterVal,
-                starMode = starMode,
-                starValue = starValue,
-                browseMode = browseModeVal,
-                flatTotalCount = 0,
-                flatItems = emptyList(),
-                subFolders = dbFolderNames,
-                itemsInFolder = videoEntities,
-                childVideoStats = childStats,
-                folderHasSubDirs = folderHasSubDirs,
-                records = records,
-                baseDirSet = baseDirSet
-            )
-        )
-    }
-
-    fun setFolder(folder: String) {
-        _currentFolder.value = folder
-    }
-
-    fun navigateUp(): Boolean {
-        val current = _currentFolder.value
-        if (current.isEmpty()) {
-            return false
-        }
-        val lastSlash = current.lastIndexOf('/')
-        _currentFolder.value = if (lastSlash > 0) {
-            current.substring(0, lastSlash)
-        } else {
-            ""
-        }
-        return true
-    }
-
-    fun setSortMode(mode: SortMode) {
-        _sortMode.value = mode
-        viewModelScope.launch {
-            try {
-                userPrefs.setDefaultSortMode(mode.name)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to save sort mode", e)
-            }
-        }
-    }
-
-    fun setFilter(filter: BrowseFilter) {
-        _filter.value = filter
-        viewModelScope.launch {
-            try {
-                userPrefs.setDefaultFilter(filter.name)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to save filter", e)
-            }
-        }
-    }
-
-    fun setViewMode(mode: ViewMode) {
-        _viewMode.value = mode
-        viewModelScope.launch {
-            try {
-                userPrefs.setViewMode(mode.name)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to save view mode", e)
-            }
-        }
-    }
-
-    fun setGridColumns(columns: Int) {
-        _gridColumns.value = columns.coerceIn(1, 5)
-        viewModelScope.launch {
-            try {
-                userPrefs.setGridColumns(columns)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to save grid columns", e)
-            }
-        }
-    }
+    fun setGridColumns(columns: Int) = coordinator.setGridColumns(columns)
 
     // Star filter controls
-    fun setStarFilterMode(mode: StarFilterMode) {
-        _starFilterMode.value = mode
-    }
+    fun setStarFilterMode(mode: StarFilterMode) = coordinator.setStarFilterMode(mode)
 
-    fun setStarFilterValue(value: Int) {
-        _starFilterValue.value = value
-    }
+    fun setStarFilterValue(value: Int) = coordinator.setStarFilterValue(value)
 
-    fun setBrowseMode(mode: BrowseMode) {
-        _browseMode.value = mode
-        viewModelScope.launch {
-            try {
-                userPrefs.setBrowseMode(mode.name)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to save browse mode", e)
-            }
-        }
-    }
+    fun setBrowseMode(mode: BrowseMode) = coordinator.setBrowseMode(mode)
 
     override fun updateStar(videoItemId: Long, star: Int) {
-        fileOps.updateStar(videoItemId, star, viewModelScope, _error) { _refreshTrigger.value++ }
+        fileOps.updateStar(videoItemId, star, viewModelScope, _error) { coordinator.refresh() }
     }
 
     override suspend fun getRecursiveFolderStats(folderPath: String): FolderStats =
         fileOps.getRecursiveFolderStats(folderPath)
 
-    suspend fun loadSubFolders(folderPath: String): List<DirectoryNode> = withContext(Dispatchers.Default) {
-        val subDirs = videoRepository.getSubFoldersOnce(folderPath)
-        val basePathsSet = basePaths.value.map { it.relation.localBasePath }.toSet()
-        subDirs.sortedWith(fileNameComparator).map { name ->
-            val fullPath = if (folderPath.isEmpty()) name else "$folderPath/$name"
-            DirectoryNode(
-                name = name,
-                fullPath = fullPath,
-                isSyncBaseDir = basePathsSet.contains(fullPath)
-            )
-        }
-    }
+    suspend fun loadSubFolders(folderPath: String): List<DirectoryNode> = coordinator.loadSubFolders(folderPath)
 
     override fun markFolderRead(folderPath: String, read: Boolean) {
-        fileOps.markFolderRead(folderPath, read, viewModelScope, _error) { _refreshTrigger.value++ }
+        fileOps.markFolderRead(folderPath, read, viewModelScope, _error) { coordinator.refresh() }
     }
 
     override fun deleteFolder(path: String) {
-        fileOps.deleteFolder(path, basePaths.value, viewModelScope, _error) { _refreshTrigger.value++ }
+        fileOps.deleteFolder(path, coordinator.basePathsSnapshot(), viewModelScope, _error) { coordinator.refresh() }
     }
 
     fun clearError() {
@@ -534,7 +240,7 @@ class BrowserViewModel @Inject constructor(
     }
 
     override fun toggleTrashed(videoItemId: Long) {
-        undoDeleteUseCase.performTrashToggle(videoItemId, basePaths.value, viewModelScope, _error)
+        undoDeleteUseCase.performTrashToggle(videoItemId, coordinator.basePathsSnapshot(), viewModelScope, _error)
     }
 
     /**
@@ -544,15 +250,15 @@ class BrowserViewModel @Inject constructor(
      * produces a misleading "moved to trash" Snackbar. On failure the error lands in [_error].
      */
     fun toggleTrashedWithUndo(videoItemId: Long, onSuccess: () -> Unit) {
-        undoDeleteUseCase.performTrashToggle(videoItemId, basePaths.value, viewModelScope, _error, onSuccess)
+        undoDeleteUseCase.performTrashToggle(videoItemId, coordinator.basePathsSnapshot(), viewModelScope, _error, onSuccess)
     }
 
     override fun isFileInBaseDir(relativePath: String): Boolean {
-        return fileOps.isFileInBaseDir(relativePath, basePaths.value)
+        return fileOps.isFileInBaseDir(relativePath, coordinator.basePathsSnapshot())
     }
 
     override fun deleteFile(videoItemId: Long) {
-        undoDeleteUseCase.performHardDelete(videoItemId, viewModelScope, _error) { _refreshTrigger.value++ }
+        undoDeleteUseCase.performHardDelete(videoItemId, viewModelScope, _error) { coordinator.refresh() }
     }
 
     /**
@@ -563,7 +269,7 @@ class BrowserViewModel @Inject constructor(
      */
     fun deleteFileWithUndo(videoItemId: Long, onSuccess: () -> Unit) {
         undoDeleteUseCase.performHardDelete(videoItemId, viewModelScope, _error) {
-            _refreshTrigger.value++
+            coordinator.refresh()
             onSuccess()
         }
     }
