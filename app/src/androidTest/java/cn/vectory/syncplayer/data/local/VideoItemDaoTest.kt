@@ -207,12 +207,10 @@ class VideoItemDaoTest {
     // ===========================================================================
 
     @Test
-    fun `updateStar persists and updateStarByPath works`() {
+    fun `updateStar persists`() {
         val rowId = insert(syncRelationId = 1L, relativePath = "a.mp4", fileSize = 10L)
         runBlocking { dao.updateStar(rowId, 5) }
         assertEquals(5, runBlocking { dao.getById(rowId) }!!.star)
-        runBlocking { dao.updateStarByPath("a.mp4", 3) }
-        assertEquals(3, runBlocking { dao.getById(rowId) }!!.star)
     }
 
     // ===========================================================================

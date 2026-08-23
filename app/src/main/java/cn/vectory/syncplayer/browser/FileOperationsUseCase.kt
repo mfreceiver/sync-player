@@ -109,25 +109,6 @@ class FileOperationsUseCase @Inject constructor(
         }
     }
 
-    fun updateStarByPath(
-        relativePath: String, star: Int,
-        scope: CoroutineScope,
-        errorFlow: MutableStateFlow<String?>,
-        onSuccess: () -> Unit = {}
-    ) {
-        scope.launch {
-            try {
-                videoRepository.updateStarByPath(relativePath, star)
-                onSuccess()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to update star by path", e)
-                errorFlow.value = syncErrorMessage(e, context)
-            }
-        }
-    }
-
     fun toggleTrashed(
         videoItemId: Long,
         basePaths: List<SyncRelationWithSource>,

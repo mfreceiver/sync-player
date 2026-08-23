@@ -481,10 +481,6 @@ class BrowserViewModel @Inject constructor(
         fileOps.updateStar(videoItemId, star, viewModelScope, _error) { _refreshTrigger.value++ }
     }
 
-    override fun updateStarByPath(relativePath: String, star: Int) {
-        fileOps.updateStarByPath(relativePath, star, viewModelScope, _error) { _refreshTrigger.value++ }
-    }
-
     override suspend fun getRecursiveFolderStats(folderPath: String): FolderStats =
         fileOps.getRecursiveFolderStats(folderPath)
 

@@ -146,10 +146,6 @@ class SearchViewModel @Inject constructor(
         fileOps.updateStar(videoItemId, star, viewModelScope, _error)
     }
 
-    override fun updateStarByPath(relativePath: String, star: Int) {
-        fileOps.updateStarByPath(relativePath, star, viewModelScope, _error)
-    }
-
     override fun toggleTrashed(videoItemId: Long) {
         fileOps.toggleTrashed(videoItemId, basePaths.value, viewModelScope, _error)
     }

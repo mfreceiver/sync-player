@@ -215,10 +215,6 @@ interface VideoItemDao {
     @Query("UPDATE video_item SET star = :star WHERE id = :id")
     suspend fun updateStar(id: Long, star: Int)
 
-    // Update star rating by relative path (for non-DB files that get a record)
-    @Query("UPDATE video_item SET star = :star WHERE relativePath = :relativePath")
-    suspend fun updateStarByPath(relativePath: String, star: Int)
-
     @Query("SELECT * FROM video_item ORDER BY fileName ASC")
     fun getFlatItemsFlow(): Flow<List<VideoItemEntity>>
 

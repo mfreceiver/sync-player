@@ -129,8 +129,6 @@ class VideoRepository @Inject constructor(
 
     suspend fun updateStar(id: Long, star: Int) = videoItemDao.updateStar(id, star)
 
-    suspend fun updateStarByPath(relativePath: String, star: Int) = videoItemDao.updateStarByPath(relativePath, star)
-
     fun getFlatItemsFlow(): Flow<List<VideoItemEntity>> = videoItemDao.getFlatItemsFlow()
 
     suspend fun getFlatItemsFiltered(

@@ -31,7 +31,6 @@ import kotlinx.coroutines.launch
  */
 interface FileContextMenuActions {
     fun updateStar(videoItemId: Long, star: Int)
-    fun updateStarByPath(relativePath: String, star: Int)
     fun toggleTrashed(videoItemId: Long)
     fun deleteFile(videoItemId: Long)
     fun isFileInBaseDir(relativePath: String): Boolean
@@ -157,8 +156,6 @@ fun FileContextMenuDialog(
                                 localStar = rating
                                 if (item.videoItemId != null) {
                                     actions.updateStar(item.videoItemId, rating)
-                                } else {
-                                    actions.updateStarByPath(item.relativePath, rating)
                                 }
                             },
                             starSize = 20.dp
