@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.R
+import androidx.core.net.toUri
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao
 import cn.vectory.syncplayer.data.local.dao.PlaybackRecordDao
 import cn.vectory.syncplayer.data.local.dao.PendingSyncActionDao
@@ -190,7 +191,7 @@ class StorageManagementViewModel @Inject constructor(
         /** 尽量解析 SAF tree 目录显示名；失败则回退到 URI 末段。 */
         fun resolveTreeDisplayName(context: Context, treeUriStr: String): String {
             return try {
-                val uri = android.net.Uri.parse(treeUriStr)
+                val uri = treeUriStr.toUri()
                 val docId = android.provider.DocumentsContract.getTreeDocumentId(uri)
                 val docUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(uri, docId)
                 context.contentResolver.query(

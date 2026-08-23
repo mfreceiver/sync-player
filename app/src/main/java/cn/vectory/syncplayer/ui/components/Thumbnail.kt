@@ -23,9 +23,9 @@ import coil.request.ImageRequest
 @Composable
 internal fun Thumbnail(
     videoItemId: Long?,
+    modifier: Modifier = Modifier,
     isVideo: Boolean = true,
-    isImage: Boolean = false,
-    modifier: Modifier = Modifier
+    isImage: Boolean = false
 ) {
     val context = LocalContext.current
     val thumbUri = videoItemId?.let { MediaUris.thumbUri(it) }

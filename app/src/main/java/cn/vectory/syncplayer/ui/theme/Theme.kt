@@ -1,6 +1,5 @@
 package cn.vectory.syncplayer.ui.theme
 
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -111,7 +110,7 @@ fun SyncPlayerTheme(
     val blueScheme = if (darkTheme) DarkColorScheme else LightColorScheme
     // Cache dynamic color computation to avoid recomputing on every recomposition
     val colorScheme = remember(darkTheme, dynamicColor) {
-        if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (dynamicColor) {
             val dynamicScheme = if (darkTheme) dynamicDarkColorScheme(context)
             else dynamicLightColorScheme(context)
             dynamicScheme.copy(

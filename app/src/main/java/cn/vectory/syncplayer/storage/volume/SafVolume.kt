@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.storage.volume
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
 import android.os.StatFs
@@ -69,6 +70,9 @@ class SafVolume(
         return docId
     }
 
+    // Ownership transfer: the returned stream belongs to the caller, who closes it
+    // after the (chunked) ciphertext write completes. Closing here would truncate it.
+    @SuppressLint("Recycle")
     override suspend fun openWrite(relPath: String): OutputStream = withContext(Dispatchers.IO) {
         val dirPath = relPath.substringBeforeLast('/', "")
         val name = relPath.substringAfterLast('/')

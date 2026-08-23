@@ -1,9 +1,6 @@
 <resources>
     <!-- app_name is injected via manifestPlaceholders in build.gradle.kts as the stable string "Sync Player".
          The git-derived version is shown on the About screen via BuildConfig.VERSION_NAME. -->
-    <string name="sync_notification_channel">文件同步</string>
-    <string name="sync_notification_title">正在同步文件…</string>
-    <string name="share_video">分享视频</string>
 
     <!-- Common -->
     <string name="common_close">关闭</string>
@@ -15,7 +12,6 @@
     <string name="common_stop">停止</string>
     <string name="common_back">返回</string>
     <string name="common_confirm">确定</string>
-    <string name="common_create">创建</string>
     <string name="unknown_error">未知错误</string>
 
     <!-- Player error (generic; never surface underlying PlaybackException.message) -->
@@ -75,7 +71,6 @@
     <string name="browser_view_grid">宫格视图</string>
     <string name="browser_view_staggered">瀑布流视图</string>
     <string name="browser_cannot_play">该文件无法播放</string>
-    <string name="browser_no_viewer">该文件类型不支持预览</string>
     <string name="browser_empty_dir">当前目录为空</string>
     <string name="browser_hidden_by_filter">已通过筛选隐藏%d个文件</string>
     <string name="browser_video_count">视频数：%d</string>
@@ -131,19 +126,9 @@
     <string name="settings_quick_recycle_desc">启用时双击屏幕中部标记回收</string>
     <string name="settings_volume_balance">音量均衡</string>
     <string name="settings_volume_balance_desc">点击进行增益分析</string>
-    <string name="settings_saf">安卓存储框架</string>
-    <string name="settings_media_storage_location">媒体存储位置</string>
     <string name="settings_media_storage_internal">应用内部存储（默认）</string>
     <string name="settings_media_storage_external">外部目录：%1$s</string>
-    <string name="settings_media_storage_space">可用 %1$s</string>
-    <string name="settings_media_storage_summary">%1$s · %2$s</string>
-    <string name="settings_media_storage_reset_internal">恢复内部存储</string>
-    <string name="settings_media_storage_change">更换目录</string>
-    <string name="volume_switch_warning_title">切换存储位置？</string>
-    <string name="volume_switch_warning_body">切换后，旧位置上的媒体文件将不可用，需要重新全量同步。旧卷索引可在「重建元数据」中清理。</string>
-    <string name="volume_switch_confirm">继续切换</string>
     <string name="volume_switch_cancel">取消</string>
-    <string name="settings_media_storage_persist_failed">无法取得持久目录权限，未切换存储位置。请选择支持持久授权的目录（如系统文件管理器中的文件夹）。</string>
     <string name="settings_app_lock">应用安全锁</string>
     <string name="settings_no_auth">设备未设置任何认证方式</string>
     <string name="settings_auth_support">当前支持: %s</string>
@@ -203,7 +188,6 @@
     <string name="relation_browse">浏览</string>
     <string name="relation_local_base_dir">本地基目录</string>
     <string name="relation_local_dir_placeholder">动作片</string>
-    <string name="relation_select_local_dir">选择本地目录</string>
     <string name="relation_local_path_supporting">逻辑路径；首次同步时在加密卷上自动创建</string>
     <string name="relation_test_remote">测试远端目录</string>
     <string name="relation_testing">测试中…</string>
@@ -213,7 +197,6 @@
     <string name="relation_current_path">当前路径: %s</string>
     <string name="relation_parent_dir">.. (上级目录)</string>
     <string name="relation_select_dir">选择此目录</string>
-    <string name="relation_select_local_base">选择本地基目录</string>
     <string name="relation_no_subdirs">没有子目录</string>
 
     <!-- Sync Relation Edit ViewModel -->
@@ -257,10 +240,7 @@
     <string name="metadata_discover_hint">点击下方"发现"按钮扫描需要处理的文件</string>
     <string name="metadata_completed_items">已完成 %1$d / %2$d 项</string>
     <string name="metadata_remaining_items">剩余 %d 项</string>
-    <string name="metadata_new_files">发现 %d 个磁盘文件缺少记录</string>
-    <string name="metadata_orphaned_records">发现 %d 个孤立数据库记录</string>
     <string name="metadata_incomplete_records">发现 %d 个文件缺少元数据</string>
-    <string name="metadata_total_items">共需处理 %d 项</string>
 
     <!-- About -->
     <string name="about_title">关于</string>
@@ -309,12 +289,10 @@
     <string name="error_cannot_delete_base_dir">同步基目录不能删除，请先删除对应的同步关系</string>
     <string name="error_base_dir_inside">文件夹内包含同步基目录，请先删除对应的同步关系</string>
     <string name="error_cannot_delete_sync_dir">同步目录内的文件夹不能手动删除</string>
-    <string name="error_folder_not_exist">文件夹不存在</string>
 
     <!-- Sync Engine -->
     <string name="sync_disk_space_insufficient">磁盘空间不足：需要 %1$s，可用 %2$s</string>
     <string name="sync_result_success">成功：下载 %1$d 个%2$s%3$s，删除 %4$d 个</string>
-    <string name="sync_result_reconcile">，匹配 %d 个</string>
     <string name="sync_result_failed">，失败 %d 个</string>
     <string name="sync_failed">同步失败: %s</string>
     <string name="sync_relation_not_found">未找到关联</string>
@@ -388,23 +366,14 @@
     <string name="sync_notif_summary_content">成功 %1$d / 共 %2$d</string>
 
     <!-- Sync Preview ViewModel -->
-    <string name="sync_preview_load_relations_failed">加载同步关系失败</string>
-    <string name="sync_preview_load_name_failed">加载同步关系名称失败</string>
-    <string name="sync_preview_connect_failed">连接远程服务器失败，请检查网络连接和服务器配置</string>
-    <string name="sync_preview_load_failed">加载预览失败</string>
-    <string name="sync_preview_start_failed">启动同步失败</string>
     <string name="sync_preview_partial_failed">同步部分失败，%1$d 个文件未成功</string>
     <string name="sync_preview_sync_failed">同步失败，请检查网络连接后重试</string>
     <string name="sync_preview_cancelled">同步已取消</string>
-    <string name="sync_preview_observe_failed">监听同步状态失败</string>
     <string name="sync_preview_delete_failed">删除失败，请检查网络连接后重试</string>
     <string name="sync_preview_up_to_date_msg">已同步，无需操作</string>
 
     <!-- Metadata Rebuild -->
     <string name="metadata_scan_io_error">扫描失败：无法访问外部卷 (%1$s)</string>
-    <string name="metadata_rebuild_failed">重建失败</string>
-    <string name="metadata_clean_other_volume_failed">清理旧卷索引失败</string>
-    <string name="metadata_extract_failed">提取元数据失败</string>
     <string name="metadata_orphaned_records_label">损坏记录（当前卷）: %1$d</string>
     <string name="metadata_pending_count">当前卷待处理: %1$d</string>
     <string name="metadata_other_volume_count">其他卷残留索引: %1$d</string>
@@ -415,10 +384,6 @@
     <string name="metadata_confirm_clean_body">此操作将永久删除 %1$d 条旧卷索引记录，无法恢复。确认后旧卷媒体将无法在本应用中打开，除非重新同步。</string>
     <string name="metadata_confirm_clean_button">确认清理</string>
 
-    <!-- Gain Analysis -->
-    <string name="gain_discover_failed">发现文件失败</string>
-    <string name="gain_analysis_failed">分析失败</string>
-
     <!-- Folder Delete -->
     <string name="error_folder_delete_partial">部分文件删除失败：成功 %1$d，跳过 %2$d，失败 %3$d</string>
 
@@ -427,7 +392,6 @@
     <string name="undo_delete_message">已删除</string>
     <string name="undo_action">撤销</string>
     <string name="undo_failed_message">撤销失败，文件状态已变更</string>
-    <string name="undo_success_message">已撤销</string>
 
     <!-- Lock Screen -->
     <string name="lock_cooldown">验证失败次数过多，请 %1$d 秒后重试</string>
@@ -437,7 +401,6 @@
     <string name="storage_management">存储管理</string>
     <string name="storage_management_desc">当前存储：%1$s</string>
     <string name="storage_current_internal">内部存储</string>
-    <string name="storage_current_external">外部（%1$s）</string>
     <string name="storage_method_section">存储方式</string>
     <string name="storage_method_internal">内部存储（默认）</string>
     <string name="storage_method_external">外部存储</string>
@@ -451,11 +414,9 @@
     <string name="storage_reset_warning_body_internal">此操作将删除所有本地加密媒体文件和缩略图，并清除数据库记录。内部存储还会清理游离文件。此操作不可恢复。</string>
     <string name="storage_reset_warning_body_external">此操作将删除本应用管辖的所有加密媒体文件和缩略图，并清除数据库记录。外部存储中不属于本应用的文件不会被删除。此操作不可恢复。</string>
     <string name="storage_reset_in_progress">正在重置存储…</string>
-    <string name="storage_reset_complete">存储已重置，可以切换存储方式</string>
     <string name="storage_reset_failed">重置失败</string>
     <string name="storage_reset_partial">%1$d 个已删除，%2$d 个无法删除</string>
     <string name="storage_switch_blocked">数据库中仍有文件记录，请先重置存储才能切换存储方式</string>
-    <string name="storage_select_external_dir">选择外部存储目录</string>
 
     <!-- Debug Log -->
     <string name="debug_log_title">调试日志</string>

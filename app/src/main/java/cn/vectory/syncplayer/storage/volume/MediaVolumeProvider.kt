@@ -1,7 +1,7 @@
 package cn.vectory.syncplayer.storage.volume
 
 import android.content.Context
-import android.net.Uri
+import androidx.core.net.toUri
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -21,7 +21,7 @@ class MediaVolumeProvider @Inject constructor(
     suspend fun current(): MediaVolume {
         val treeUriStr = userPreferencesRepository.getMediaStorageTreeUri()
         return if (treeUriStr != null) {
-            SafVolume(context, Uri.parse(treeUriStr))
+            SafVolume(context, treeUriStr.toUri())
         } else {
             internalVolume
         }

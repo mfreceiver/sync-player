@@ -69,12 +69,12 @@ internal fun VideoGridItem(
     isCompleted: Boolean,
     isTrashed: Boolean,
     isVideo: Boolean,
+    modifier: Modifier = Modifier,
     isImage: Boolean = false,
     star: Int = 0,
     staggeredMode: Boolean = false,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
-    modifier: Modifier = Modifier
+    onLongClick: () -> Unit
 ) {
     val extendedColors = LocalExtendedColors.current
 
@@ -251,8 +251,8 @@ internal fun VideoGridItem(
 private fun GridThumbnail(
     videoItemId: Long?,
     isVideo: Boolean,
-    isImage: Boolean = false,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isImage: Boolean = false
 ) {
     val context = LocalContext.current
 

@@ -19,7 +19,9 @@ object DebugLogger {
     private const val MAX_ENTRIES = 1000
     private val entries = ArrayDeque<LogEntry>()
     private val lock = Any()
-    private val timeFmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+    // Diagnostic format: pattern is ASCII digits/separators only, so Locale.ROOT keeps
+    // the output stable across device locales (no stale captured default locale).
+    private val timeFmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.ROOT)
 
     enum class Level(val priority: Int, val label: String) {
         DEBUG(3, "D"),

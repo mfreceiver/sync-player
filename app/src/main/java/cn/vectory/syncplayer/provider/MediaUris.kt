@@ -1,6 +1,7 @@
 package cn.vectory.syncplayer.provider
 
 import android.net.Uri
+import androidx.core.net.toUri
 
 object MediaUris {
     const val AUTHORITY = "cn.vectory.syncplayer.media"
@@ -9,14 +10,12 @@ object MediaUris {
 
     fun mediaUri(id: Long): Uri {
         val javaUri = java.net.URI("content", AUTHORITY, "/$PATH_MEDIA/$id", null, null)
-        return Uri.parse(javaUri.toString())
-            ?: throw IllegalArgumentException("invalid media URI for id=$id")
+        return javaUri.toString().toUri()
     }
 
     fun thumbUri(id: Long): Uri {
         val javaUri = java.net.URI("content", AUTHORITY, "/$PATH_THUMB/$id", null, null)
-        return Uri.parse(javaUri.toString())
-            ?: throw IllegalArgumentException("invalid thumb URI for id=$id")
+        return javaUri.toString().toUri()
     }
 
     fun isMedia(uri: Uri): Boolean =

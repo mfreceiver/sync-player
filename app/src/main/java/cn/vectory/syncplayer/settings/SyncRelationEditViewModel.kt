@@ -1,8 +1,8 @@
 package cn.vectory.syncplayer.settings
 
 import android.content.Context
-import android.net.Uri
 import android.provider.DocumentsContract
+import androidx.core.net.toUri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -128,7 +128,7 @@ class SyncRelationEditViewModel @Inject constructor(
     /** 尽量解析 SAF tree 目录显示名；失败则回退到 docId 末段或原 URI 字符串。 */
     private fun extractDisplayName(treeUriStr: String): String {
         return try {
-            val uri = Uri.parse(treeUriStr)
+            val uri = treeUriStr.toUri()
             val docId = DocumentsContract.getTreeDocumentId(uri)
             val docUri = DocumentsContract.buildDocumentUriUsingTree(uri, docId)
             context.contentResolver.query(

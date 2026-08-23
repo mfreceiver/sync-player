@@ -17,8 +17,8 @@ import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 
 @Composable
 internal fun FolderIcon(
-    isSyncBaseDir: Boolean = false,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isSyncBaseDir: Boolean = false
 ) {
     val extendedColors = LocalExtendedColors.current
 

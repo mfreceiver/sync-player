@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.imageviewer
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -31,7 +32,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -356,8 +359,12 @@ private fun ZoomableImage(
     ) {
         if (entity != null) {
             val ctx = LocalContext.current
-            val widthPx = ctx.resources.displayMetrics.widthPixels
-            val heightPx = ctx.resources.displayMetrics.heightPixels
+            val configuration = LocalConfiguration.current
+            val density = LocalDensity.current
+            @SuppressLint("ConfigurationScreenWidthHeight")
+            val widthPx = with(density) { configuration.screenWidthDp.dp.roundToPx() }
+            @SuppressLint("ConfigurationScreenWidthHeight")
+            val heightPx = with(density) { configuration.screenHeightDp.dp.roundToPx() }
             AsyncImage(
                 model = ImageRequest.Builder(ctx)
                     .data(cn.vectory.syncplayer.provider.MediaUris.mediaUri(entity.id))

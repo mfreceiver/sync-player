@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.player
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.media.AudioManager
 import android.util.AttributeSet
@@ -127,8 +128,7 @@ class GesturePlayerView @JvmOverloads constructor(
         }
 
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-            singleTapCallback?.invoke()
-            return true
+            return performClick()
         }
 
         override fun onDoubleTap(e: MotionEvent): Boolean {
@@ -149,6 +149,18 @@ class GesturePlayerView @JvmOverloads constructor(
 
     private var isAdjustingVertical = false
 
+    override fun performClick(): Boolean {
+        val superHandled = super.performClick()
+        val callback = singleTapCallback
+        return if (callback != null) {
+            callback()
+            true
+        } else {
+            superHandled
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         gestureDetector.onTouchEvent(event)
 

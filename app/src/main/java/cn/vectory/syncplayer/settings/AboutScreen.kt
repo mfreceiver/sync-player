@@ -183,7 +183,9 @@ private fun LogEntryItem(log: SyncLogEntity) {
     }
 }
 
-private val logDateFormat = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.getDefault())
+// Diagnostic log format: pattern is ASCII digits/separators only, so Locale.ROOT keeps
+// the output stable across device locales (no stale captured default locale).
+private val logDateFormat = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.ROOT)
 
 private fun formatLogTimestamp(timestamp: Long): String {
     return logDateFormat.format(java.util.Date(timestamp))

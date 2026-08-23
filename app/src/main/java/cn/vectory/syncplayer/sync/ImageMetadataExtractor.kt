@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
+import androidx.core.graphics.scale
 import androidx.exifinterface.media.ExifInterface
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
@@ -75,7 +76,7 @@ class ImageMetadataExtractor @Inject constructor(
         val ratio = src.width.toFloat() / maxWidth
         val w = maxWidth
         val h = (src.height / ratio).toInt().coerceAtLeast(1)
-        return Bitmap.createScaledBitmap(src, w, h, true)
+        return src.scale(w, h)
     }
 
     private fun parseExifDate(exif: ExifInterface): Long? {

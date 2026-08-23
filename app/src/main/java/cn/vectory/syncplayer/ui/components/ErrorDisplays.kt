@@ -41,9 +41,9 @@ fun FormResultText(
 @Composable
 fun FullScreenError(
     message: String,
+    modifier: Modifier = Modifier,
     onRetry: (() -> Unit)? = null,
-    onDismiss: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    onDismiss: (() -> Unit)? = null
 ) {
     Box(
         modifier = modifier.fillMaxSize().padding(32.dp),
@@ -91,8 +91,8 @@ fun FullScreenError(
 @Composable
 fun ErrorBanner(
     message: String,
-    onDismiss: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onDismiss: (() -> Unit)? = null
 ) {
     Card(
         modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),

@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.storage.volume
 
+import android.annotation.SuppressLint
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -45,5 +46,9 @@ class FileVolume(val root: File) : MediaVolume {
         val src = resolve(from); val dst = resolve(to); dst.parentFile?.mkdirs()
         src.renameTo(dst)
     }
+    // Deliberately conservative fail-safe pre-check (SyncEngine contract): reports only
+    // currently-available bytes and intentionally ignores evictable cache, so a
+    // pessimistic estimate fails the sync instead of risking ENOSPC mid-write.
+    @SuppressLint("UsableSpace")
     override fun usableSpace(): Long = root.usableSpace
 }

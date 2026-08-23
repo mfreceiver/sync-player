@@ -3,7 +3,6 @@ package cn.vectory.syncplayer.player
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.media.AudioManager
-import android.net.Uri
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -43,6 +42,7 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.res.stringResource
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.browser.UndoResult
+import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -427,7 +427,7 @@ fun PlayerScreen(
             return@LaunchedEffect
         }
         val uriString = uiState.videoItem?.let { cn.vectory.syncplayer.provider.MediaUris.mediaUri(it.id).toString() } ?: return@LaunchedEffect
-        previewExtractor.beginSession(android.net.Uri.parse(uriString))
+        previewExtractor.beginSession(uriString.toUri())
         while (isActive) {
             val progress = when {
                 uiState.isUserSeeking -> uiState.userSeekPosition

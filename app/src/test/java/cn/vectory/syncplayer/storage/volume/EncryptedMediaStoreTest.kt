@@ -236,13 +236,13 @@ class EncryptedMediaStoreTest {
         // read failure). All other ops delegate to the real FileVolume (incl. marker write).
         val failingVol = object : MediaVolume {
             override val volumeId: String get() = backing.volumeId
-            override suspend fun openWrite(rp: String) = backing.openWrite(rp)
-            override suspend fun openRead(rp: String): SeekableReadHandle =
+            override suspend fun openWrite(relPath: String) = backing.openWrite(relPath)
+            override suspend fun openRead(relPath: String): SeekableReadHandle =
                 throw IOException("simulated transient read failure")
-            override suspend fun list(rp: String) = backing.list(rp)
-            override suspend fun delete(rp: String) = backing.delete(rp)
-            override suspend fun exists(rp: String) = backing.exists(rp)
-            override suspend fun mkdirs(rp: String) = backing.mkdirs(rp)
+            override suspend fun list(dirRelPath: String) = backing.list(dirRelPath)
+            override suspend fun delete(relPath: String) = backing.delete(relPath)
+            override suspend fun exists(relPath: String) = backing.exists(relPath)
+            override suspend fun mkdirs(dirRelPath: String) = backing.mkdirs(dirRelPath)
             override suspend fun rename(from: String, to: String) = backing.rename(from, to)
             override fun usableSpace(): Long = backing.usableSpace()
         }

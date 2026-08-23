@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.LruCache
+import androidx.core.graphics.scale
+import androidx.core.net.toUri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -216,7 +218,7 @@ class SeekPreviewExtractor(private val context: Context) {
     private fun extractFallback(uri: String, roundedMs: Long, key: CacheKey): Bitmap? {
         val retriever = MediaMetadataRetriever()
         try {
-            retriever.setDataSource(context, Uri.parse(uri))
+            retriever.setDataSource(context, uri.toUri())
             val raw = retriever.getFrameAtTime(
                 roundedMs * 1000L,
                 MediaMetadataRetriever.OPTION_CLOSEST,
@@ -236,6 +238,6 @@ class SeekPreviewExtractor(private val context: Context) {
         if (bitmap.width <= MAX_WIDTH) return bitmap
         val ratio = MAX_WIDTH.toFloat() / bitmap.width
         val height = (bitmap.height * ratio).roundToLong().toInt()
-        return Bitmap.createScaledBitmap(bitmap, MAX_WIDTH, height, true)
+        return bitmap.scale(MAX_WIDTH, height)
     }
 }

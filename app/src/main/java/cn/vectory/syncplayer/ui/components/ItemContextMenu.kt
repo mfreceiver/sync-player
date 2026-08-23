@@ -4,11 +4,8 @@ import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
@@ -17,11 +14,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.BrowseItem
 import cn.vectory.syncplayer.data.model.FolderStats
-import cn.vectory.syncplayer.R
-import cn.vectory.syncplayer.ui.util.isVideoFile
 import cn.vectory.syncplayer.ui.util.isImageFile
+import cn.vectory.syncplayer.ui.util.isVideoFile
+import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -98,7 +96,7 @@ fun FileContextMenuDialog(
     onTrashed: ((Long) -> Unit)? = null,
     onDeleted: ((Long) -> Unit)? = null,
 ) {
-    var localStar by remember { mutableStateOf(item.star) }
+    var localStar by remember { mutableIntStateOf(item.star) }
     val noRecordStr = stringResource(R.string.context_no_record)
     val shareFailedStr = stringResource(R.string.context_share_failed)
 
@@ -307,5 +305,5 @@ private fun formatFileSize(size: Long): String {
     val units = arrayOf("B", "KB", "MB", "GB", "TB")
     val digitGroups = (Math.log10(size.toDouble()) / Math.log10(1024.0)).toInt()
     val value = size / Math.pow(1024.0, digitGroups.toDouble())
-    return "${String.format("%.1f", value)} ${units[digitGroups]}"
+    return "${String.format(Locale.getDefault(), "%.1f", value)} ${units[digitGroups]}"
 }

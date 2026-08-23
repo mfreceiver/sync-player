@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.data.repository
 
+import android.annotation.SuppressLint
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import cn.vectory.syncplayer.data.local.dao.SyncSourceDao
@@ -40,6 +41,10 @@ class SyncSourceRepository @Inject constructor(
     suspend fun getRelationCount(sourceId: Long): Int =
         syncSourceDao.getRelationCount(sourceId)
 
+    // commit() (not apply()) is a deliberate contract: the encrypted password must be
+    // synchronously durable before the DB row references it, and the boolean result
+    // drives rollback (restore previous password / delete the new row).
+    @SuppressLint("ApplySharedPref")
     suspend fun save(source: SyncSource): Long = saveMutex.withLock {
         val entity = SyncSourceEntity(
             id = source.id,
@@ -95,6 +100,9 @@ class SyncSourceRepository @Inject constructor(
      * wipes prefs between save's prefs-write and DB-upsert), or resurrect a deleted source.
      * Both operations mutate the same (DB row, `pw_<id>` pref) pair, so they must serialize.
      */
+    // commit() is deliberate: credential removal must be durable alongside the DB delete;
+    // apply()'s async write could outlive process death and leave an orphaned password.
+    @SuppressLint("ApplySharedPref")
     suspend fun delete(id: Long) = saveMutex.withLock {
         syncSourceDao.deleteById(id)
         encryptedPrefs.edit().remove("pw_$id").commit()
