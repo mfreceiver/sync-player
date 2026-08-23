@@ -10,6 +10,7 @@ import cn.vectory.syncplayer.sync.SyncErrorCode
 import cn.vectory.syncplayer.sync.SyncException
 import cn.vectory.syncplayer.sync.SyncOperation
 import cn.vectory.syncplayer.sync.checkNetworkAvailable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
@@ -21,9 +22,17 @@ import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 
-class SftpFileClient(
-    private val context: Context
+class SftpFileClient internal constructor(
+    private val context: Context,
+    // Test seam only — production callers use the public single-arg constructor
+    // (identical behavior: constructs a real sshj SSHClient).
+    private val sshClientFactory: () -> SSHClient
 ) : RemoteFileClient {
+
+    constructor(context: Context) : this(
+        context,
+        { SSHClient(net.schmizz.sshj.DefaultSecurityProviderConfig()) }
+    )
 
     private companion object {
         const val TAG = "SftpFileClient"
@@ -57,30 +66,58 @@ class SftpFileClient(
         else -> SyncErrorCode.UNKNOWN
     }
 
-    override suspend fun connect(source: SyncSource, remotePath: String): Unit = withContext(Dispatchers.IO) {
-        checkNetworkAvailable(context)
-        // E4: `client` 必须是局部变量并在失败时显式 disconnect。
-        // 旧实现只把字段置 null —— 若 connect() 已成功但随后的 authPassword()/newSFTPClient()
-        // 抛异常，那条已建立的 SSH 连接就再无引用可关，造成连接泄漏（同步重试会持续累积）。
-        var client: SSHClient? = null
-        try {
-            client = SSHClient(net.schmizz.sshj.DefaultSecurityProviderConfig())
-            client.addHostKeyVerifier(SyncPlayerHostKeyVerifier(context))
-            val timeoutMs = 5000
-            client.setConnectTimeout(timeoutMs)
-            client.setTimeout(timeoutMs)
-            client.connect(source.host, source.port)
-            client.authPassword(source.username, source.password)
-            val sftp = client.newSFTPClient()
-            sshClient = client
-            sftpClient = sftp
-            remoteBasePath = remotePath.trim()
-        } catch (e: Exception) {
-            try { client?.disconnect() } catch (closeError: Exception) {
+    override suspend fun connect(source: SyncSource, remotePath: String) {
+        // Cancellation reaches connect() in two shapes that BOTH need cleanup:
+        //  (A) an underlying sshj call throws CancellationException directly, or
+        //  (B) the coroutine is cancelled while an sshj call blocks, the call then
+        //      completes NORMALLY, and withContext throws prompt CancellationException
+        //      at its return boundary — a shape no catch INSIDE the lambda can observe.
+        // Therefore the whole withContext is wrapped by an OUTER try/catch, connection
+        // state is held locally (outer holder) and published to instance fields only
+        // AFTER withContext returns normally.
+        var pendingClient: SSHClient? = null
+        fun cleanupPending() {
+            // Best-effort: cleanup failures are logged, never replacing the original
+            // exception (CE included).
+            try { pendingClient?.disconnect() } catch (closeError: Exception) {
                 Log.w(TAG, "Error closing partially-established SFTP connection", closeError)
             }
             sshClient = null
             sftpClient = null
+        }
+        try {
+            val established = withContext(Dispatchers.IO) {
+                checkNetworkAvailable(context)
+                // E4: `client` 必须保持局部变量，直到握手完全成功；任何失败路径都要
+                // disconnect，防止部分建立的连接泄漏（同步重试会持续累积）。
+                val client = sshClientFactory()
+                pendingClient = client
+                client.addHostKeyVerifier(SyncPlayerHostKeyVerifier(context))
+                val timeoutMs = 5000
+                client.setConnectTimeout(timeoutMs)
+                client.setTimeout(timeoutMs)
+                client.connect(source.host, source.port)
+                client.authPassword(source.username, source.password)
+                val sftp = client.newSFTPClient()
+                client to sftp
+            }
+            sshClient = established.first
+            sftpClient = established.second
+            remoteBasePath = remotePath.trim()
+        } catch (e: CancellationException) {
+            // Covers both (A) and (B): disconnect the pending client, reset state,
+            // rethrow the ORIGINAL CE (browsing must fail NOT_CONNECTED afterwards).
+            cleanupPending()
+            throw e
+        } catch (e: SyncException) {
+            // Pre-classified failures (e.g. NETWORK_UNAVAILABLE) propagate unwrapped.
+            cleanupPending()
+            throw e
+        } catch (e: Exception) {
+            cleanupPending()
+            // CQ-001: 协程已取消时底层调用以普通异常收场 —— 不得包装成 SyncException
+            // （否则调用方的取消守卫被绕过，取消被误报为连接失败）。
+            currentCoroutineContext().ensureActive()
             throw SyncException(classifySftpException(e), SyncOperation.CONNECT, host = source.host, cause = e)
         }
     }
@@ -123,7 +160,11 @@ class SftpFileClient(
         val result = mutableListOf<RemoteFile>()
         val entries = try {
             sftp.ls(path)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            // CQ-001: 已取消则终结为 CE，不降级为空列表（那会让取消被吞掉）。
+            currentCoroutineContext().ensureActive()
             return@withContext result
         }
         for (entry in entries) {
@@ -144,13 +185,16 @@ class SftpFileClient(
         result
     }
 
-    private fun listFilesRecursive(
+    private suspend fun listFilesRecursive(
         sftp: SFTPClient,
         currentPath: String,
         rootPath: String,
         result: MutableList<RemoteFile>,
         maxFiles: Int = MAX_REMOTE_FILES
     ) {
+        // CQ-001: 递归扫描是长阻塞循环，每个目录级入口先检查取消 ——
+        // 取消后不得再访问后续目录（否则取消被推迟到整棵树扫完）。
+        currentCoroutineContext().ensureActive()
         // E8: 达到上限必须失败（而非静默截断），否则 dryRun 会基于残缺快照生成误删。
         if (result.size >= maxFiles) {
             throw RemoteScanIncompleteException(maxFiles = maxFiles)
@@ -232,9 +276,13 @@ class SftpFileClient(
                 }
             }
             true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: SyncException) {
             throw e
         } catch (e: Exception) {
+            // CQ-001: 已取消则终结为 CE，不包装成 DOWNLOAD_FAILED。
+            currentCoroutineContext().ensureActive()
             throw SyncException(SyncErrorCode.DOWNLOAD_FAILED, SyncOperation.DOWNLOAD, path = remotePath, cause = e)
         }
     }
@@ -245,7 +293,11 @@ class SftpFileClient(
             val fullRemotePath = if (remoteBasePath.isNotEmpty()) "$remoteBasePath/$remotePath" else remotePath
             sftp.rm(fullRemotePath)
             true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            // CQ-001: 已取消则终结为 CE，不包装成 REMOTE_DELETE_FAILED。
+            currentCoroutineContext().ensureActive()
             throw SyncException(
                 SyncErrorCode.REMOTE_DELETE_FAILED, SyncOperation.DELETE,
                 path = remotePath, cause = e

@@ -15,15 +15,30 @@ import jcifs.smb.NtlmPasswordAuthenticator
 import jcifs.smb.SmbAuthException
 import jcifs.smb.SmbException
 import jcifs.smb.SmbFile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.util.Properties
 
-class SmbFileClient(
-    private val context: Context
+/**
+ * Test seam only — production callers construct real [SmbFile] instances from
+ * url + context (identical behavior).
+ */
+internal fun interface SmbFileFactory {
+    fun create(url: String, context: jcifs.CIFSContext): SmbFile
+}
+
+class SmbFileClient internal constructor(
+    private val context: Context,
+    private val smbFileFactory: SmbFileFactory
 ) : RemoteFileClient {
+
+    constructor(context: Context) : this(
+        context,
+        SmbFileFactory { url, ctx -> SmbFile(url, ctx) }
+    )
 
     private companion object {
         const val TAG = "SmbFileClient"
@@ -60,39 +75,69 @@ class SmbFileClient(
         else -> SyncErrorCode.UNKNOWN
     }
 
-    override suspend fun connect(source: SyncSource, remotePath: String): Unit = withContext(Dispatchers.IO) {
-        checkNetworkAvailable(context)
+    /** Session state produced by a fully successful handshake, published only on success. */
+    private data class SmbSession(
+        val cifsContext: jcifs.CIFSContext,
+        val host: String,
+        val shareName: String,
+        val subPath: String
+    )
+
+    override suspend fun connect(source: SyncSource, remotePath: String) {
+        // Cancellation reaches connect() in two shapes that BOTH need cleanup:
+        //  (A) an underlying jcifs call throws CancellationException directly, or
+        //  (B) the coroutine is cancelled while a jcifs call blocks, the call then
+        //      completes NORMALLY, and withContext throws prompt CancellationException
+        //      at its return boundary — a shape no catch INSIDE the lambda can observe.
+        // Therefore the whole withContext is wrapped by an OUTER try/catch, and session
+        // fields are published only AFTER withContext returns normally.
         try {
-            val props = Properties()
-            props.setProperty("jcifs.smb.client.minVersion", "SMB202")
-            props.setProperty("jcifs.smb.client.maxVersion", "SMB311")
-            val timeoutMs = "5000"
-            props.setProperty("jcifs.smb.client.responseTimeout", timeoutMs)
-            props.setProperty("jcifs.smb.client.soTimeout", timeoutMs)
-            val bc = BaseContext(jcifs.config.PropertyConfiguration(props))
-            val authenticator = NtlmPasswordAuthenticator(null, source.username, source.password)
-            cifsContext = bc.withCredentials(authenticator)
-            currentHost = source.host
-            val trimmedPath = remotePath.trim('/').ifEmpty { "/" }
-            if (trimmedPath == "/") {
-                shareName = ""
-                subPath = ""
-                val smbFile = SmbFile("smb://${source.host}/", cifsContext)
-                smbFile.listFiles()
-            } else {
-                val pathParts = trimmedPath.split("/")
-                shareName = pathParts.firstOrNull() ?: ""
-                subPath = pathParts.drop(1).joinToString("/")
-                val smbUrl = if (subPath.isNotEmpty()) {
-                    "smb://${source.host}/${shareName}/${subPath}/"
+            val session = withContext(Dispatchers.IO) {
+                checkNetworkAvailable(context)
+                val props = Properties()
+                props.setProperty("jcifs.smb.client.minVersion", "SMB202")
+                props.setProperty("jcifs.smb.client.maxVersion", "SMB311")
+                val timeoutMs = "5000"
+                props.setProperty("jcifs.smb.client.responseTimeout", timeoutMs)
+                props.setProperty("jcifs.smb.client.soTimeout", timeoutMs)
+                val bc = BaseContext(jcifs.config.PropertyConfiguration(props))
+                val authenticator = NtlmPasswordAuthenticator(null, source.username, source.password)
+                val creds = bc.withCredentials(authenticator)
+                val trimmedPath = remotePath.trim('/').ifEmpty { "/" }
+                if (trimmedPath == "/") {
+                    smbFileFactory.create("smb://${source.host}/", creds).listFiles()
+                    SmbSession(creds, source.host, "", "")
                 } else {
-                    "smb://${source.host}/${shareName}/"
+                    val pathParts = trimmedPath.split("/")
+                    val shareName = pathParts.firstOrNull() ?: ""
+                    val subPath = pathParts.drop(1).joinToString("/")
+                    val smbUrl = if (subPath.isNotEmpty()) {
+                        "smb://${source.host}/$shareName/$subPath/"
+                    } else {
+                        "smb://${source.host}/$shareName/"
+                    }
+                    smbFileFactory.create(smbUrl, creds).listFiles()
+                    SmbSession(creds, source.host, shareName, subPath)
                 }
-                val smbFile = SmbFile(smbUrl, cifsContext)
-                smbFile.listFiles()
             }
+            cifsContext = session.cifsContext
+            currentHost = session.host
+            shareName = session.shareName
+            subPath = session.subPath
+        } catch (e: CancellationException) {
+            // Covers both (A) and (B): discard the session so browsing terminates with
+            // NOT_CONNECTED instead of continuing factory I/O on a cancelled session.
+            cifsContext = null
+            throw e
+        } catch (e: SyncException) {
+            // Pre-classified failures (e.g. NETWORK_UNAVAILABLE) propagate unwrapped.
+            cifsContext = null
+            throw e
         } catch (e: Exception) {
             cifsContext = null
+            // CQ-001: 协程已取消时底层调用以普通异常收场 —— 不得包装成 SyncException
+            // （否则调用方的取消守卫被绕过，取消被误报为连接失败）。
+            currentCoroutineContext().ensureActive()
             throw SyncException(classifySmbException(e), SyncOperation.CONNECT, host = source.host, cause = e)
         }
     }
@@ -127,7 +172,7 @@ class SmbFileClient(
         } else {
             "smb://$currentHost/$share/"
         }
-        val dir = SmbFile(smbUrl, ctx)
+        val dir = smbFileFactory.create(smbUrl, ctx)
         if (!dir.exists() || !dir.isDirectory) throw SyncException(
             SyncErrorCode.PATH_NOT_FOUND, SyncOperation.BROWSE, path = path
         )
@@ -138,10 +183,14 @@ class SmbFileClient(
     suspend fun listShares(): List<RemoteFile> = withContext(Dispatchers.IO) {
         val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.BROWSE)
         val result = mutableListOf<RemoteFile>()
-        val smbFile = SmbFile("smb://$currentHost/", ctx)
+        val smbFile = smbFileFactory.create("smb://$currentHost/", ctx)
         val shares = try {
             smbFile.listFiles() ?: return@withContext result
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            // CQ-001: 已取消则终结为 CE，不降级为空列表。
+            currentCoroutineContext().ensureActive()
             Log.w(TAG, "Failed to list SMB shares", e)
             return@withContext result
         }
@@ -157,9 +206,15 @@ class SmbFileClient(
                             size = 0,
                             lastModified = share.lastModified
                         )
-                    )
-                }
-            } catch (e: Exception) { Log.w(TAG, "Failed to process SMB share entry", e) }
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // CQ-001: 已取消则终结为 CE，不再 continue 访问后续 share 条目。
+            currentCoroutineContext().ensureActive()
+            Log.w(TAG, "Failed to process SMB share entry", e)
+        }
         }
         result
     }
@@ -181,13 +236,17 @@ class SmbFileClient(
         } else {
             "smb://$currentHost/$share/"
         }
-        val dir = SmbFile(smbUrl, ctx)
+        val dir = smbFileFactory.create(smbUrl, ctx)
         if (!dir.exists() || !dir.isDirectory) throw SyncException(
             SyncErrorCode.PATH_NOT_FOUND, SyncOperation.BROWSE, path = path
         )
         val children = try {
             dir.listFiles() ?: return@withContext result
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            // CQ-001: 已取消则终结为 CE，不降级为空列表。
+            currentCoroutineContext().ensureActive()
             Log.w(TAG, "Failed to list SMB directory: $path", e)
             return@withContext result
         }
@@ -203,9 +262,15 @@ class SmbFileClient(
                             size = child.length(),
                             lastModified = child.lastModified
                         )
-                    )
-                }
-            } catch (e: Exception) { Log.w(TAG, "Failed to process SMB directory entry", e) }
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // CQ-001: 已取消则终结为 CE，不再 continue 访问后续目录条目。
+            currentCoroutineContext().ensureActive()
+            Log.w(TAG, "Failed to process SMB directory entry", e)
+        }
         }
         result
     }
@@ -272,7 +337,7 @@ class SmbFileClient(
             } else {
                 "smb://$currentHost/$shareName/$remotePath"
             }
-            val smbFile = SmbFile(smbUrl, ctx)
+            val smbFile = smbFileFactory.create(smbUrl, ctx)
             if (!smbFile.exists()) throw SyncException(
                 SyncErrorCode.PATH_NOT_FOUND, SyncOperation.DOWNLOAD, path = remotePath
             )
@@ -312,9 +377,13 @@ class SmbFileClient(
                 }
             }
             true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: SyncException) {
             throw e
         } catch (e: Exception) {
+            // CQ-001: 已取消则终结为 CE，不进入错误重分类/包装。
+            currentCoroutineContext().ensureActive()
             // Re-classify the underlying cause (e.g. SmbAuthException → AUTHENTICATION_FAILED)
             // so the user gets an accurate message; default to DOWNLOAD_FAILED for download scope.
             val code = classifySmbException(e).let {
@@ -332,11 +401,15 @@ class SmbFileClient(
             } else {
                 "smb://$currentHost/$shareName/$remotePath"
             }
-            val smbFile = SmbFile(smbUrl, ctx)
+            val smbFile = smbFileFactory.create(smbUrl, ctx)
             if (!smbFile.exists()) return@withContext false
             smbFile.delete()
             true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            // CQ-001: 已取消则终结为 CE，不包装成 REMOTE_DELETE_FAILED。
+            currentCoroutineContext().ensureActive()
             throw SyncException(
                 SyncErrorCode.REMOTE_DELETE_FAILED, SyncOperation.DELETE,
                 path = remotePath, cause = e
