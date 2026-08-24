@@ -487,8 +487,8 @@ AND-010（N×E 根枚举 + N 次握手）为最大性能项；AND-011（全尺�
 
 ## Workspace Integrity
 
-- 共享工作区：`docs/automatic/.work/20260824-2303/`（本 RUN_ID）。内容：agent1-4-notes.md（全字段证据）、bootstrap-toolchain.sh、baseline-build.sh、build-chain.log。
-- **保留原因**：agent 笔记为 22 项发现与 40 项拒绝假设的完整证据链，build-chain.log 为门禁原始输出，两脚本为工具链复现步骤——供后续复核与修复验证引用。无其他临时验证文件产生（未新增任何 Android test）。
+- 共享工作区：`docs/automatic/.work/20260824-2303/`（本 RUN_ID）。内容：agent1-4-notes.md（全字段证据，已随本报告入库，commit 3a12c86）。
+- 审计收尾时已删除临时文件：bootstrap-toolchain.sh / baseline-build.sh（工具链复现步骤见下）与 build-chain.log（门禁结果已摘录于上文 Build Results）。无任何临时 Android test 产生。
 - 仓库内除 `.work/` 与本报告外**零改动**：签名配置、发版脚本、manifest、版本机制均未触碰；工作树其余部分保持 clean（HEAD 仍为 5c7e419）。
 - 仓库外产物：`/tmp/android-audit-tc/`（JDK21+Android SDK+Gradle，系统临时目录，随系统清理消失）；`~/.gradle`（依赖缓存，属常规构建产物）。
-- Gradle 9.3.1 采用腾讯镜像发行包直用（与 wrapper 版本一致），因官方源在本网络仅 ~150KB/s；已在 Build Results 声明，非静默替换。
+- Gradle 9.3.1 采用腾讯镜像发行包直用（与 wrapper 版本一致），因官方源在本网络仅 ~150KB/s；已在 Build Results 声明，非静默替换。工具链引导配方：TUNA Adoptium JDK21 zip + dl.google.com cmdline-tools（platform-35/build-tools 35.0.0）+ 腾讯镜像 gradle-9.3.1，Windows 下需用 bsdtar（`C:\Windows\System32\tar.exe`）解 zip。
