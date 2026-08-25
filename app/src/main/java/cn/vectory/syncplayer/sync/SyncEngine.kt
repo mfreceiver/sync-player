@@ -105,26 +105,34 @@ class SyncEngine @Inject constructor(
     }
 
     /**
-     * Atomically consume pending task + execute sync under [storageOperationMutex].
+     * Atomically consume and execute every pending task under [storageOperationMutex].
      * Eliminates TOCTOU race where reset/switch could intervene between consume and execute.
-     * Called by [SyncService] instead of separate consumePendingTask + executeSync calls.
+     * A task queued while the service job is still active is consumed by this loop instead of
+     * relying on another [SyncService] start, which the service may deliberately coalesce.
+     * Returns the last executed task and its result, or null/false if the queue was empty.
      */
     internal suspend fun consumeAndExecute(
         relationId: Long
     ): Pair<PendingSyncTask?, Boolean> = storageOperationMutex.withLock {
-        val task = pendingTaskManager.consumePendingTaskLocked(relationId) ?: return@withLock null to false
-        val success = try {
-            executeSyncLocked(
-                relationId, task.toDownload, task.toDelete,
-                task.relationName, task.localBasePath
-            )
-        } catch (e: CancellationException) {
-            // NonCancellable: ensure DAO cleanup executes even in cancelled coroutine state.
-            pendingTaskManager.cancelCleanup(relationId)
-            throw e
+        var lastTask: PendingSyncTask? = null
+        var lastSuccess = false
+        while (true) {
+            val task = pendingTaskManager.consumePendingTaskLocked(relationId) ?: break
+            val success = try {
+                executeSyncLocked(
+                    relationId, task.toDownload, task.toDelete,
+                    task.relationName, task.localBasePath
+                )
+            } catch (e: CancellationException) {
+                // NonCancellable: ensure DAO cleanup executes even in cancelled coroutine state.
+                pendingTaskManager.cancelCleanup(relationId)
+                throw e
+            }
+            pendingTaskManager.finalize(relationId, success)
+            lastTask = task
+            lastSuccess = success
         }
-        pendingTaskManager.finalize(relationId, success)
-        task to success
+        lastTask to lastSuccess
     }
 
     val isSyncRunning: Boolean get() = progressPublisher.value.isRunning

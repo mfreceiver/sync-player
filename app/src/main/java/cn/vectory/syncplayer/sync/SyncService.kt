@@ -92,6 +92,22 @@ class SyncService : Service() {
     }
 
     /**
+     * API 35 dataSync foreground-service budget expired. Stop promptly so the system does not
+     * escalate the timeout into an ANR/crash. The cancellation reaches the engine's CE cleanup;
+     * the service publishes a terminal notification before stopping this exact start request.
+     */
+    override fun onTimeout(startId: Int) {
+        syncJob?.cancel()
+        syncJob = null
+        pendingStopJob?.cancel()
+        SyncNotificationHelper.updateNotification(
+            this,
+            SyncProgress(phase = SyncPhase.CANCELLED)
+        )
+        stopService(startId)
+    }
+
+    /**
      * E1: 统一的延迟停止入口。所有 stopSelf 都走这里 → stopSelfResult(lastStartId)，
      * 精确移除最近的 start，并复用 pendingStopJob 句柄在新任务到达时可被取消。
      */
@@ -99,12 +115,16 @@ class SyncService : Service() {
         pendingStopJob?.cancel()
         pendingStopJob = serviceScope.launch {
             delay(delayMs)
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelfResult(lastStartId)
+            stopService(lastStartId)
         }
     }
 
-    private fun cancelSync() {
+    private fun stopService(startId: Int) {
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelfResult(startId)
+    }
+
+    private fun cancelSync(stopStartId: Int = lastStartId) {
         syncJob?.cancel()
         syncJob = null
         pendingStopJob?.cancel()
@@ -114,8 +134,7 @@ class SyncService : Service() {
                 SyncProgress(phase = SyncPhase.CANCELLED)
             )
             delay(DELAY_AFTER_CANCEL_MS)
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelfResult(lastStartId)
+            stopService(stopStartId)
         }
     }
 
