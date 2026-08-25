@@ -54,6 +54,7 @@ class PlayerViewModelSavedStateTest {
             userPrefs = userPrefs,
             videoQueue = videoQueue,
             undoDeleteUseCase = undoDeleteUseCase,
+            ioDispatcher = testDispatcher,
         )
 
         advanceUntilIdle()
