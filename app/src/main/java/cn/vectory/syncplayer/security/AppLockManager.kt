@@ -12,7 +12,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,6 +28,7 @@ class AppLockManager @Inject constructor(
     val isLocked: StateFlow<Boolean> = _isLocked.asStateFlow()
 
     @Volatile private var cachedSecureLockEnabled = false
+    @Volatile private var cacheInitialized = false
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -43,7 +46,10 @@ class AppLockManager @Inject constructor(
     fun register() {
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
         scope.launch {
-            userPrefs.secureLockEnabled.collect { cachedSecureLockEnabled = it }
+            userPrefs.secureLockEnabled.collect {
+                cachedSecureLockEnabled = it
+                cacheInitialized = true
+            }
         }
     }
 
@@ -60,6 +66,13 @@ class AppLockManager @Inject constructor(
             androidx.lifecycle.Lifecycle.Event.ON_START -> {
                 if (hasBeenInBackground || isFirstStart) {
                     isFirstStart = false
+                    // Cold-start guard: if the collector hasn't emitted yet, do a
+                    // one-time synchronous read from DataStore. Subsequent ON_START
+                    // events use the warm cache.
+                    if (!cacheInitialized) {
+                        cachedSecureLockEnabled = runBlocking { userPrefs.secureLockEnabled.first() }
+                        cacheInitialized = true
+                    }
                     if (cachedSecureLockEnabled) {
                         _isLocked.value = true
                     }
