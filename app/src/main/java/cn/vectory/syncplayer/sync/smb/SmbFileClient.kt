@@ -104,8 +104,13 @@ class SmbFileClient internal constructor(
                 val authenticator = NtlmPasswordAuthenticator(null, source.username, source.password)
                 val creds = bc.withCredentials(authenticator)
                 val trimmedPath = remotePath.trim('/').ifEmpty { "/" }
+                // AND-010: 连接探测从 listFiles()（枚举根/共享的全部目录项，O(目录项数) 网络 IO）
+                // 降级为 exists() 单点查询——连接验证只需确认路径可达，无需拉取整个目录。
                 if (trimmedPath == "/") {
-                    smbFileFactory.create("smb://${source.host}/", creds).listFiles()
+                    val root = smbFileFactory.create("smb://${source.host}/", creds)
+                    if (!root.exists()) throw SyncException(
+                        SyncErrorCode.PATH_NOT_FOUND, SyncOperation.CONNECT, host = source.host
+                    )
                     SmbSession(creds, source.host, "", "")
                 } else {
                     val pathParts = trimmedPath.split("/")
@@ -116,7 +121,10 @@ class SmbFileClient internal constructor(
                     } else {
                         "smb://${source.host}/$shareName/"
                     }
-                    smbFileFactory.create(smbUrl, creds).listFiles()
+                    val dir = smbFileFactory.create(smbUrl, creds)
+                    if (!dir.exists()) throw SyncException(
+                        SyncErrorCode.PATH_NOT_FOUND, SyncOperation.CONNECT, host = source.host
+                    )
                     SmbSession(creds, source.host, shareName, subPath)
                 }
             }
