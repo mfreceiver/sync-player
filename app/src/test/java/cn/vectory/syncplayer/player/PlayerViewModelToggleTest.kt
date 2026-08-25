@@ -85,6 +85,7 @@ class PlayerViewModelToggleTest {
         userPrefs = userPrefs,
         videoQueue = videoQueue,
         undoDeleteUseCase = undoDeleteUseCase,
+        ioDispatcher = testDispatcher,
     )
 
     @Test

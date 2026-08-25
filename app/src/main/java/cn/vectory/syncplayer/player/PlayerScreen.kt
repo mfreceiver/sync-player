@@ -31,6 +31,15 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -82,7 +91,6 @@ fun PlayerScreen(
     val context = LocalContext.current
     val activity = context as? android.app.Activity ?: return
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val playerError by viewModel.playerError.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var pendingUndoTrigger by remember { mutableIntStateOf(0) }
@@ -259,6 +267,14 @@ fun PlayerScreen(
                     if (exoPlayer.isPlaying) {
                         exoPlayer.pause()
                     }
+                    // AND-001: persist progress immediately when the app stops
+                    // (recents swipe, screen-off interruptions). The
+                    // composition's onDispose save may never run on those
+                    // paths, and viewModelScope may already be cancelled.
+                    viewModel.saveProgress(
+                        exoPlayer.currentPosition.coerceAtLeast(0),
+                        exoPlayer.duration.coerceAtLeast(0)
+                    )
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
@@ -306,10 +322,15 @@ fun PlayerScreen(
                     exoPlayer.playbackParameters = PlaybackParameters(uiStateRef.value.playbackSpeed)
                 }
             }
-            override fun onSeekTo(offsetMs: Long) {
-                val newPos = (exoPlayer.currentPosition + offsetMs).coerceIn(0, exoPlayer.duration.coerceAtLeast(0))
-                viewModel.onGestureSeekFinished(offsetMs)
-                exoPlayer.seekTo(newPos)
+            override fun onSeekTo(offsetMs: Long, basePositionMs: Long) {
+                // AND-014: commit from the FROZEN gesture-start base — never
+                // exoPlayer.currentPosition, which keeps advancing while the
+                // finger is down and would make the committed target overshoot
+                // what the seek overlay previewed.
+                val targetMs = (basePositionMs + offsetMs)
+                    .coerceIn(0L, exoPlayer.duration.coerceAtLeast(0L))
+                viewModel.onGestureSeekFinished(targetMs)
+                exoPlayer.seekTo(targetMs)
             }
             override fun onVolumeGestureStart() {
                 val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
@@ -501,9 +522,9 @@ fun PlayerScreen(
 
     // Surface toggle/delete failures (resolved message already localized by the ViewModel;
     // no underlying path/id/message leaks).
-    playerError?.let {
-        LaunchedEffect(it) {
-            snackbarHostState.showSnackbar(it)
+    uiState.error?.let { ev ->
+        LaunchedEffect(ev.seq) {
+            snackbarHostState.showSnackbar(ev.message)
             viewModel.clearError()
         }
     }
@@ -870,11 +891,40 @@ private fun RowScope.SeekProgressBarWithTime(
         uiState.duration > 0 -> (currentPosition.toFloat() / uiState.duration.toFloat()).coerceIn(0f, 1f)
         else -> 0f
     }
+    val durationMs = uiState.duration.coerceAtLeast(0)
+    val positionMs = (seekDisplayProgress * durationMs).toLong()
+
+    fun onSeekBy(deltaMs: Long) {
+        val targetMs = (currentPosition + deltaMs).coerceIn(0L, durationMs)
+        exoPlayer.seekTo(targetMs)
+        viewModel.onUserSeekFinished(
+            if (durationMs > 0) targetMs.toFloat() / durationMs else 0f
+        )
+    }
+    val customAccessibilityActionForward = CustomAccessibilityAction(
+        label = stringResource(R.string.player_a11y_seek_forward_10s),
+        action = { onSeekBy(10_000L); true },
+    )
+    val customAccessibilityActionBackward = CustomAccessibilityAction(
+        label = stringResource(R.string.player_a11y_seek_backward_10s),
+        action = { onSeekBy(-10_000L); true },
+    )
 
     Box(
         modifier = Modifier
             .weight(1f)
             .height(20.dp)
+            .semantics {
+                progressBarRangeInfo = ProgressBarRangeInfo(
+                    current = positionMs.toFloat(),
+                    range = 0f..durationMs.toFloat(),
+                )
+                stateDescription = "${formatDuration(positionMs)} / ${formatDuration(durationMs)}"
+                customActions = listOf(
+                    customAccessibilityActionForward,
+                    customAccessibilityActionBackward,
+                )
+            }
             .pointerInput(uiState.duration) {
                 awaitPointerEventScope {
                     while (true) {
@@ -932,6 +982,12 @@ private fun MinimizedProgressBar(viewModel: PlayerViewModel, duration: Long) {
         modifier = Modifier
             .fillMaxWidth()
             .height(1.dp)
+            .semantics {
+                progressBarRangeInfo = ProgressBarRangeInfo(
+                    current = currentPosition.coerceIn(0L, duration.coerceAtLeast(0)).toFloat(),
+                    range = 0f..duration.coerceAtLeast(0).toFloat(),
+                )
+            }
             .background(Color.White.copy(alpha = 0.3f))
     ) {
         Box(
@@ -981,28 +1037,16 @@ private fun SettingsPopup(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     IconOptionChip(
-                        selected = !isFullscreen,
+                        isSelected = !isFullscreen,
                         onClick = { onDirectionChange(false) },
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Filled.ScreenRotation,
-                                contentDescription = null,
-                                tint = if (!isFullscreen) Color.White else Color.White.copy(alpha = 0.6f),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
+                        label = stringResource(R.string.player_a11y_rotation),
+                        imageVector = Icons.Filled.ScreenRotation,
                     )
                     IconOptionChip(
-                        selected = isFullscreen,
+                        isSelected = isFullscreen,
                         onClick = { onDirectionChange(true) },
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Filled.Fullscreen,
-                                contentDescription = null,
-                                tint = if (isFullscreen) Color.White else Color.White.copy(alpha = 0.6f),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
+                        label = stringResource(R.string.player_a11y_fullscreen),
+                        imageVector = Icons.Filled.Fullscreen,
                     )
                 }
                 HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
@@ -1017,7 +1061,7 @@ private fun SettingsPopup(
                     listOf(1.0f, 1.5f, 2.0f).forEach { speed ->
                         val label = if (speed == 1.0f) "1x" else "${speed}x"
                         TextOptionChip(
-                            selected = playbackSpeed == speed,
+                            isSelected = playbackSpeed == speed,
                             onClick = { onSpeedChange(speed) },
                             label = label
                         )
@@ -1030,34 +1074,45 @@ private fun SettingsPopup(
 
 @Composable
 private fun IconOptionChip(
-    selected: Boolean,
+    isSelected: Boolean,
     onClick: () -> Unit,
-    icon: @Composable () -> Unit,
+    label: String,
+    imageVector: ImageVector,
 ) {
     Surface(
         modifier = Modifier.size(40.dp),
         shape = RoundedCornerShape(8.dp),
-        color = if (selected) Color.White.copy(alpha = 0.3f) else Color.Transparent,
-        contentColor = if (selected) Color.White else Color.White.copy(alpha = 0.6f),
+        color = if (isSelected) Color.White.copy(alpha = 0.3f) else Color.Transparent,
+        contentColor = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
         onClick = onClick
     ) {
         Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-            icon()
+            Icon(
+                imageVector = imageVector,
+                contentDescription = label,
+                tint = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }
 
 @Composable
 private fun TextOptionChip(
-    selected: Boolean,
+    isSelected: Boolean,
     onClick: () -> Unit,
     label: String,
 ) {
     Surface(
-        modifier = Modifier.height(32.dp),
+        modifier = Modifier
+            .height(32.dp)
+            .semantics {
+                selected = isSelected
+                role = Role.RadioButton
+            },
         shape = RoundedCornerShape(8.dp),
-        color = if (selected) Color.White.copy(alpha = 0.3f) else Color.Transparent,
-        contentColor = if (selected) Color.White else Color.White.copy(alpha = 0.6f),
+        color = if (isSelected) Color.White.copy(alpha = 0.3f) else Color.Transparent,
+        contentColor = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
         onClick = onClick
     ) {
         Box(

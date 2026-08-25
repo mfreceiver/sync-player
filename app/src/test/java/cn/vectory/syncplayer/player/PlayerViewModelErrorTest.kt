@@ -37,6 +37,7 @@ class PlayerViewModelErrorTest {
     private val userPrefs = mockk<UserPreferencesRepository>(relaxed = true)
     private val videoQueue = mockk<VideoQueue>()
     private val undoDeleteUseCase = mockk<UndoDeleteUseCase>(relaxed = true)
+    private val ioTestDispatcher = UnconfinedTestDispatcher()
 
     @Before
     fun setUp() = runTest {
@@ -59,6 +60,7 @@ class PlayerViewModelErrorTest {
         userPrefs = userPrefs,
         videoQueue = videoQueue,
         undoDeleteUseCase = undoDeleteUseCase,
+        ioDispatcher = ioTestDispatcher,
     )
 
     @Test
@@ -82,5 +84,21 @@ class PlayerViewModelErrorTest {
         vm.clearPlayerError()
 
         assertFalse("hasPlayerError should be false after clear", vm.uiState.value.hasPlayerError)
+    }
+
+    @Test
+    fun `identical consecutive errors get distinct seq`() {
+        val vm = createVm()
+        val mappedError = "mapped-error"
+
+        vm.showError(mappedError)
+        assertTrue("first error event should be visible", vm.uiState.value.error != null)
+        val firstSeq = vm.uiState.value.error!!.seq
+
+        vm.showError(mappedError)
+        assertTrue("second error event should be visible", vm.uiState.value.error != null)
+        val secondSeq = vm.uiState.value.error!!.seq
+
+        assertTrue("each error event must advance its sequence", secondSeq > firstSeq)
     }
 }

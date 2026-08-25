@@ -431,4 +431,10 @@
     <!-- SyncRelation storage info -->
     <string name="relation_current_storage">当前存储：%1$s</string>
     <string name="relation_storage_path">存储路径：%1$s</string>
+
+    <!-- Player accessibility -->
+    <string name="player_a11y_seek_forward_10s">快进 10 秒</string>
+    <string name="player_a11y_seek_backward_10s">快退 10 秒</string>
+    <string name="player_a11y_rotation">跟随系统旋转</string>
+    <string name="player_a11y_fullscreen">全屏</string>
 </resources>
