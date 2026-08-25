@@ -244,9 +244,9 @@ private fun ZoomableImage(
     onSwipeRight: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    var offsetY by remember { mutableFloatStateOf(0f) }
+    var scale by remember(entity?.id) { mutableFloatStateOf(1f) }
+    var offsetX by remember(entity?.id) { mutableFloatStateOf(0f) }
+    var offsetY by remember(entity?.id) { mutableFloatStateOf(0f) }
     var canSwipeHorizontal by remember { mutableStateOf(true) }
 
     LaunchedEffect(scale) {

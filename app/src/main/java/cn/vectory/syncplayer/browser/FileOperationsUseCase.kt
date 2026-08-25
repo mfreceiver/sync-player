@@ -95,6 +95,13 @@ class FileOperationsUseCase @Inject constructor(
         scope: CoroutineScope,
         errorFlow: MutableStateFlow<String?>,
         onSuccess: () -> Unit = {}
+    ) = updateStar(videoItemId, star, scope, { errorFlow.value = it }, onSuccess)
+
+    fun updateStar(
+        videoItemId: Long, star: Int,
+        scope: CoroutineScope,
+        onError: (String) -> Unit,
+        onSuccess: () -> Unit = {}
     ) {
         scope.launch {
             try {
@@ -104,7 +111,7 @@ class FileOperationsUseCase @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to update star", e)
-                errorFlow.value = syncErrorMessage(e, context)
+                onError(syncErrorMessage(e, context))
             }
         }
     }
@@ -115,14 +122,22 @@ class FileOperationsUseCase @Inject constructor(
         scope: CoroutineScope,
         errorFlow: MutableStateFlow<String?>,
         onSuccess: () -> Unit = {}
+    ) = toggleTrashed(videoItemId, basePaths, scope, { errorFlow.value = it }, onSuccess)
+
+    fun toggleTrashed(
+        videoItemId: Long,
+        basePaths: List<SyncRelationWithSource>,
+        scope: CoroutineScope,
+        onError: (String) -> Unit,
+        onSuccess: () -> Unit = {}
     ) {
         scope.launch {
             when (val result = toggleTrashedChecked(videoItemId, basePaths)) {
                 is ToggleTrashResult.Success -> onSuccess()
                 is ToggleTrashResult.NotAllowed ->
-                    errorFlow.value = context.getString(R.string.error_only_base_dir_trash)
+                    onError(context.getString(R.string.error_only_base_dir_trash))
                 is ToggleTrashResult.Failed ->
-                    errorFlow.value = syncErrorMessage(result.error, context)
+                    onError(syncErrorMessage(result.error, context))
             }
         }
     }
@@ -169,6 +184,13 @@ class FileOperationsUseCase @Inject constructor(
         scope: CoroutineScope,
         errorFlow: MutableStateFlow<String?>,
         onSuccess: () -> Unit = {}
+    ) = deleteFile(videoItemId, scope, { errorFlow.value = it }, onSuccess)
+
+    fun deleteFile(
+        videoItemId: Long,
+        scope: CoroutineScope,
+        onError: (String) -> Unit,
+        onSuccess: () -> Unit = {}
     ) {
         scope.launch {
             try {
@@ -178,14 +200,14 @@ class FileOperationsUseCase @Inject constructor(
                 when (result) {
                     is DeleteMediaResult.Success, is DeleteMediaResult.SkippedNotFound -> onSuccess()
                     is DeleteMediaResult.Failed -> {
-                        errorFlow.value = syncErrorMessage(result.error, context)
+                        onError(syncErrorMessage(result.error, context))
                     }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to delete file id=$videoItemId", e)
-                errorFlow.value = syncErrorMessage(e, context)
+                onError(syncErrorMessage(e, context))
             }
         }
     }
@@ -324,6 +346,13 @@ class FileOperationsUseCase @Inject constructor(
         scope: CoroutineScope,
         errorFlow: MutableStateFlow<String?>,
         onSuccess: () -> Unit = {}
+    ) = markFolderRead(folderPath, read, scope, { errorFlow.value = it }, onSuccess)
+
+    fun markFolderRead(
+        folderPath: String, read: Boolean,
+        scope: CoroutineScope,
+        onError: (String) -> Unit,
+        onSuccess: () -> Unit = {}
     ) {
         scope.launch {
             try {
@@ -333,7 +362,7 @@ class FileOperationsUseCase @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to mark folder read", e)
-                errorFlow.value = syncErrorMessage(e, context)
+                onError(syncErrorMessage(e, context))
             }
         }
     }
@@ -344,12 +373,20 @@ class FileOperationsUseCase @Inject constructor(
         scope: CoroutineScope,
         errorFlow: MutableStateFlow<String?>,
         onSuccess: () -> Unit = {}
+    ) = deleteFolder(path, basePaths, scope, { errorFlow.value = it }, onSuccess)
+
+    fun deleteFolder(
+        path: String,
+        basePaths: List<SyncRelationWithSource>,
+        scope: CoroutineScope,
+        onError: (String) -> Unit,
+        onSuccess: () -> Unit = {}
     ) {
         scope.launch {
             try {
                 val isBase = syncRelationRepository.getByLocalBasePath(path) != null
                 if (isBase) {
-                    errorFlow.value = context.getString(R.string.error_cannot_delete_base_dir)
+                    onError(context.getString(R.string.error_cannot_delete_base_dir))
                     return@launch
                 }
                 val allBasePaths = syncRelationRepository.getAllBasePaths()
@@ -357,11 +394,11 @@ class FileOperationsUseCase @Inject constructor(
                     basePath.startsWith("$path/")
                 }
                 if (hasDescendantBase) {
-                    errorFlow.value = context.getString(R.string.error_base_dir_inside)
+                    onError(context.getString(R.string.error_base_dir_inside))
                     return@launch
                 }
                 if (isFileInBaseDir(path, basePaths)) {
-                    errorFlow.value = context.getString(R.string.error_cannot_delete_sync_dir)
+                    onError(context.getString(R.string.error_cannot_delete_sync_dir))
                     return@launch
                 }
                 val summary = withContext(Dispatchers.IO) {
@@ -370,10 +407,10 @@ class FileOperationsUseCase @Inject constructor(
                 if (summary.failed > 0) {
                     // M3: partial failure — do not claim full success (skip onSuccess so UI doesn't
                     // refresh as if everything was gone).
-                    errorFlow.value = context.getString(
+                    onError(context.getString(
                         R.string.error_folder_delete_partial,
                         summary.success, summary.skipped, summary.failed
-                    )
+                    ))
                 } else {
                     onSuccess()
                 }
@@ -381,7 +418,7 @@ class FileOperationsUseCase @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to delete folder", e)
-                errorFlow.value = syncErrorMessage(e, context)
+                onError(syncErrorMessage(e, context))
             }
         }
     }

@@ -39,6 +39,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -342,9 +345,9 @@ fun BrowserScreen(
         }
     }
 
-    error?.let {
-        LaunchedEffect(it) {
-            snackbarHostState.showSnackbar(it)
+    error?.let { ev ->
+        LaunchedEffect(ev.seq) {
+            snackbarHostState.showSnackbar(ev.message)
             viewModel.clearError()
         }
     }
@@ -476,6 +479,15 @@ private fun AdvancedFilterDialog(
                         BrowserViewModel.StarFilterMode.GT -> ">"
                         BrowserViewModel.StarFilterMode.LT -> "<"
                     }
+                    val modeStateDescription = stringResource(
+                        when (starFilterMode) {
+                            BrowserViewModel.StarFilterMode.OFF -> R.string.browser_a11y_star_filter_mode_off
+                            BrowserViewModel.StarFilterMode.EQ -> R.string.browser_a11y_star_filter_mode_equals
+                            BrowserViewModel.StarFilterMode.GT -> R.string.browser_a11y_star_filter_mode_greater_than
+                            BrowserViewModel.StarFilterMode.LT -> R.string.browser_a11y_star_filter_mode_less_than
+                        }
+                    )
+                    val modeContentDescription = stringResource(R.string.browser_a11y_star_filter_mode)
                     val colors = MaterialTheme.colorScheme
                     Surface(
                         shape = RoundedCornerShape(8.dp),
@@ -484,7 +496,12 @@ private fun AdvancedFilterDialog(
                         contentColor = if (starFilterMode != BrowserViewModel.StarFilterMode.OFF)
                             colors.onSecondaryContainer else colors.onSurfaceVariant,
                         onClick = { onStarFilterModeChange(nextMode) },
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier
+                            .size(36.dp)
+                            .semantics {
+                                contentDescription = modeContentDescription
+                                stateDescription = modeStateDescription
+                            }
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,
@@ -493,7 +510,7 @@ private fun AdvancedFilterDialog(
                             if (modeLabel.isNotEmpty()) {
                                 Text(modeLabel, style = MaterialTheme.typography.labelMedium)
                             } else {
-                                Icon(modeIcon, null, modifier = Modifier.size(18.dp))
+                                Icon(modeIcon, contentDescription = null, modifier = Modifier.size(18.dp))
                             }
                         }
                     }

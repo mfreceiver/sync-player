@@ -122,6 +122,14 @@ class UndoDeleteUseCase @Inject constructor(
         scope: CoroutineScope,
         errorFlow: MutableStateFlow<String?>,
         onSuccess: () -> Unit = {}
+    ) = performTrashToggle(videoItemId, basePaths, scope, { errorFlow.value = it }, onSuccess)
+
+    fun performTrashToggle(
+        videoItemId: Long,
+        basePaths: List<SyncRelationWithSource>,
+        scope: CoroutineScope,
+        onError: (String) -> Unit,
+        onSuccess: () -> Unit = {}
     ) {
         scope.launch {
             try {
@@ -137,16 +145,16 @@ class UndoDeleteUseCase @Inject constructor(
                             onSuccess()
                         }
                         is ToggleTrashResult.NotAllowed ->
-                            errorFlow.value = context.getString(R.string.error_only_base_dir_trash)
+                            onError(context.getString(R.string.error_only_base_dir_trash))
                         is ToggleTrashResult.Failed ->
-                            errorFlow.value = syncErrorMessage(result.error, context)
+                            onError(syncErrorMessage(result.error, context))
                     }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to perform trash toggle with undo id=$videoItemId", e)
-                errorFlow.value = syncErrorMessage(e, context)
+                onError(syncErrorMessage(e, context))
             }
         }
     }
@@ -198,6 +206,13 @@ class UndoDeleteUseCase @Inject constructor(
         scope: CoroutineScope,
         errorFlow: MutableStateFlow<String?>,
         onSuccess: () -> Unit = {}
+    ) = performHardDelete(videoItemId, scope, { errorFlow.value = it }, onSuccess)
+
+    fun performHardDelete(
+        videoItemId: Long,
+        scope: CoroutineScope,
+        onError: (String) -> Unit,
+        onSuccess: () -> Unit = {}
     ) {
         scope.launch {
             mutex.withLock {
@@ -216,14 +231,14 @@ class UndoDeleteUseCase @Inject constructor(
                                 // Old pending delete failed (e.g. IO/permission). Do NOT silently
                                 // drop it — surface to the error flow so the user sees the failure.
                                 Log.e(TAG, "Auto-commit of old pending delete failed id=${existing.id}: ${result.error.code}", result.error)
-                                errorFlow.value = syncErrorMessage(result.error, context)
+                                onError(syncErrorMessage(result.error, context))
                             }
                         }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to auto-commit old pending delete id=${existing.id}", e)
-                        errorFlow.value = syncErrorMessage(e, context)
+                        onError(syncErrorMessage(e, context))
                     }
                 }
                 undoState.set(UndoableDelete.HardDelete(videoItemId))

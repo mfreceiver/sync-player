@@ -1,9 +1,10 @@
 package cn.vectory.syncplayer.ui.components
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -13,6 +14,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import cn.vectory.syncplayer.R
@@ -32,23 +37,35 @@ internal fun StarRatingInput(
     Row(modifier = modifier) {
         for (i in 0..4) {
             val isFilled = i < rating
-            Icon(
-                imageVector = if (isFilled) Icons.Filled.Star else Icons.Filled.StarBorder,
-                contentDescription = if (isFilled) stringResource(R.string.star_rated) else stringResource(R.string.star_unrated),
-                tint = if (isFilled) starGold else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .alpha(contentAlpha)
-                    .then(
-                        if (enabled) {
-                            Modifier
-                                .clickable { onRatingChange(if (i + 1 == rating) 0 else i + 1) }
-                                .padding(4.dp)
-                        } else {
-                            Modifier
-                        }
-                    )
-                    .size(starSize)
+            val ratingState = stringResource(
+                if (isFilled) R.string.star_rated else R.string.star_unrated
             )
+            val starContentDescription = stringResource(
+                R.string.filter_star_rating_a11y_n,
+                i + 1,
+                ratingState,
+            )
+            Box(
+                contentAlignment = androidx.compose.ui.Alignment.Center,
+                modifier = Modifier
+                    .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                    .semantics {
+                        contentDescription = starContentDescription
+                        role = Role.Button
+                    }
+                    .clickable(enabled = enabled) {
+                        onRatingChange(if (i + 1 == rating) 0 else i + 1)
+                    }
+            ) {
+                Icon(
+                    imageVector = if (isFilled) Icons.Filled.Star else Icons.Filled.StarBorder,
+                    contentDescription = null,
+                    tint = if (isFilled) starGold else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .alpha(contentAlpha)
+                        .size(starSize)
+                )
+            }
         }
     }
 }

@@ -431,4 +431,12 @@
     <!-- SyncRelation storage info -->
     <string name="relation_current_storage">当前存储：%1$s</string>
     <string name="relation_storage_path">存储路径：%1$s</string>
+
+    <!-- Browser filter accessibility -->
+    <string name="browser_a11y_star_filter_mode">星级筛选模式</string>
+    <string name="browser_a11y_star_filter_mode_off">关闭</string>
+    <string name="browser_a11y_star_filter_mode_equals">等于</string>
+    <string name="browser_a11y_star_filter_mode_greater_than">大于</string>
+    <string name="browser_a11y_star_filter_mode_less_than">小于</string>
+    <string name="filter_star_rating_a11y_n">第 %1$d 星，%2$s</string>
 </resources>

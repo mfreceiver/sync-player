@@ -12,6 +12,7 @@ import cn.vectory.syncplayer.browser.UndoResult
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.navigation.SAVED_VIDEO_IDS_KEY
 import cn.vectory.syncplayer.navigation.VideoQueue
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
@@ -374,6 +375,5 @@ class PlayerViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "PlayerViewModel"
-        private const val SAVED_VIDEO_IDS_KEY = "videoIds"
     }
 }
