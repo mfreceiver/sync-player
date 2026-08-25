@@ -12,13 +12,19 @@ import cn.vectory.syncplayer.browser.UndoResult
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.navigation.VideoQueue
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 sealed class PlayerOverlay {
@@ -40,6 +46,8 @@ enum class OrientationMode {
     ROTATION,
 }
 
+data class ErrorEvent(val message: String, val seq: Long)
+
 data class PlayerUiState(
     val videoItem: VideoItemEntity? = null,
     val playbackRecord: PlaybackRecordEntity? = null,
@@ -60,7 +68,8 @@ data class PlayerUiState(
     val speedOverlayMultiplier: Float? = null,
     val isLongPressing: Boolean = false,
     val lastAutoSwitchTime: Long = 0L,
-    val hasPlayerError: Boolean = false
+    val hasPlayerError: Boolean = false,
+    val error: ErrorEvent? = null,
 )
 
 @HiltViewModel
@@ -70,8 +79,19 @@ class PlayerViewModel @Inject constructor(
     private val playbackRepository: PlaybackRepository,
     private val userPrefs: UserPreferencesRepository,
     private val videoQueue: VideoQueue,
-    private val undoDeleteUseCase: UndoDeleteUseCase
+    private val undoDeleteUseCase: UndoDeleteUseCase,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
+
+    /**
+     * AND-001: progress persistence must NOT run on [viewModelScope]. On the
+     * recents-swipe teardown path viewModelScope can already be cancelled when
+     * the UI asks for a final save — a `viewModelScope.launch` is then a silent
+     * no-op and playback position is lost. This scope is deliberately
+     * independent of the ViewModel lifecycle (and intentionally not cancelled
+     * in [onCleared]) so a just-launched save always completes.
+     */
+    private val progressSaveScope = CoroutineScope(SupervisorJob() + ioDispatcher)
 
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
@@ -79,15 +99,35 @@ class PlayerViewModel @Inject constructor(
     private val _currentPosition = MutableStateFlow(0L)
     val currentPosition: StateFlow<Long> = _currentPosition.asStateFlow()
 
-    /** Error flow for undo/delete operations — surfaced via Snackbar in the UI. */
-    private val _playerErrorFlow = MutableStateFlow<String?>(null)
+    private val errorSeq = AtomicLong(0L)
 
-    /** Read-only view of [_playerErrorFlow] for the UI to collect. */
-    val playerError: StateFlow<String?> = _playerErrorFlow.asStateFlow()
+    /**
+     * Adapter required by [UndoDeleteUseCase]'s existing String-based error callback API.
+     * The use case assigns to [MutableStateFlow.value]; intercept that assignment so identical
+     * consecutive messages still become distinct [ErrorEvent]s rather than being conflated by
+     * the String state flow.
+     */
+    private val undoDeleteErrorState = MutableStateFlow<String?>(null)
+    @OptIn(ExperimentalForInheritanceCoroutinesApi::class)
+    private val undoDeleteErrorFlow = object : MutableStateFlow<String?> by undoDeleteErrorState {
+        override var value: String?
+            get() = undoDeleteErrorState.value
+            set(value) {
+                undoDeleteErrorState.value = value
+                value?.let(::showError)
+            }
+    }
 
     /** Clear the player error after the UI has shown it. */
     fun clearError() {
-        _playerErrorFlow.value = null
+        _uiState.update { it.copy(error = null) }
+    }
+
+    /** Publish an already-mapped user-facing error as a distinct, one-shot UI event. */
+    fun showError(message: String) {
+        _uiState.update {
+            it.copy(error = ErrorEvent(message, errorSeq.incrementAndGet()))
+        }
     }
 
     private val _allVideoIds = MutableStateFlow<List<Long>>(emptyList())
@@ -191,7 +231,7 @@ class PlayerViewModel @Inject constructor(
 
     fun saveProgress(position: Long, duration: Long) {
         val videoId = _uiState.value.videoItem?.id ?: return
-        viewModelScope.launch {
+        progressSaveScope.launch {
             try {
                 playbackRepository.saveProgress(videoId, position, duration)
             } catch (e: CancellationException) {
@@ -211,12 +251,12 @@ class PlayerViewModel @Inject constructor(
      * `state.playbackRecord` if the currently-loaded video still matches [videoId] — switching
      * to the next item before the refresh completes will NOT overwrite the new item's record.
      *
-     * A failed toggle sets [_playerErrorFlow] and never invokes [onSuccess].
+     * A failed toggle publishes an error event and never invokes [onSuccess].
      * CancellationException is propagated, never swallowed.
      */
     fun toggleTrashed(onSuccess: (Long) -> Unit = {}) {
         val videoId = _uiState.value.videoItem?.id ?: return
-        undoDeleteUseCase.performTrashToggleNoGuard(videoId, viewModelScope, _playerErrorFlow) {
+        undoDeleteUseCase.performTrashToggleNoGuard(videoId, viewModelScope, undoDeleteErrorFlow) {
             // Refresh the playback record only if the user is still on this video.
             viewModelScope.launch {
                 try {
@@ -338,10 +378,16 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun onGestureSeekFinished(offsetMs: Long) {
-        val current = _currentPosition.value
+    /**
+     * AND-014: [targetMs] is the FINAL seek target already computed from the
+     * frozen gesture-start base (`base + offset`) by the UI layer. This method
+     * must NOT re-add the live [currentPosition] — the playback head keeps
+     * advancing during the gesture and would skew the committed target away
+     * from what the overlay previewed.
+     */
+    fun onGestureSeekFinished(targetMs: Long) {
         val duration = _uiState.value.duration
-        val target = (current + offsetMs).coerceIn(0, duration.coerceAtLeast(0))
+        val target = targetMs.coerceIn(0, duration.coerceAtLeast(0))
         _currentPosition.value = target
         _uiState.update { it.copy(isGestureSeeking = false, seekTarget = target) }
     }

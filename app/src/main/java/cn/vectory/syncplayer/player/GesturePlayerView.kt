@@ -2,6 +2,7 @@ package cn.vectory.syncplayer.player
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Rect
 import android.media.AudioManager
 import android.util.AttributeSet
 import android.view.GestureDetector
@@ -26,6 +27,7 @@ class GesturePlayerView @JvmOverloads constructor(
         controllerAutoShow = false
         useController = false
     }
+    private val systemGestureExclusionRects = listOf(Rect(), Rect())
 
     var gestureListener: GestureListener? = null
     var speedMultiplier: Float = 2.0f
@@ -44,7 +46,14 @@ class GesturePlayerView @JvmOverloads constructor(
 
     interface GestureListener {
         fun onSpeedUpChanged(speedUp: Boolean)
-        fun onSeekTo(offsetMs: Long)
+
+        /**
+         * Seek commit at gesture end. [basePositionMs] is the FROZEN position
+         * captured when the gesture started; [offsetMs] is clamped relative to
+         * that base (AND-014). The receiver must compute the final target as
+         * `basePositionMs + offsetMs` — never from the live player position.
+         */
+        fun onSeekTo(offsetMs: Long, basePositionMs: Long)
         fun onVolumeGestureStart()
         fun onVolumeChanged(totalDelta: Float)
         fun onBrightnessChanged(delta: Float)
@@ -62,6 +71,16 @@ class GesturePlayerView @JvmOverloads constructor(
 
     init {
         addView(playerView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+
+        val edgeWidthCap = (200 * resources.displayMetrics.density).toInt()
+        val edgeWidth = minOf(edgeWidthCap, width)
+        systemGestureExclusionRects[0].set(0, 0, edgeWidth, height)
+        systemGestureExclusionRects[1].set(width - edgeWidth, 0, width, height)
+        setSystemGestureExclusionRects(systemGestureExclusionRects)
     }
 
     fun getPlayerView(): PlayerView = playerView
@@ -178,12 +197,15 @@ class GesturePlayerView @JvmOverloads constructor(
                     gestureListener?.onHideOverlay()
                 }
                 if (isSeeking) {
+                    // AND-014: clamp relative to the FROZEN gesture-start base
+                    // (seekBasePositionMs), not the live currentPosition — the
+                    // commit target must match what the overlay previewed.
                     val clampedOffset = if (videoDuration > 0) {
-                        seekOffsetMs.coerceIn(-currentPosition, videoDuration - currentPosition)
+                        seekOffsetMs.coerceIn(-seekBasePositionMs, videoDuration - seekBasePositionMs)
                     } else {
                         seekOffsetMs
                     }
-                    gestureListener?.onSeekTo(clampedOffset)
+                    gestureListener?.onSeekTo(clampedOffset, seekBasePositionMs)
                     isSeeking = false
                     seekOffsetMs = 0L
                     gestureListener?.onHideOverlay()

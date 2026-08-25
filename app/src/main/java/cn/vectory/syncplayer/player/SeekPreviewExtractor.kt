@@ -10,6 +10,7 @@ import androidx.core.net.toUri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -37,14 +38,6 @@ class SeekPreviewExtractor(private val context: Context) {
         // so a few large frames can't blow the heap under maxSize=30 entries.
         override fun sizeOf(key: CacheKey, value: Bitmap): Int =
             (value.byteCount / 1024).coerceAtLeast(1)
-        override fun entryRemoved(
-            evicted: Boolean,
-            key: CacheKey,
-            oldValue: Bitmap,
-            newValue: Bitmap?
-        ) {
-            if (evicted && !oldValue.isRecycled) oldValue.recycle()
-        }
     }
 
     @Volatile private var activeRetriever: MediaMetadataRetriever? = null
@@ -54,7 +47,7 @@ class SeekPreviewExtractor(private val context: Context) {
     @Volatile private var lastExtractedPositionMs: Long = -1L
     @Volatile private var lastDirection: Int = 0
     private var prefetchJob: Job? = null
-    private val prefetchScope = CoroutineScope(Dispatchers.IO)
+    private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * Call when seek gesture begins.
@@ -163,7 +156,6 @@ class SeekPreviewExtractor(private val context: Context) {
                 ) ?: return@withContext null
 
                 val scaled = scaleBitmap(raw)
-                if (scaled !== raw) raw.recycle()
                 cache.put(key, scaled)
                 updateDirection(roundedPosition)
                 schedulePrefetch(uri, roundedPosition)
@@ -207,7 +199,6 @@ class SeekPreviewExtractor(private val context: Context) {
                         MediaMetadataRetriever.OPTION_CLOSEST,
                     ) ?: continue
                     val scaled = scaleBitmap(raw)
-                    if (scaled !== raw) raw.recycle()
                     cache.put(nextKey, scaled)
                 } catch (_: Exception) { /* best effort */ }
             }
@@ -224,7 +215,6 @@ class SeekPreviewExtractor(private val context: Context) {
                 MediaMetadataRetriever.OPTION_CLOSEST,
             ) ?: return null
             val scaled = scaleBitmap(raw)
-            if (scaled !== raw) raw.recycle()
             cache.put(key, scaled)
             return scaled
         } catch (_: Exception) {
