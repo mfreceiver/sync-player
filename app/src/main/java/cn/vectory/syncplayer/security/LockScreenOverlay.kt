@@ -7,6 +7,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -26,9 +27,9 @@ fun LockScreenOverlay(
     val activity = context as? FragmentActivity ?: return
 
     var authFailed by remember { mutableStateOf(false) }
-    var failCount by remember { mutableIntStateOf(0) }
-    var isCooldown by remember { mutableStateOf(false) }
-    var cooldownRemaining by remember { mutableIntStateOf(0) }
+    var failCount by rememberSaveable { mutableIntStateOf(0) }
+    var isCooldown by rememberSaveable { mutableStateOf(false) }
+    var cooldownRemaining by rememberSaveable { mutableIntStateOf(0) }
 
     // Callback shared between initial auth and retry button
     val onAuthError: () -> Unit = {
@@ -55,13 +56,15 @@ fun LockScreenOverlay(
         }
     }
 
-    // Auto-trigger authentication on first composition
+    // Auto-trigger authentication on first composition (skip during cooldown)
     LaunchedEffect(Unit) {
-        biometricAuthManager.authenticate(
-            activity = activity,
-            onSuccess = { appLockManager.unlock() },
-            onError = onAuthError
-        )
+        if (!isCooldown) {
+            biometricAuthManager.authenticate(
+                activity = activity,
+                onSuccess = { appLockManager.unlock() },
+                onError = onAuthError
+            )
+        }
     }
 
     BackHandler(enabled = true) { /* Block back gesture */ }
