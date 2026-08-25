@@ -110,6 +110,62 @@ class SyncEngineTest {
     }
 
     @Test
+    fun `consumeAndExecute processes a task that becomes pending during the current run`() = runTest {
+        val relationId = 1L
+        val relation = SyncRelation(
+            id = relationId,
+            name = "rel",
+            syncSourceId = 10L,
+            remotePath = "/remote",
+            localBasePath = "/local"
+        )
+        val source = SyncSource(
+            id = 10L,
+            name = "source",
+            protocol = SyncProtocol.SFTP,
+            host = "host",
+            port = 22,
+            username = "user",
+            password = "password"
+        )
+        val firstTask = PendingSyncActionEntity(
+            relationId = relationId,
+            relationName = "rel",
+            localBasePath = "/local",
+            actionGroup = 1,
+            actionType = SyncActionType.DELETE_LOCAL.name,
+            relativePath = "first.mp4",
+            fileSize = 1L
+        )
+        val secondTask = firstTask.copy(relativePath = "second.mp4")
+
+        coEvery { pendingSyncActionDao.resetRunningToPending(relationId) } returns Unit
+        coEvery { pendingSyncActionDao.getPendingByRelationId(relationId) } returnsMany listOf(
+            listOf(firstTask),
+            listOf(secondTask),
+            emptyList()
+        )
+        coEvery { pendingSyncActionDao.markRunning(relationId) } returns Unit
+        coEvery { pendingSyncActionDao.markCompleted(relationId) } returns Unit
+        coEvery { pendingSyncActionDao.deleteByRelationId(relationId) } returns Unit
+        coEvery { syncRelationRepository.getById(relationId) } returns relation
+        coEvery { syncSourceRepository.getById(10L) } returns source
+        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
+        every { encryptedMediaStore.volumeId } returns "test-vol"
+        coEvery {
+            videoRepository.getByRelativePathAndRelationId(any(), relationId)
+        } returns null
+
+        val (lastTask, success) = syncEngine.consumeAndExecute(relationId)
+
+        assertEquals("second.mp4", lastTask?.toDelete?.single()?.relativePath)
+        assertEquals(true, success)
+        coVerify(exactly = 2) { pendingSyncActionDao.markRunning(relationId) }
+        coVerify(exactly = 2) { pendingSyncActionDao.markCompleted(relationId) }
+        coVerify(exactly = 2) { videoRepository.getByRelativePathAndRelationId(any(), relationId) }
+    }
+
+    @Test
     fun `executeSync streams download through encrypted sink and finalizes`() = runTest {
         val relationId = 1L
         val relation = mockk<SyncRelation>()

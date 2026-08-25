@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.sync
 
+import androidx.activity.compose.BackHandler
 import cn.vectory.syncplayer.ui.util.formatFileSize
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -46,6 +47,16 @@ fun SyncPreviewScreen(
     val currentRelationName by viewModel.currentRelationName.collectAsStateWithLifecycle()
     var isNavigatingBack by remember { mutableStateOf(false) }
     var showRelationDropdown by remember { mutableStateOf(false) }
+    val navigateBack: () -> Unit = {
+        if (!isNavigatingBack) {
+            isNavigatingBack = true
+            onBack()
+        }
+    }
+
+    // Keep system and app-bar back behavior identical. A running sync is stopped only by
+    // the explicit Stop control so leaving this preview is never a destructive side effect.
+    BackHandler(enabled = !isNavigatingBack, onBack = navigateBack)
 
     Scaffold(
         topBar = {
@@ -89,15 +100,7 @@ fun SyncPreviewScreen(
                     },
                     navigationIcon = {
                         IconButton(
-                            onClick = {
-                                if (!isNavigatingBack) {
-                                    isNavigatingBack = true
-                                    if (isSyncing) {
-                                        viewModel.cancelSync()
-                                    }
-                                    onBack()
-                                }
-                            },
+                            onClick = navigateBack,
                             enabled = !isNavigatingBack
                         ) {
                             Icon(
