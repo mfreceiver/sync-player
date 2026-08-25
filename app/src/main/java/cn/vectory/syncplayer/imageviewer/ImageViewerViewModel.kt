@@ -1,6 +1,7 @@
 package cn.vectory.syncplayer.imageviewer
 
 import android.util.Log
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
@@ -10,6 +11,7 @@ import cn.vectory.syncplayer.browser.UndoResult
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.navigation.ImageQueue
+import cn.vectory.syncplayer.navigation.SAVED_IMAGE_IDS_KEY
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -38,6 +40,7 @@ data class ImageViewerUiState(
 
 @HiltViewModel
 class ImageViewerViewModel @Inject constructor(
+    savedStateHandle: SavedStateHandle,
     private val videoRepository: VideoRepository,
     private val playbackRepository: PlaybackRepository,
     private val imageQueue: ImageQueue,
@@ -49,6 +52,9 @@ class ImageViewerViewModel @Inject constructor(
 
     private val _allImageIds = MutableStateFlow<List<Long>>(emptyList())
     val allImageIds: StateFlow<List<Long>> = _allImageIds.asStateFlow()
+
+    private val savedImageIdsFlow: StateFlow<String?> =
+        savedStateHandle.getStateFlow(SAVED_IMAGE_IDS_KEY, null)
 
     /** Error flow for undo/delete operations — surfaced via Snackbar in the UI. */
     private val _imageErrorFlow = MutableStateFlow<String?>(null)
@@ -64,9 +70,26 @@ class ImageViewerViewModel @Inject constructor(
     private var overlayHideJob: Job? = null
 
     init {
+        loadImageIds()
+    }
+
+    private fun loadImageIds() {
         val queueIds = imageQueue.consumeIds()
         if (queueIds.isNotEmpty()) {
             _allImageIds.value = queueIds
+            return
+        }
+        viewModelScope.launch {
+            savedImageIdsFlow.collect { idsStr ->
+                val ids = idsStr
+                    ?.takeIf { it.isNotBlank() }
+                    ?.split(",")
+                    ?.mapNotNull { it.trim().toLongOrNull() }
+                    ?: emptyList()
+                if (ids.isNotEmpty()) {
+                    _allImageIds.value = ids
+                }
+            }
         }
     }
 

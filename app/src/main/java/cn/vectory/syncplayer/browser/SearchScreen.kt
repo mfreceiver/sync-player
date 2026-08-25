@@ -302,9 +302,9 @@ fun SearchScreen(
         )
     }
 
-    error?.let {
-        LaunchedEffect(it) {
-            snackbarHostState.showSnackbar(it)
+    error?.let { ev ->
+        LaunchedEffect(ev.seq) {
+            snackbarHostState.showSnackbar(ev.message)
             viewModel.clearError()
         }
     }

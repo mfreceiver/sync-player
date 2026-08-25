@@ -66,12 +66,24 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                 onNavigateToPlayer = { videoItemId, videoIds ->
                     val currentFolder = viewModel.currentFolder.value
                     navHelper.videoQueue.setIds(videoIds)
-                    navController.navigate(Route.Player.create(videoItemId, currentFolder, "browser"))
+                    navController.navigate(Route.Player.create(videoItemId, currentFolder, "browser")) {
+                        launchSingleTop = true
+                    }
+                    navController.currentBackStackEntry?.savedStateHandle?.set(
+                        SAVED_VIDEO_IDS_KEY,
+                        videoIds.joinToString(","),
+                    )
                 },
                 onNavigateToImageViewer = { imageItemId, imageIds ->
                     val currentFolder = viewModel.currentFolder.value
                     navHelper.imageQueue.setIds(imageIds)
-                    navController.navigate(Route.ImageViewer.create(imageItemId, currentFolder, "browser"))
+                    navController.navigate(Route.ImageViewer.create(imageItemId, currentFolder, "browser")) {
+                        launchSingleTop = true
+                    }
+                    navController.currentBackStackEntry?.savedStateHandle?.set(
+                        SAVED_IMAGE_IDS_KEY,
+                        imageIds.joinToString(","),
+                    )
                 },
                 onNavigateToSearch = {
                     val currentFolder = viewModel.currentFolder.value
@@ -239,11 +251,23 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                 },
                 onNavigateToPlayer = { videoItemId, videoIds ->
                     navHelper.videoQueue.setIds(videoIds)
-                    navController.navigate(Route.Player.create(videoItemId, "", "search"))
+                    navController.navigate(Route.Player.create(videoItemId, "", "search")) {
+                        launchSingleTop = true
+                    }
+                    navController.currentBackStackEntry?.savedStateHandle?.set(
+                        SAVED_VIDEO_IDS_KEY,
+                        videoIds.joinToString(","),
+                    )
                 },
                 onNavigateToImageViewer = { imageItemId, imageIds ->
                     navHelper.imageQueue.setIds(imageIds)
-                    navController.navigate(Route.ImageViewer.create(imageItemId, "", "search"))
+                    navController.navigate(Route.ImageViewer.create(imageItemId, "", "search")) {
+                        launchSingleTop = true
+                    }
+                    navController.currentBackStackEntry?.savedStateHandle?.set(
+                        SAVED_IMAGE_IDS_KEY,
+                        imageIds.joinToString(","),
+                    )
                 },
                 onBack = { navController.popBackStack() }
             )

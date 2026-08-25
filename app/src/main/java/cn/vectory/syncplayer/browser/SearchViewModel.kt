@@ -17,6 +17,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.*
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 @HiltViewModel
@@ -37,8 +38,9 @@ class SearchViewModel @Inject constructor(
 
     val searchFolder: String = savedStateHandle.get<String>("folder") ?: ""
 
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+    private val errorSeq = AtomicLong(0L)
+    private val _error = MutableStateFlow<ErrorEvent?>(null)
+    val error: StateFlow<ErrorEvent?> = _error.asStateFlow()
 
     private val basePaths = syncRelationRepository.getAllWithSourceFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -128,6 +130,10 @@ class SearchViewModel @Inject constructor(
 
     fun setQuery(query: String) { _query.value = query }
     fun setSearchScope(scope: SearchScope) { _searchScope.value = scope }
+    fun showError(message: String) {
+        _error.update { ErrorEvent(message, errorSeq.incrementAndGet()) }
+    }
+
     fun clearError() { _error.value = null }
 
     fun getSearchResultVideoIds(): List<Long> {
@@ -143,15 +149,15 @@ class SearchViewModel @Inject constructor(
     }
 
     override fun updateStar(videoItemId: Long, star: Int) {
-        fileOps.updateStar(videoItemId, star, viewModelScope, _error)
+        fileOps.updateStar(videoItemId, star, viewModelScope, ::showError)
     }
 
     override fun toggleTrashed(videoItemId: Long) {
-        fileOps.toggleTrashed(videoItemId, basePaths.value, viewModelScope, _error)
+        fileOps.toggleTrashed(videoItemId, basePaths.value, viewModelScope, ::showError)
     }
 
     override fun deleteFile(videoItemId: Long) {
-        fileOps.deleteFile(videoItemId, viewModelScope, _error)
+        fileOps.deleteFile(videoItemId, viewModelScope, ::showError)
     }
 
     override fun isFileInBaseDir(relativePath: String): Boolean {
@@ -162,11 +168,11 @@ class SearchViewModel @Inject constructor(
         fileOps.buildShareIntent(videoItemId)
 
     override fun markFolderRead(folderPath: String, read: Boolean) {
-        fileOps.markFolderRead(folderPath, read, viewModelScope, _error)
+        fileOps.markFolderRead(folderPath, read, viewModelScope, ::showError)
     }
 
     override fun deleteFolder(path: String) {
-        fileOps.deleteFolder(path, basePaths.value, viewModelScope, _error)
+        fileOps.deleteFolder(path, basePaths.value, viewModelScope, ::showError)
     }
 
     override suspend fun getRecursiveFolderStats(folderPath: String): FolderStats =

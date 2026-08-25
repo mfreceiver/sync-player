@@ -40,7 +40,9 @@ class MainActivity : AppCompatActivity() {
             WindowManager.LayoutParams.FLAG_SECURE
         )
         enableEdgeToEdge()
-        if (savedInstanceState == null) pendingIntent.value = intent
+        if (savedInstanceState == null || isNotificationIntent(intent)) {
+            pendingIntent.value = intent
+        }
         setContent {
             SyncPlayerTheme {
                 Surface(
@@ -77,18 +79,25 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
+private fun isNotificationIntent(intent: Intent): Boolean =
+    intent.getStringExtra("navigateTo") != null
+
 private fun handleNotificationNavigation(intent: Intent?, navController: NavHostController) {
     val navigateTo = intent?.getStringExtra("navigateTo") ?: return
     when (navigateTo) {
         "syncPreview" -> {
             val relationId = intent.getLongExtra("notification_relation_id", 0L)
             if (relationId > 0) {
-                navController.navigate(Route.SyncPreview.create(relationId))
+                navController.navigate(Route.SyncPreview.create(relationId)) {
+                    launchSingleTop = true
+                }
             }
         }
         "browser" -> {
             val basePath = intent.getStringExtra("notification_local_base_path") ?: ""
-            navController.navigate(Route.Browser.create(basePath))
+            navController.navigate(Route.Browser.create(basePath)) {
+                launchSingleTop = true
+            }
         }
     }
 }

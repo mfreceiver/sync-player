@@ -24,8 +24,11 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.*
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+data class ErrorEvent(val message: String, val seq: Long)
 
 /**
  * Browser screen ViewModel.
@@ -103,8 +106,9 @@ class BrowserViewModel @Inject constructor(
 
     // === View-model-owned transient state ===
 
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+    private val errorSeq = AtomicLong(0L)
+    private val _error = MutableStateFlow<ErrorEvent?>(null)
+    val error: StateFlow<ErrorEvent?> = _error.asStateFlow()
 
     private val _scrollPositions = mutableMapOf<String, Pair<Int, Int>>()
 
@@ -195,7 +199,7 @@ class BrowserViewModel @Inject constructor(
     fun setBrowseMode(mode: BrowseMode) = coordinator.setBrowseMode(mode)
 
     override fun updateStar(videoItemId: Long, star: Int) {
-        fileOps.updateStar(videoItemId, star, viewModelScope, _error) { coordinator.refresh() }
+        fileOps.updateStar(videoItemId, star, viewModelScope, ::showError) { coordinator.refresh() }
     }
 
     override suspend fun getRecursiveFolderStats(folderPath: String): FolderStats =
@@ -204,11 +208,15 @@ class BrowserViewModel @Inject constructor(
     suspend fun loadSubFolders(folderPath: String): List<DirectoryNode> = coordinator.loadSubFolders(folderPath)
 
     override fun markFolderRead(folderPath: String, read: Boolean) {
-        fileOps.markFolderRead(folderPath, read, viewModelScope, _error) { coordinator.refresh() }
+        fileOps.markFolderRead(folderPath, read, viewModelScope, ::showError) { coordinator.refresh() }
     }
 
     override fun deleteFolder(path: String) {
-        fileOps.deleteFolder(path, coordinator.basePathsSnapshot(), viewModelScope, _error) { coordinator.refresh() }
+        fileOps.deleteFolder(path, coordinator.basePathsSnapshot(), viewModelScope, ::showError) { coordinator.refresh() }
+    }
+
+    fun showError(message: String) {
+        _error.update { ErrorEvent(message, errorSeq.incrementAndGet()) }
     }
 
     fun clearError() {
@@ -240,7 +248,7 @@ class BrowserViewModel @Inject constructor(
     }
 
     override fun toggleTrashed(videoItemId: Long) {
-        undoDeleteUseCase.performTrashToggle(videoItemId, coordinator.basePathsSnapshot(), viewModelScope, _error)
+        undoDeleteUseCase.performTrashToggle(videoItemId, coordinator.basePathsSnapshot(), viewModelScope, ::showError)
     }
 
     /**
@@ -250,7 +258,7 @@ class BrowserViewModel @Inject constructor(
      * produces a misleading "moved to trash" Snackbar. On failure the error lands in [_error].
      */
     fun toggleTrashedWithUndo(videoItemId: Long, onSuccess: () -> Unit) {
-        undoDeleteUseCase.performTrashToggle(videoItemId, coordinator.basePathsSnapshot(), viewModelScope, _error, onSuccess)
+        undoDeleteUseCase.performTrashToggle(videoItemId, coordinator.basePathsSnapshot(), viewModelScope, ::showError, onSuccess)
     }
 
     override fun isFileInBaseDir(relativePath: String): Boolean {
@@ -258,7 +266,7 @@ class BrowserViewModel @Inject constructor(
     }
 
     override fun deleteFile(videoItemId: Long) {
-        undoDeleteUseCase.performHardDelete(videoItemId, viewModelScope, _error) { coordinator.refresh() }
+        undoDeleteUseCase.performHardDelete(videoItemId, viewModelScope, ::showError) { coordinator.refresh() }
     }
 
     /**
@@ -268,7 +276,7 @@ class BrowserViewModel @Inject constructor(
      * "deleted" Snackbar.
      */
     fun deleteFileWithUndo(videoItemId: Long, onSuccess: () -> Unit) {
-        undoDeleteUseCase.performHardDelete(videoItemId, viewModelScope, _error) {
+        undoDeleteUseCase.performHardDelete(videoItemId, viewModelScope, ::showError) {
             coordinator.refresh()
             onSuccess()
         }
@@ -293,7 +301,7 @@ class BrowserViewModel @Inject constructor(
     suspend fun commitDeferredDelete(expectedId: Long? = null): UndoResult {
         val result = undoDeleteUseCase.commitDeferredDelete(expectedId)
         if (result is UndoResult.Failed) {
-            _error.value = syncErrorMessage(result.error, context)
+            showError(syncErrorMessage(result.error, context))
         }
         return result
     }

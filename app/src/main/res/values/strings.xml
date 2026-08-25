@@ -437,4 +437,12 @@
     <string name="player_a11y_seek_backward_10s">快退 10 秒</string>
     <string name="player_a11y_rotation">跟随系统旋转</string>
     <string name="player_a11y_fullscreen">全屏</string>
+
+    <!-- Browser filter accessibility -->
+    <string name="browser_a11y_star_filter_mode">星级筛选模式</string>
+    <string name="browser_a11y_star_filter_mode_off">关闭</string>
+    <string name="browser_a11y_star_filter_mode_equals">等于</string>
+    <string name="browser_a11y_star_filter_mode_greater_than">大于</string>
+    <string name="browser_a11y_star_filter_mode_less_than">小于</string>
+    <string name="filter_star_rating_a11y_n">第 %1$d 星，%2$s</string>
 </resources>

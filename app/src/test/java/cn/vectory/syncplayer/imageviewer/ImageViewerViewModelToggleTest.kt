@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.imageviewer
 
+import androidx.lifecycle.SavedStateHandle
 import cn.vectory.syncplayer.browser.UndoDeleteUseCase
 import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
@@ -69,6 +70,7 @@ class ImageViewerViewModelToggleTest {
         PlaybackRecordEntity(videoItemId = id, isTrashed = trashed)
 
     private fun createVm(): ImageViewerViewModel = ImageViewerViewModel(
+        savedStateHandle = SavedStateHandle(),
         videoRepository = videoRepository,
         playbackRepository = playbackRepository,
         imageQueue = imageQueue,
