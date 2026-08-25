@@ -131,7 +131,8 @@ class SmbTransportCancellationTest {
     private fun connectToMedia(connectFile: jcifs.smb.SmbFile) {
         stubNetworkOk()
         every { factory.create("smb://host/media/", any()) } returns connectFile
-        every { connectFile.listFiles() } returns emptyArray()
+        // AND-010: connect() 探测已从 listFiles() 改为 exists() 单点查询。
+        every { connectFile.exists() } returns true
         runBlocking { client.connect(source, "/media") }
     }
 
@@ -150,13 +151,13 @@ class SmbTransportCancellationTest {
     // ------------------------------------------------------------------ pre-fix RED
 
     @Test
-    fun `connect cancelled mid-list terminates with CancellationException not SyncException`() {
+    fun `connect cancelled mid-probe terminates with CancellationException not SyncException`() {
         stubNetworkOk()
         val rootFile = newSmbFileMock()
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
         every { factory.create("smb://host/", any()) } returns rootFile
-        every { rootFile.listFiles() } answers {
+        every { rootFile.exists() } answers {
             started.countDown()
             release.await(10, TimeUnit.SECONDS)
             throw IOException("simulated transport teardown")
@@ -242,24 +243,19 @@ class SmbTransportCancellationTest {
 
     @Test
     fun `listDirectories cancelled during entry processing does not touch subsequent entries`() {
+        val connectFile = newSmbFileMock()
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
         val child1 = newSmbFileMock()
         val child2 = newSmbFileMock()
         val child2Touched = AtomicInteger(0)
-        val connectFile = newSmbFileMock()
-        val listCalls = AtomicInteger(0)
         stubNetworkOk()
         every { factory.create("smb://host/media/", any()) } returns connectFile
-        every { connectFile.listFiles() } answers {
-            when (listCalls.incrementAndGet()) {
-                // call 1 = connect() validation; call 2 = listDirectories() listing
-                1 -> emptyArray()
-                else -> arrayOf(child1, child2)
-            }
-        }
         every { connectFile.exists() } returns true
         every { connectFile.isDirectory() } returns true
+        // AND-010: connect() 不再走 listFiles 探测，本 mock 的 listFiles 仅服务于
+        // listDirectories() 的目录列举。
+        every { connectFile.listFiles() } returns arrayOf(child1, child2)
         runBlocking { client.connect(source, "/media") }
         every { child1.isDirectory } answers {
             started.countDown()
@@ -287,7 +283,7 @@ class SmbTransportCancellationTest {
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
         every { factory.create("smb://host/", any()) } returns rootFile
-        every { rootFile.listFiles() } answers {
+        every { rootFile.exists() } answers {
             started.countDown()
             release.await(10, TimeUnit.SECONDS)
             throw CancellationException("cancelled by test")
@@ -310,10 +306,10 @@ class SmbTransportCancellationTest {
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
         every { factory.create("smb://host/", any()) } returns rootFile
-        every { rootFile.listFiles() } answers {
+        every { rootFile.exists() } answers {
             started.countDown()
             release.await(10, TimeUnit.SECONDS)
-            emptyArray<jcifs.smb.SmbFile>()
+            true
         }
 
         val terminal = awaitTerminalAfterCancel(started, release) { client.connect(source, "/") }
@@ -346,25 +342,19 @@ class SmbTransportCancellationTest {
     @Test
     fun `listDirectories cancelled mid-listFiles terminates with CancellationException`() {
         val connectFile = newSmbFileMock()
-        val listCalls = AtomicInteger(0)
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
         stubNetworkOk()
         every { factory.create("smb://host/media/", any()) } returns connectFile
-        every { connectFile.listFiles() } answers {
-            when (listCalls.incrementAndGet()) {
-                1 -> emptyArray()
-                2 -> {
-                    started.countDown()
-                    release.await(10, TimeUnit.SECONDS)
-                    throw IOException("simulated transport teardown")
-                }
-                else -> emptyArray()
-            }
-        }
-        runBlocking { client.connect(source, "/media") }
         every { connectFile.exists() } returns true
         every { connectFile.isDirectory() } returns true
+        runBlocking { client.connect(source, "/media") }
+        // AND-010: connect 探测不再调用 listFiles —— 唯一一次 listFiles 即被测的列举调用。
+        every { connectFile.listFiles() } answers {
+            started.countDown()
+            release.await(10, TimeUnit.SECONDS)
+            throw IOException("simulated transport teardown")
+        }
 
         val terminal = awaitTerminalAfterCancel(started, release) { client.listDirectories("media") }
 
@@ -394,16 +384,12 @@ class SmbTransportCancellationTest {
     @Test
     fun `listDirectories uncanceled IOException still degrades to empty list`() {
         val connectFile = newSmbFileMock()
-        val listCalls = AtomicInteger(0)
         stubNetworkOk()
         every { factory.create("smb://host/media/", any()) } returns connectFile
-        every { connectFile.listFiles() } answers {
-            if (listCalls.incrementAndGet() == 1) emptyArray()
-            else throw IOException("simulated transport failure")
-        }
-        runBlocking { client.connect(source, "/media") }
         every { connectFile.exists() } returns true
         every { connectFile.isDirectory() } returns true
+        runBlocking { client.connect(source, "/media") }
+        every { connectFile.listFiles() } throws IOException("simulated transport failure")
 
         val result = runBlocking { client.listDirectories("media") }
 
