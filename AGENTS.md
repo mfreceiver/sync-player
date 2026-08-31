@@ -47,7 +47,7 @@ Always run a build after code changes to verify compilation — there is no LSP 
 ## Project
 
 - **Package**: `cn.vectory.syncplayer`
-- **Repo**: `https://git.vectory.cn:18443/mfreceiver/sync-player.git` (branch: `main`)
+- **Repo**: `http://192.168.3.252:11330/mfreceiver/sync-player.git` (branch: `main`)
 - **Target**: Android 14+ (minSdk 34, targetSdk 35, compileSdk 35), personal use, sideloaded
 - **JVM target**: 17
 - **Current version**: `git describe --tags`（git 派生，见 [conventions.md](docs/specs/conventions.md#versioninggit-派生)）
@@ -94,5 +94,5 @@ Always run a build after code changes to verify compilation — there is no LSP 
 
 `release.sh` 要求干净工作树（或 `--allow-dirty`）。它自己跑本地门禁，无需预跑测试。
 
-Actions: `https://git.vectory.cn:18443/mfreceiver/sync-player/actions`
-Release: `https://git.vectory.cn:18443/mfreceiver/sync-player/releases/tag/v<VERSION>`
+Actions: `http://192.168.3.252:11330/mfreceiver/sync-player/actions`
+Release: `http://192.168.3.252:11330/mfreceiver/sync-player/releases/tag/v<VERSION>`

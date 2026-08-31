@@ -6,7 +6,7 @@ set -euo pipefail
 SHA="${1:?用法: query-run.sh <commit_sha_or_branch> [limit]}"
 LIM="${2:-5}"
 REPO="mfreceiver/sync-player"
-GITEA_URL="${GITEA_URL:-https://git.vectory.cn:18443}"
+GITEA_URL="${GITEA_URL:-http://192.168.3.252:11330}"
 : "${GITEA_TOKEN:?需要 GITEA_TOKEN}"
 curl -sf -H "Authorization: token $GITEA_TOKEN" \
   "$GITEA_URL/api/v1/repos/$REPO/actions/runs?sha=$SHA&limit=$LIM"

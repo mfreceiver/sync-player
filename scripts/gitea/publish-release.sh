@@ -8,7 +8,7 @@
 set -euo pipefail
 TAG="${1:?用法: publish-release.sh <tag>}"
 REPO="mfreceiver/sync-player"
-GITEA_URL="${GITEA_URL:-https://git.vectory.cn:18443}"
+GITEA_URL="${GITEA_URL:-http://192.168.3.252:11330}"
 [[ -n "${GITEA_TOKEN:-}" ]] || { echo "❌ GITEA_TOKEN 未设置"; exit 1; }
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 [[ -d artifacts && "$(ls -A artifacts 2>/dev/null)" ]] || { echo "❌ artifacts/ 为空（先跑 release-check.sh）"; exit 1; }

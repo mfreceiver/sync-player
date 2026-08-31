@@ -9,7 +9,7 @@
 
 **Name**: Sync Player
 **Package**: `cn.vectory.syncplayer`
-**Repo**: `https://git.vectory.cn:18443/mfreceiver/sync-player.git` (branch: `master`)
+**Repo**: `http://192.168.3.252:11330/mfreceiver/sync-player.git` (branch: `master`)
 **Purpose**: Android video player that mirrors video files from remote SMB/SFTP servers to local storage, then plays them with hardware decoding and gesture controls.
 **Target**: Personal use only, Android 14+ devices (minSdk 34, targetSdk 35), sideloaded (no app store).
 
@@ -298,8 +298,8 @@ fix: favorite button, sync progress UI, seek clamp, swipe direction
 Token: Use the same token as git push (from `~/.git-credentials`).
 
 ```bash
-TOKEN=$(grep 'git.vectory' ~/.git-credentials | head -1 | sed 's|https://||' | sed 's|@.*||' | cut -d: -f2)
-GITEA_API="https://git.vectory.cn:18443/api/v1"
+TOKEN=$(grep '192.168.3.252:11330' ~/.git-credentials | head -1 | sed 's|http://||' | sed 's|@.*||' | cut -d: -f2)
+GITEA_API="http://192.168.3.252:11330/api/v1"
 REPO="mfreceiver/sync-player"
 VERSION="v10.0.6"
 

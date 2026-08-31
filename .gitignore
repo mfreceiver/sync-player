@@ -24,3 +24,6 @@ artifacts/
 .slim/worktrees/
 .slim/worktrees.json
 # END oh-my-opencode-slim worktrees
+
+# local working artifacts (design specs, QA renders)
+tmp/

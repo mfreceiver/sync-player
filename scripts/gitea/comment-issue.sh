@@ -6,7 +6,7 @@ set -euo pipefail
 NUM="${1:?用法: comment-issue.sh <issue> <message|-|(多位置参)>}"
 shift
 REPO="mfreceiver/sync-player"
-GITEA_URL="${GITEA_URL:-https://git.vectory.cn:18443}"
+GITEA_URL="${GITEA_URL:-http://192.168.3.252:11330}"
 : "${GITEA_TOKEN:?需要 GITEA_TOKEN}"
 API="$GITEA_URL/api/v1/repos/$REPO/issues/$NUM"
 AUTH="Authorization: token $GITEA_TOKEN"

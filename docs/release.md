@@ -150,8 +150,8 @@ JAVA_HOME=/home/mar/android-studio/jbr   # Android Studio bundled JBR (OpenJDK 2
 
 # 可选独立预检：./scripts/check.sh --full（加 lintDebug）
 
-# 监控：  https://git.vectory.cn:18443/mfreceiver/sync-player/actions
-# 取产物：https://git.vectory.cn:18443/mfreceiver/sync-player/releases/tag/v12.1.0
+# 监控：  http://192.168.3.252:11330/mfreceiver/sync-player/actions
+# 取产物：http://192.168.3.252:11330/mfreceiver/sync-player/releases/tag/v12.1.0
 ```
 
 CI 全绿即发版完成；产物（APK / mapping / SHA256SUMS）挂在 Gitea Release 下。
@@ -169,17 +169,17 @@ JAVA_HOME=/home/mar/android-studio/jbr ./gradlew assembleRelease --no-daemon
 # → app/build/outputs/apk/release/app-release.apk
 
 # 2) 从 ~/.git-credentials 取 token
-TOKEN=$(grep 'git.vectory.cn' ~/.git-credentials | sed 's|https://[^:]*:\([^@]*\)@.*|\1|')
+TOKEN=$(grep '192.168.3.252:11330' ~/.git-credentials | sed 's|http://[^:]*:\([^@]*\)@.*|\1|')
 VERSION=12.1.0
 
 # 3) 建 Release（target_commitish 指向 main）
-curl -s -X POST "https://git.vectory.cn:18443/api/v1/repos/mfreceiver/sync-player/releases" \
+curl -s -X POST "http://192.168.3.252:11330/api/v1/repos/mfreceiver/sync-player/releases" \
   -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
   -d "{\"tag_name\":\"v$VERSION\",\"target_commitish\":\"main\",\"name\":\"v$VERSION\",\"draft\":false,\"prerelease\":false}"
 # 返回 JSON 的 "id" 即 RELEASE_ID
 
 # 4) 上传 APK asset
-curl -s -X POST "https://git.vectory.cn:18443/api/v1/repos/mfreceiver/sync-player/releases/RELEASE_ID/assets" \
+curl -s -X POST "http://192.168.3.252:11330/api/v1/repos/mfreceiver/sync-player/releases/RELEASE_ID/assets" \
   -H "Authorization: token $TOKEN" \
   -F "attachment=@app/build/outputs/apk/release/app-release.apk" -F "name=app-release.apk"
 ```

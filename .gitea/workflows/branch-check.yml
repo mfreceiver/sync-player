@@ -28,7 +28,7 @@ jobs:
           GITEA_LAN_URL: ${{ vars.MY_GITEA_LAN_URL }}
         run: |
           set -e
-          BASE="${GITEA_LAN_URL:-https://git.vectory.cn:18443}"
+          BASE="${GITEA_LAN_URL:-http://192.168.3.252:11330}"
           # 凭据行 = scheme://x-access-token:TOKEN@host:port（从 BASE 拆出 scheme 与 host 再拼回，
           # 这样 LAN(http) 与公网(https) 同一套逻辑，无需分别写死）
           SCHEME="${BASE%%://*}"

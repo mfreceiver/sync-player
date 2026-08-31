@@ -23,7 +23,7 @@ jobs:
           GITEA_LAN_URL: ${{ vars.MY_GITEA_LAN_URL }}
         run: |
           set -e
-          BASE="${GITEA_LAN_URL:-https://git.vectory.cn:18443}"
+          BASE="${GITEA_LAN_URL:-http://192.168.3.252:11330}"
           # 凭据行 = scheme://x-access-token:TOKEN@host:port（从 BASE 拆出 scheme 与 host 再拼回，
           # 这样 LAN(http) 与公网(https) 同一套逻辑，无需分别写死）
           SCHEME="${BASE%%://*}"
@@ -70,7 +70,7 @@ jobs:
           # 若 asset 上传 403，改用自建 secret RELEASE_GITEA_TOKEN（个人 token，release 权限）。
           GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # 走局域网直连（与 Checkout 同源）；未设置时 publish-release.sh 自身默认公网 HTTPS。
-          GITEA_URL: ${{ vars.MY_GITEA_LAN_URL || 'https://git.vectory.cn:18443' }}
+          GITEA_URL: ${{ vars.MY_GITEA_LAN_URL || 'http://192.168.3.252:11330' }}
           TAG: ${{ github.ref_name }}
         run: ./scripts/gitea/publish-release.sh "$TAG"
 
@@ -88,6 +88,6 @@ jobs:
           TAG: ${{ github.ref_name }}
           OUTCOME: ${{ job.status }}
         run: |
-          BASE="https://git.vectory.cn:18443/mfreceiver/sync-player"
+          BASE="http://192.168.3.252:11330/mfreceiver/sync-player"
           ./scripts/gitea/notify-wecom.sh "$WECOM_WEBHOOK" "$OUTCOME" "$TAG" \
             "$BASE/releases/tag/$TAG" "$BASE/actions"

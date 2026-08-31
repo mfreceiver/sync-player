@@ -11,13 +11,13 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 # token:优先环境变量,兜底 ~/.git-credentials
 if [[ -z "${GITEA_TOKEN:-}" ]] && [[ -f ~/.git-credentials ]]; then
-  GITEA_TOKEN=$(grep 'git.vectory.cn' ~/.git-credentials | sed 's|https://[^:]*:\([^@]*\)@.*|\1|')
+  GITEA_TOKEN=$(grep '192.168.3.252:11330' ~/.git-credentials | sed 's|http://[^:]*:\([^@]*\)@.*|\1|')
 fi
-[[ -n "${GITEA_TOKEN:-}" ]] || { echo "❌ 无 GITEA_TOKEN(导出它或确保 ~/.git-credentials 有 git.vectory.cn 条目)"; exit 1; }
+[[ -n "${GITEA_TOKEN:-}" ]] || { echo "❌ 无 GITEA_TOKEN(导出它或确保 ~/.git-credentials 有 192.168.3.252:11330 条目)"; exit 1; }
 
 # repo 从 git remote 推导(本机 origin → mfreceiver/sync-player)
 REPO=$(git remote get-url origin | sed 's|.*://[^/]*/||; s|\.git$||')
-API="https://git.vectory.cn:18443/api/v1/repos/$REPO/actions/secrets"
+API="http://192.168.3.252:11330/api/v1/repos/$REPO/actions/secrets"
 
 # 从 local.properties 读 release.*
 lp=local.properties
