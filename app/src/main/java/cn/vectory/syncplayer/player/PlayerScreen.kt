@@ -1,57 +1,29 @@
 package cn.vectory.syncplayer.player
 
 import android.content.pm.ActivityInfo
-import android.graphics.Bitmap
 import android.media.AudioManager
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.CustomAccessibilityAction
-import androidx.compose.ui.semantics.ProgressBarRangeInfo
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.customActions
-import androidx.compose.ui.semantics.progressBarRangeInfo
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.res.stringResource
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.browser.UndoResult
-import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -63,11 +35,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import cn.vectory.syncplayer.player.GesturePlayerView.DoubleTapZone
-import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
-import cn.vectory.syncplayer.ui.util.formatDuration
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import java.io.File
 import kotlin.math.abs
 import kotlin.math.pow
 
@@ -99,11 +67,9 @@ fun PlayerScreen(
     var pendingUndoId by remember { mutableStateOf<Long?>(null) }
     // NOTE: currentPosition (200 ms high-frequency flow) is intentionally NOT
     // subscribed here. The only top-level consumer used to be `seekDisplayProgress`,
-    // whose currentPosition branch was unreachable inside its sole use site
-    // (guarded by `isSeekingActive`). The narrow progress components
-    // (`SeekProgressBarWithTime`, `MinimizedProgressBar`) subscribe on their
-    // own so polling-driven recomposition stays scoped to them and does not
-    // invalidate the whole PlayerScreen body. (AGENTS.md · State Splitting.)
+    // The narrow Aurora progress components subscribe on their own so
+    // polling-driven recomposition stays scoped to them and does not invalidate
+    // the whole PlayerScreen body. (AGENTS.md · State Splitting.)
 
     var originalBrightness by remember { mutableFloatStateOf(-1f) }
     var initialVolume by remember { mutableIntStateOf(0) }
@@ -234,14 +200,16 @@ fun PlayerScreen(
         onDispose { exoPlayer.removeListener(playerListener) }
     }
 
+    val seekTarget by rememberUpdatedState(uiState.seekTarget)
+    val isGestureSeeking by rememberUpdatedState(uiState.isGestureSeeking)
     LaunchedEffect(uiState.isPlaying) {
         if (uiState.isPlaying) {
             while (true) {
                 val playerPos = exoPlayer.currentPosition.coerceAtLeast(0)
                 val playerDur = exoPlayer.duration.coerceAtLeast(0)
 
-                if (uiState.seekTarget >= 0) {
-                    if (abs(playerPos - uiState.seekTarget) < 500) {
+                if (seekTarget >= 0) {
+                    if (abs(playerPos - seekTarget) < 500) {
                         viewModel.clearSeekTarget()
                     }
                 }
@@ -249,7 +217,7 @@ fun PlayerScreen(
                 // Don't update gestureView.currentPosition during gesture seek —
                 // it would cause the seek target to drift since GesturePlayerView
                 // uses currentPosition as the base for offset calculation.
-                if (!uiState.isGestureSeeking) {
+                if (!isGestureSeeking) {
                     gestureView.currentPosition = playerPos
                 }
                 gestureView.videoDuration = playerDur
@@ -305,6 +273,7 @@ fun PlayerScreen(
     // every recomposition. Reading uiStateRef.value at callback time always
     // returns the current snapshot (see AGENTS.md · Recomposition Isolation).
     val uiStateRef = rememberUpdatedState(uiState)
+    var rippleEvent by remember { mutableStateOf<RippleEvent?>(null) }
 
     // Build the listener ONCE. The previous code reallocated the whole object
     // and re-assigned it to the View on every recomposition. Captures that are
@@ -353,7 +322,12 @@ fun PlayerScreen(
                 val percent = (newBrightness * 100).toInt()
                 viewModel.showOverlay(PlayerOverlay.Brightness(percent))
             }
-            override fun onDoubleTap(zone: DoubleTapZone) {
+            override fun onDoubleTap(zone: DoubleTapZone, xFraction: Float, yFraction: Float) {
+                rippleEvent = RippleEvent(
+                    sequence = (rippleEvent?.sequence ?: 0L) + 1L,
+                    xFraction = xFraction,
+                    yFraction = yFraction,
+                )
                 val s = uiStateRef.value
                 when (zone) {
                     DoubleTapZone.PREVIOUS -> {
@@ -414,71 +388,28 @@ fun PlayerScreen(
     gestureView.gestureListener = gestureListener
 
     var showSettingsPopup by remember { mutableStateOf(false) }
-    var bottomAreaWidth by remember { mutableIntStateOf(0) }
-    var progressBarHeightPx by remember { mutableIntStateOf(0) }
-
     val previewExtractor = remember { SeekPreviewExtractor(context) }
     DisposableEffect(previewExtractor) {
         onDispose {
             previewExtractor.release()
         }
     }
-    var seekPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var seekPreviewPosition by remember { mutableLongStateOf(0L) }
-    var lastExtractedPosMs by remember { mutableLongStateOf(-1L) }
-
-    val isSeekingActive = uiState.isUserSeeking || uiState.isGestureSeeking
-
-    // Only consumed inside `if (isSeekingActive && seekPreviewBitmap != null)`
-    // below, so when isSeekingActive is true the first two branches always win.
-    // The previous currentPosition branch was only reached when NOT seeking —
-    // at which point this value is never read. Dropping it lets us stop
-    // subscribing to the 200 ms currentPosition flow at the top of the screen.
-    val seekDisplayProgress = when {
-        uiState.isUserSeeking -> uiState.userSeekPosition
-        uiState.isGestureSeeking -> uiState.gestureSeekPosition
-        else -> 0f
+    val seekSource = when {
+        uiState.isUserSeeking -> SeekSource.PROGRESS_BAR
+        uiState.isGestureSeeking -> SeekSource.GESTURE
+        else -> SeekSource.NONE
     }
+    val chromeVisibility = resolveAuroraChromeVisibility(
+        isFullscreen = uiState.isFullscreen,
+        showControls = uiState.showControls,
+        seekSource = seekSource,
+    )
+    val videoUri = uiState.videoItem
+        ?.let { cn.vectory.syncplayer.provider.MediaUris.mediaUri(it.id).toString() }
 
-    LaunchedEffect(isSeekingActive) {
-        if (!isSeekingActive) {
-            previewExtractor.endSession()
-            delay(100L)
-            seekPreviewBitmap = null
-            return@LaunchedEffect
-        }
-        val uriString = uiState.videoItem?.let { cn.vectory.syncplayer.provider.MediaUris.mediaUri(it.id).toString() } ?: return@LaunchedEffect
-        previewExtractor.beginSession(uriString.toUri())
-        while (isActive) {
-            val progress = when {
-                uiState.isUserSeeking -> uiState.userSeekPosition
-                uiState.isGestureSeeking -> uiState.gestureSeekPosition
-                else -> break
-            }
-            val duration = uiState.duration
-            if (duration <= 0) {
-                delay(50)
-                continue
-            }
-            val posMs = (progress * duration).toLong()
-            seekPreviewPosition = posMs
-
-            if (posMs == lastExtractedPosMs) {
-                delay(50)
-                continue
-            }
-
-            val cached = previewExtractor.getCachedFrame(uriString, posMs)
-            if (cached != null) {
-                seekPreviewBitmap = cached
-                lastExtractedPosMs = posMs
-            } else {
-                val bitmap = previewExtractor.extractFrameAtPosition(uriString, posMs)
-                lastExtractedPosMs = posMs
-                if (bitmap != null && isActive) {
-                    seekPreviewBitmap = bitmap
-                }
-            }
+    LaunchedEffect(uiState.isFullscreen, uiState.showControls, uiState.videoItem?.id) {
+        if (showSettingsPopup && (uiState.isFullscreen || !uiState.showControls || uiState.videoItem == null)) {
+            showSettingsPopup = false
         }
     }
 
@@ -539,209 +470,82 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        val controlsVisible = !uiState.isFullscreen && uiState.showControls
+        AuroraBands()
+        AuroraTopRow(
+            fileName = uiState.videoItem?.fileName?.substringBeforeLast(".") ?: "",
+            visible = chromeVisibility.showTopRow,
+            onExit = ::doExit,
+        )
 
-        if (controlsVisible) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.TopCenter)
-                    .verticalGradientBackground(
-                        listOf(Color.Black.copy(alpha = 0.5f), Color.Transparent),
-                        GradientHeight
-                    )
-                    .statusBarsPadding()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .padding(horizontal = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(
-                        onClick = { doExit() },
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = stringResource(R.string.player_exit),
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                    Text(
-                        text = uiState.videoItem?.fileName?.substringBeforeLast(".") ?: "",
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 4.dp)
-                    )
-                    val isTrashed = uiState.playbackRecord?.isTrashed == true
-                    IconButton(
-                        onClick = {
-                            // Defer the Snackbar trigger until the async toggle succeeds.
-                            // The callback receives the FIXED video id captured at call time.
-                            viewModel.toggleTrashed { completedId ->
-                                pendingUndoId = completedId
-                                pendingUndoTrigger++
-                            }
-                        },
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (isTrashed) Icons.Filled.Delete else Icons.Outlined.DeleteOutline,
-                            contentDescription = if (isTrashed) stringResource(R.string.player_restore) else stringResource(R.string.player_trash),
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                }
+        if (chromeVisibility.showProgressZone || chromeVisibility.showControlRow) {
+            Box(modifier = Modifier.align(Alignment.BottomCenter)) {
+                AuroraBottomArea(
+                    visibility = chromeVisibility,
+                    viewModel = viewModel,
+                    exoPlayer = exoPlayer,
+                    seekSource = seekSource,
+                    durationMs = uiState.duration,
+                    gesturePositionMs = (uiState.gestureSeekPosition * uiState.duration).toLong(),
+                    isPlaying = uiState.isPlaying,
+                    onOpenSettings = { showSettingsPopup = true },
+                    onBack10 = { seekBy(viewModel, exoPlayer, -10_000L) },
+                    onForward10 = { seekBy(viewModel, exoPlayer, 10_000L) },
+                    onRotate = viewModel::toggleFullscreen,
+                )
             }
         }
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter)
-                .onSizeChanged {
-                    bottomAreaWidth = it.width
-                }
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-            ) {
-                val showControlBar = controlsVisible || isSeekingActive
-                if (showControlBar) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .verticalGradientBackground(
-                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.5f)),
-                                GradientHeight
-                            )
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                            .onSizeChanged { progressBarHeightPx = it.height }
-                    ) {
-                        PlaybackControlRow(
-                            viewModel = viewModel,
-                            exoPlayer = exoPlayer,
-                            isPlaying = uiState.isPlaying,
-                            isFullscreen = uiState.isFullscreen,
-                            playbackSpeed = uiState.playbackSpeed,
-                            showSettingsPopup = showSettingsPopup,
-                            onToggleSettings = { showSettingsPopup = !showSettingsPopup },
-                            onDismissSettings = { showSettingsPopup = false }
-                        )
-                    }
-                }
+        if (chromeVisibility.showMinimizedProgress) {
+            Box(modifier = Modifier.align(Alignment.BottomCenter)) {
+                AuroraMinimizedProgressBar(
+                    viewModel = viewModel,
+                    durationMs = uiState.duration,
+                    onSeekBy = { seekBy(viewModel, exoPlayer, it) },
+                )
             }
         }
 
-        if (!uiState.showControls && !isSeekingActive) {
-            MinimizedProgressBar(viewModel, uiState.duration)
-        }
-
-        if (isSeekingActive && seekPreviewBitmap != null) {
-            val bitmap = seekPreviewBitmap!!
-            val density = LocalDensity.current
-            val previewWidthDp = 180.dp
-            val previewWidthPx = with(density) { previewWidthDp.toPx() }
-            val bitmapRatio = bitmap.height.toFloat() / bitmap.width.toFloat()
-            val previewHeightDp = with(density) { (previewWidthPx * bitmapRatio).toDp() }.coerceAtMost(100.dp)
-
-            val sideElementsWidthPx = with(density) { (32.dp + 8.dp + 8.dp + 32.dp).toPx() }
-            val progressBarStartPx = with(density) { (32.dp + 8.dp).toPx() }
-            val progressBarWidthPx = bottomAreaWidth.toFloat() - sideElementsWidthPx
-
-            val maxOffsetPx = (bottomAreaWidth.toFloat() - previewWidthPx).coerceAtLeast(0f)
-            val progressPointPx = progressBarStartPx + seekDisplayProgress * progressBarWidthPx
-            val offsetPx = (progressPointPx - previewWidthPx / 2f)
-                .coerceIn(0f, maxOffsetPx)
-            val offsetDp = with(density) { offsetPx.toDp() }
-
-            val bottomOffsetDp = with(density) { progressBarHeightPx.toDp() }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = bottomOffsetDp, start = offsetDp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(previewWidthDp)
-                        .height(previewHeightDp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color.Black.copy(alpha = 0.7f))
-                ) {
-                    Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize()
+        AuroraSettingsModal(
+            visible = showSettingsPopup,
+            isFullscreen = uiState.isFullscreen,
+            showControls = uiState.showControls,
+            videoId = uiState.videoItem?.id,
+            playbackSpeed = uiState.playbackSpeed,
+            isTrashed = uiState.playbackRecord?.isTrashed == true,
+            errorSequence = uiState.error?.seq,
+            onDismiss = { showSettingsPopup = false },
+            onSpeedChange = viewModel::setPlaybackSpeed,
+            onDirectionChange = { fullscreen ->
+                viewModel.setFullscreen(fullscreen)
+                viewModel.showOverlay(
+                    PlayerOverlay.Orientation(
+                        if (fullscreen) OrientationMode.FULLSCREEN else OrientationMode.ROTATION
                     )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.BottomCenter)
-                            .background(Color.Black.copy(alpha = 0.6f))
-                            .padding(vertical = 2.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "${formatDuration(seekPreviewPosition)} / ${formatDuration(uiState.duration)}",
-                            color = Color.White,
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
-                }
-            }
-        }
+                )
+            },
+            onToggleTrash = viewModel::toggleTrashed,
+            onTrashSucceeded = { completedId ->
+                pendingUndoId = completedId
+                pendingUndoTrigger++
+            },
+        )
 
-        PlayerOverlayView(uiState.currentOverlay)
+        AuroraSeekPreviewHost(
+            seekSource = seekSource,
+            progressScrubState = viewModel.progressScrubState,
+            gesturePositionMs = (uiState.gestureSeekPosition * uiState.duration).toLong(),
+            durationMs = uiState.duration,
+            videoUri = videoUri,
+            previewExtractor = previewExtractor,
+        )
+        AuroraPill(uiState.currentOverlay)
+        DoubleTapRipple(rippleEvent)
 
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier.align(Alignment.BottomCenter)
         )
 
-        if (uiState.speedOverlayMultiplier != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = 32.dp),
-                contentAlignment = Alignment.TopCenter
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = Color.Black.copy(alpha = 0.6f),
-                    tonalElevation = 0.dp
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.FastForward,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Text(
-                            text = stringResource(R.string.player_speed_up),
-                            color = Color.White,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                }
-            }
-        }
 
         if (uiState.hasPlayerError) {
             Box(
@@ -797,399 +601,10 @@ fun PlayerScreen(
     }
 }
 
-@Composable
-private fun PlaybackControlRow(
-    viewModel: PlayerViewModel,
-    exoPlayer: ExoPlayer,
-    isPlaying: Boolean,
-    isFullscreen: Boolean,
-    playbackSpeed: Float,
-    showSettingsPopup: Boolean,
-    onToggleSettings: () -> Unit,
-    onDismissSettings: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(48.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        IconButton(
-            onClick = {
-                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-            },
-            modifier = Modifier.size(48.dp)
-        ) {
-            Icon(
-                imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                contentDescription = if (isPlaying) stringResource(R.string.player_pause) else stringResource(R.string.player_play),
-                tint = Color.White,
-                modifier = Modifier.size(32.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.width(8.dp))
-
-        SeekProgressBarWithTime(
-            viewModel = viewModel,
-            exoPlayer = exoPlayer
-        )
-
-        Spacer(modifier = Modifier.width(4.dp))
-
-        Box {
-            IconButton(
-                onClick = onToggleSettings,
-                modifier = Modifier.size(48.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Settings,
-                    contentDescription = stringResource(R.string.player_settings),
-                    tint = Color.White,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-            if (showSettingsPopup) {
-                SettingsPopup(
-                    isFullscreen = isFullscreen,
-                    playbackSpeed = playbackSpeed,
-                    onDirectionChange = { fullscreen ->
-                        viewModel.setFullscreen(fullscreen)
-                        viewModel.showOverlay(
-                            PlayerOverlay.Orientation(if (fullscreen) OrientationMode.FULLSCREEN else OrientationMode.ROTATION)
-                        )
-                        onDismissSettings()
-                    },
-                    onSpeedChange = { speed ->
-                        viewModel.setPlaybackSpeed(speed)
-                        onDismissSettings()
-                    },
-                    onDismiss = onDismissSettings
-                )
-            }
-        }
-    }
-}
-
-/**
- * High-frequency progress bar + time text.
- * Subscribes to [PlayerViewModel.currentPosition] independently so that
- * 200 ms polling only recomposes this narrow scope — not the surrounding
- * play/pause and settings buttons.
- */
-@Composable
-private fun RowScope.SeekProgressBarWithTime(
-    viewModel: PlayerViewModel,
-    exoPlayer: ExoPlayer
-) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val currentPosition by viewModel.currentPosition.collectAsStateWithLifecycle()
-
-    val seekDisplayProgress = when {
-        uiState.isUserSeeking -> uiState.userSeekPosition
-        uiState.isGestureSeeking -> uiState.gestureSeekPosition
-        uiState.duration > 0 -> (currentPosition.toFloat() / uiState.duration.toFloat()).coerceIn(0f, 1f)
-        else -> 0f
-    }
-    val durationMs = uiState.duration.coerceAtLeast(0)
-    val positionMs = (seekDisplayProgress * durationMs).toLong()
-
-    fun onSeekBy(deltaMs: Long) {
-        val targetMs = (currentPosition + deltaMs).coerceIn(0L, durationMs)
-        exoPlayer.seekTo(targetMs)
-        viewModel.onUserSeekFinished(
-            if (durationMs > 0) targetMs.toFloat() / durationMs else 0f
-        )
-    }
-    val customAccessibilityActionForward = CustomAccessibilityAction(
-        label = stringResource(R.string.player_a11y_seek_forward_10s),
-        action = { onSeekBy(10_000L); true },
-    )
-    val customAccessibilityActionBackward = CustomAccessibilityAction(
-        label = stringResource(R.string.player_a11y_seek_backward_10s),
-        action = { onSeekBy(-10_000L); true },
-    )
-
-    Box(
-        modifier = Modifier
-            .weight(1f)
-            .height(20.dp)
-            .semantics {
-                progressBarRangeInfo = ProgressBarRangeInfo(
-                    current = positionMs.toFloat(),
-                    range = 0f..durationMs.toFloat(),
-                )
-                stateDescription = "${formatDuration(positionMs)} / ${formatDuration(durationMs)}"
-                customActions = listOf(
-                    customAccessibilityActionForward,
-                    customAccessibilityActionBackward,
-                )
-            }
-            .pointerInput(uiState.duration) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        viewModel.onUserSeekStarted()
-                        var lastP = (down.position.x / size.width).coerceIn(0f, 1f)
-                        viewModel.onUserSeekChanged(lastP)
-                        down.consume()
-
-                        do {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.first()
-                            change.consume()
-                            lastP = (change.position.x / size.width).coerceIn(0f, 1f)
-                            viewModel.onUserSeekChanged(lastP)
-                        } while (change.pressed)
-
-                        viewModel.onUserSeekFinished(lastP)
-                        exoPlayer.seekTo((lastP * uiState.duration).toLong())
-                    }
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(4.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(Color.White.copy(alpha = 0.3f))
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(seekDisplayProgress)
-                    .background(LocalExtendedColors.current.playerProgressFill)
-            )
-        }
-    }
-
-    Text(
-        text = "${formatDuration(currentPosition)} / ${formatDuration(uiState.duration)}",
-        color = Color.White,
-        style = MaterialTheme.typography.labelSmall,
-        modifier = Modifier.widthIn(min = 80.dp),
-        textAlign = TextAlign.Center,
-        fontSize = 11.sp,
-    )
-}
-
-@Composable
-private fun MinimizedProgressBar(viewModel: PlayerViewModel, duration: Long) {
-    val currentPosition by viewModel.currentPosition.collectAsStateWithLifecycle()
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .semantics {
-                progressBarRangeInfo = ProgressBarRangeInfo(
-                    current = currentPosition.coerceIn(0L, duration.coerceAtLeast(0)).toFloat(),
-                    range = 0f..duration.coerceAtLeast(0).toFloat(),
-                )
-            }
-            .background(Color.White.copy(alpha = 0.3f))
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(
-                    if (duration > 0)
-                        (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
-                    else 0f
-                )
-                .background(LocalExtendedColors.current.playerProgressFill)
-        )
-    }
-}
-
-@Composable
-private fun SettingsPopup(
-    isFullscreen: Boolean,
-    playbackSpeed: Float,
-    onDirectionChange: (Boolean) -> Unit,
-    onSpeedChange: (Float) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    Popup(
-        alignment = Alignment.BottomEnd,
-        properties = PopupProperties(focusable = true),
-        onDismissRequest = onDismiss
-    ) {
-        Surface(
-            modifier = Modifier
-                .widthIn(max = 200.dp)
-                .padding(end = 8.dp, bottom = 8.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = Color.Black.copy(alpha = 0.85f),
-            tonalElevation = 0.dp
-        ) {
-            Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = stringResource(R.string.player_direction),
-                    color = Color.White.copy(alpha = 0.7f),
-                    style = MaterialTheme.typography.labelMedium
-                )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    IconOptionChip(
-                        isSelected = !isFullscreen,
-                        onClick = { onDirectionChange(false) },
-                        label = stringResource(R.string.player_a11y_rotation),
-                        imageVector = Icons.Filled.ScreenRotation,
-                    )
-                    IconOptionChip(
-                        isSelected = isFullscreen,
-                        onClick = { onDirectionChange(true) },
-                        label = stringResource(R.string.player_a11y_fullscreen),
-                        imageVector = Icons.Filled.Fullscreen,
-                    )
-                }
-                HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
-                Text(
-                    text = stringResource(R.string.player_speed),
-                    color = Color.White.copy(alpha = 0.7f),
-                    style = MaterialTheme.typography.labelMedium
-                )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    listOf(1.0f, 1.5f, 2.0f).forEach { speed ->
-                        val label = if (speed == 1.0f) "1x" else "${speed}x"
-                        TextOptionChip(
-                            isSelected = playbackSpeed == speed,
-                            onClick = { onSpeedChange(speed) },
-                            label = label
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun IconOptionChip(
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    label: String,
-    imageVector: ImageVector,
-) {
-    Surface(
-        modifier = Modifier.size(40.dp),
-        shape = RoundedCornerShape(8.dp),
-        color = if (isSelected) Color.White.copy(alpha = 0.3f) else Color.Transparent,
-        contentColor = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
-        onClick = onClick
-    ) {
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-            Icon(
-                imageVector = imageVector,
-                contentDescription = label,
-                tint = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
-                modifier = Modifier.size(18.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun TextOptionChip(
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    label: String,
-) {
-    Surface(
-        modifier = Modifier
-            .height(32.dp)
-            .semantics {
-                selected = isSelected
-                role = Role.RadioButton
-            },
-        shape = RoundedCornerShape(8.dp),
-        color = if (isSelected) Color.White.copy(alpha = 0.3f) else Color.Transparent,
-        contentColor = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
-        onClick = onClick
-    ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .fillMaxHeight()
-                .padding(horizontal = 12.dp)
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium
-            )
-        }
-    }
-}
-
-@Composable
-private fun PlayerOverlayView(overlay: PlayerOverlay?) {
-    if (overlay == null) return
-
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = Color.Black.copy(alpha = 0.6f),
-            tonalElevation = 0.dp
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                val icon: ImageVector = when (overlay) {
-                    is PlayerOverlay.Seek -> Icons.Filled.Schedule
-                    is PlayerOverlay.Volume -> Icons.AutoMirrored.Filled.VolumeUp
-                    is PlayerOverlay.Brightness -> Icons.Filled.LightMode
-                    is PlayerOverlay.SpeedUp -> Icons.Filled.FastForward
-                    is PlayerOverlay.Previous -> Icons.Filled.SkipPrevious
-                    is PlayerOverlay.Next -> Icons.Filled.SkipNext
-                    is PlayerOverlay.NoPrevious -> Icons.Filled.Block
-                    is PlayerOverlay.NoNext -> Icons.Filled.Block
-                    is PlayerOverlay.TrashAction -> if (overlay.isIn) Icons.Filled.Delete else Icons.Outlined.DeleteOutline
-                    is PlayerOverlay.Orientation -> when (overlay.mode) {
-                        OrientationMode.FULLSCREEN -> Icons.Filled.Fullscreen
-                        OrientationMode.ROTATION -> Icons.Filled.ScreenRotation
-                    }
-                }
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-
-                val text: String = when (overlay) {
-                    is PlayerOverlay.Seek -> "${formatDuration(overlay.positionMs)} / ${formatDuration(overlay.durationMs)}"
-                    is PlayerOverlay.Volume -> "${overlay.percent}%"
-                    is PlayerOverlay.Brightness -> "${overlay.percent}%"
-                    is PlayerOverlay.SpeedUp -> "${overlay.multiplier}X"
-                    is PlayerOverlay.Previous -> stringResource(R.string.player_overlay_previous)
-                    is PlayerOverlay.Next -> stringResource(R.string.player_overlay_next)
-                    is PlayerOverlay.NoPrevious -> stringResource(R.string.player_overlay_no_previous)
-                    is PlayerOverlay.NoNext -> stringResource(R.string.player_overlay_no_next)
-                    is PlayerOverlay.TrashAction -> if (overlay.isIn) stringResource(R.string.player_overlay_trash_in) else stringResource(R.string.player_overlay_trash_out)
-                    is PlayerOverlay.Orientation -> when (overlay.mode) {
-                        OrientationMode.FULLSCREEN -> stringResource(R.string.player_overlay_orientation_fullscreen)
-                        OrientationMode.ROTATION -> stringResource(R.string.player_overlay_orientation_rotation)
-                    }
-                }
-                Text(
-                    text = text,
-                    color = Color.White,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-        }
-    }
+private fun seekBy(viewModel: PlayerViewModel, exoPlayer: ExoPlayer, deltaMs: Long) {
+    val durationMs = exoPlayer.duration.coerceAtLeast(0L)
+    val targetMs = (viewModel.currentPosition.value + deltaMs).coerceIn(0L, durationMs)
+    viewModel.onProgressScrubStarted(targetMs)
+    viewModel.onProgressScrubFinished(targetMs)
+    exoPlayer.seekTo(targetMs)
 }

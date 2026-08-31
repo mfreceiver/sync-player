@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
+import kotlin.math.roundToInt
 
 sealed class PlayerOverlay {
     data class Seek(val positionMs: Long, val durationMs: Long) : PlayerOverlay()
@@ -62,7 +63,6 @@ data class PlayerUiState(
     val showControls: Boolean = true,
     val currentOverlay: PlayerOverlay? = null,
     val isUserSeeking: Boolean = false,
-    val userSeekPosition: Float = 0f,
     val isGestureSeeking: Boolean = false,
     val gestureSeekPosition: Float = 0f,
     val seekTarget: Long = -1L,
@@ -72,6 +72,22 @@ data class PlayerUiState(
     val hasPlayerError: Boolean = false,
     val error: ErrorEvent? = null,
 )
+
+/**
+ * High-frequency state used exclusively by the Aurora progress strip and its
+ * preview host.  Keeping it outside [PlayerUiState] prevents a drag MOVE from
+ * invalidating the complete player chrome.
+ */
+data class ProgressScrubUiState(
+    val isActive: Boolean = false,
+    val anchorPositionMs: Long = 0L,
+    val targetPositionMs: Long = 0L,
+    val isFineMode: Boolean = false,
+    val factor: Float = 1f,
+) {
+    val deltaSeconds: Int
+        get() = ((targetPositionMs - anchorPositionMs) / 1000.0).roundToInt()
+}
 
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
@@ -99,6 +115,9 @@ class PlayerViewModel @Inject constructor(
 
     private val _currentPosition = MutableStateFlow(0L)
     val currentPosition: StateFlow<Long> = _currentPosition.asStateFlow()
+
+    private val _progressScrubState = MutableStateFlow(ProgressScrubUiState())
+    val progressScrubState: StateFlow<ProgressScrubUiState> = _progressScrubState.asStateFlow()
 
     private val errorSeq = AtomicLong(0L)
 
@@ -206,9 +225,9 @@ class PlayerViewModel @Inject constructor(
                         seekTarget = -1L,
                         isUserSeeking = false,
                         isGestureSeeking = false,
-                        userSeekPosition = 0f,
                         gestureSeekPosition = 0f
                     ) }
+                    _progressScrubState.value = ProgressScrubUiState()
                     _currentPosition.value = record?.position ?: 0L
                 }
             } catch (e: CancellationException) {
@@ -354,18 +373,46 @@ class PlayerViewModel @Inject constructor(
         _uiState.update { it.copy(isLongPressing = longPressing) }
     }
 
-    fun onUserSeekStarted() {
+    fun onProgressScrubStarted(anchorPositionMs: Long) {
+        val duration = _uiState.value.duration.coerceAtLeast(0L)
+        val anchor = anchorPositionMs.coerceIn(0L, duration)
+        _progressScrubState.value = ProgressScrubUiState(
+            isActive = true,
+            anchorPositionMs = anchor,
+            targetPositionMs = anchor,
+        )
         _uiState.update { it.copy(isUserSeeking = true) }
     }
 
-    fun onUserSeekChanged(position: Float) {
-        _uiState.update { it.copy(userSeekPosition = position) }
+    /** MOVE deliberately updates only the narrow progress state. */
+    fun onProgressScrubChanged(
+        targetPositionMs: Long,
+        factor: Float,
+        isFineMode: Boolean,
+    ) {
+        if (!_progressScrubState.value.isActive) return
+        val duration = _uiState.value.duration.coerceAtLeast(0L)
+        _progressScrubState.update {
+            it.copy(
+                targetPositionMs = targetPositionMs.coerceIn(0L, duration),
+                factor = factor,
+                isFineMode = isFineMode,
+            )
+        }
     }
 
-    fun onUserSeekFinished(position: Float) {
-        val target = (position * _uiState.value.duration).toLong()
+    /** FINISH is the sole progress-bar path that commits playback position. */
+    fun onProgressScrubFinished(targetPositionMs: Long) {
+        val target = targetPositionMs.coerceIn(0L, _uiState.value.duration.coerceAtLeast(0L))
         _currentPosition.value = target
+        _progressScrubState.value = ProgressScrubUiState()
         _uiState.update { it.copy(isUserSeeking = false, seekTarget = target) }
+    }
+
+    /** CANCEL rolls back the UI session without seeking or changing position. */
+    fun onProgressScrubCancelled() {
+        _progressScrubState.value = ProgressScrubUiState()
+        _uiState.update { it.copy(isUserSeeking = false) }
     }
 
     fun onGestureSeekStarted() {

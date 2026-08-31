@@ -57,7 +57,8 @@ class GesturePlayerView @JvmOverloads constructor(
         fun onVolumeGestureStart()
         fun onVolumeChanged(totalDelta: Float)
         fun onBrightnessChanged(delta: Float)
-        fun onDoubleTap(zone: DoubleTapZone)
+        /** Fractions preserve the existing zone mapping while locating the Aurora ripple. */
+        fun onDoubleTap(zone: DoubleTapZone, xFraction: Float, yFraction: Float)
         fun onSeekOverlay(positionMs: Long, durationMs: Long) {}
         fun onLongPressSpeedOverlay(multiplier: Float) {}
         fun onHideOverlay() {}
@@ -161,7 +162,11 @@ class GesturePlayerView @JvmOverloads constructor(
                 y < h / 2f -> DoubleTapZone.CENTER_TOP
                 else -> DoubleTapZone.CENTER_BOTTOM
             }
-            gestureListener?.onDoubleTap(zone)
+            gestureListener?.onDoubleTap(
+                zone = zone,
+                xFraction = if (w > 0f) (x / w).coerceIn(0f, 1f) else 0.5f,
+                yFraction = if (h > 0f) (y / h).coerceIn(0f, 1f) else 0.5f,
+            )
             return true
         }
     })

@@ -219,4 +219,8 @@ dependencies {
     androidTestImplementation(libs.hilt.android.testing)
     kspAndroidTest(libs.hilt.compiler)
     androidTestImplementation(libs.mockk.android)
+
+    // The ComponentActivity test manifest must be merged into the target debug APK,
+    // not the separate instrumentation APK, so ActivityScenario launches in-app.
+    debugImplementation(libs.compose.ui.test.manifest)
 }

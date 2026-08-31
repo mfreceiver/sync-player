@@ -8,6 +8,8 @@ import android.util.LruCache
 import androidx.core.graphics.scale
 import androidx.core.net.toUri
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -16,7 +18,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToLong
 
-class SeekPreviewExtractor(private val context: Context) {
+class SeekPreviewExtractor internal constructor(
+    private val context: Context,
+    private val retrieverFactory: () -> MediaMetadataRetriever = { MediaMetadataRetriever() },
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
+) {
 
     private companion object {
         // Cache budget in KB. Each scaled frame is up to MAX_WIDTH wide; a
@@ -47,7 +53,7 @@ class SeekPreviewExtractor(private val context: Context) {
     @Volatile private var lastExtractedPositionMs: Long = -1L
     @Volatile private var lastDirection: Int = 0
     private var prefetchJob: Job? = null
-    private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val prefetchScope = CoroutineScope(SupervisorJob() + dispatcher)
 
     /**
      * Call when seek gesture begins.
@@ -70,8 +76,8 @@ class SeekPreviewExtractor(private val context: Context) {
         if (!needNew) return
 
         // Blocking: do this off the calling (often main) thread.
-        val newRetriever = withContext(Dispatchers.IO) {
-            MediaMetadataRetriever().apply { setDataSource(context, uri) }
+        val newRetriever = withContext(dispatcher) {
+            retrieverFactory().apply { setDataSource(context, uri) }
         }
 
         // Swap under the lock; defer the previous retriever's release so we
@@ -82,7 +88,7 @@ class SeekPreviewExtractor(private val context: Context) {
             activeUri = uriString
             prev
         }
-        withContext(Dispatchers.IO) {
+        withContext(dispatcher) {
             toRelease?.release()
         }
     }
@@ -99,7 +105,7 @@ class SeekPreviewExtractor(private val context: Context) {
         prefetchJob = null
         // release() can block on native teardown; keep it off the caller's
         // (often main) thread and outside the lock.
-        withContext(Dispatchers.IO) {
+        withContext(dispatcher) {
             toRelease?.release()
         }
     }
@@ -135,7 +141,7 @@ class SeekPreviewExtractor(private val context: Context) {
         (positionMs / POSITION_ROUNDING_MS) * POSITION_ROUNDING_MS
 
     suspend fun extractFrameAtPosition(uri: String, positionMs: Long): Bitmap? =
-        withContext(Dispatchers.IO) {
+        withContext(dispatcher) {
             val roundedPosition = roundPosition(positionMs)
             val key = CacheKey(uri, roundedPosition)
 
@@ -160,6 +166,8 @@ class SeekPreviewExtractor(private val context: Context) {
                 updateDirection(roundedPosition)
                 schedulePrefetch(uri, roundedPosition)
                 scaled
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
                 null
             }
@@ -200,6 +208,8 @@ class SeekPreviewExtractor(private val context: Context) {
                     ) ?: continue
                     val scaled = scaleBitmap(raw)
                     cache.put(nextKey, scaled)
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (_: Exception) { /* best effort */ }
             }
         }
@@ -207,7 +217,7 @@ class SeekPreviewExtractor(private val context: Context) {
 
     /** Fallback when no active session — creates temporary retriever via content URI. */
     private fun extractFallback(uri: String, roundedMs: Long, key: CacheKey): Bitmap? {
-        val retriever = MediaMetadataRetriever()
+        val retriever = retrieverFactory()
         try {
             retriever.setDataSource(context, uri.toUri())
             val raw = retriever.getFrameAtTime(
@@ -217,6 +227,8 @@ class SeekPreviewExtractor(private val context: Context) {
             val scaled = scaleBitmap(raw)
             cache.put(key, scaled)
             return scaled
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             return null
         } finally {

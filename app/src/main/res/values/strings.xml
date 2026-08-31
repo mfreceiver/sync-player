@@ -437,6 +437,24 @@
     <string name="player_a11y_seek_backward_10s">快退 10 秒</string>
     <string name="player_a11y_rotation">跟随系统旋转</string>
     <string name="player_a11y_fullscreen">全屏</string>
+    <string name="player_settings_group_direction">方向</string>
+    <string name="player_settings_group_speed">倍速</string>
+    <string name="player_settings_recycle">移入回收站</string>
+    <string name="player_settings_restore">从回收站恢复</string>
+    <string name="player_settings_recycle_hint">当前视频将移入回收站</string>
+    <string name="player_fine_scrub_delta">%1$+d 秒</string>
+    <string name="player_a11y_fine_scrub_progress">播放进度；向下拖动可降低定位速度</string>
+    <string name="player_a11y_fine_scrub_magnifier">精细定位；%1$s；调整 %2$s；速度 %3$s</string>
+    <string name="player_a11y_fine_scrub_speed_full">全速</string>
+    <string name="player_a11y_fine_scrub_speed_quarter">四分之一速度</string>
+    <string name="player_a11y_fine_scrub_speed_tenth">十分之一速度</string>
+    <string name="player_a11y_open_settings">打开播放器设置</string>
+    <string name="player_a11y_close_settings">关闭播放器设置</string>
+    <string name="player_a11y_recycle_action">移入回收站</string>
+    <string name="player_a11y_restore_action">从回收站恢复</string>
+    <string name="player_speed_value_1x">1×</string>
+    <string name="player_speed_value_1_5x">1.5×</string>
+    <string name="player_speed_value_2x">2×</string>
 
     <!-- Browser filter accessibility -->
     <string name="browser_a11y_star_filter_mode">星级筛选模式</string>
