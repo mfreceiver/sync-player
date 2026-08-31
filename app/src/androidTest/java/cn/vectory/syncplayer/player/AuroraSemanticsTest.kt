@@ -57,8 +57,8 @@ class AuroraSemanticsTest {
     @Test
     fun `settings panel exposes structural tags radios and synchronous recycle guard`() {
         var recycleCalls = 0
+        var visible by mutableStateOf(true)
         composeRule.setContent {
-            var visible by mutableStateOf(true)
             MaterialTheme {
                 AuroraSettingsModal(
                     visible = visible,
@@ -87,8 +87,8 @@ class AuroraSemanticsTest {
     @Test
     fun `back closes the settings panel`() {
         var dismissCalls = 0
+        var visible by mutableStateOf(true)
         composeRule.setContent {
-            var visible by mutableStateOf(true)
             MaterialTheme {
                 AuroraSettingsModal(
                     visible = visible,
