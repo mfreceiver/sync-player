@@ -91,8 +91,10 @@ interface VideoItemDao {
     /** Items under [folderPath] (exact or descendants). Path-boundary safe (no false prefix match). */
     @Query("""
         SELECT * FROM video_item
-        WHERE relativePath = :folderPath
-           OR relativePath LIKE :folderPath || '/%'
+        WHERE CASE
+            WHEN :folderPath = '' THEN 1
+            ELSE (relativePath = :folderPath OR relativePath LIKE :folderPath || '/%')
+        END
     """)
     suspend fun getByPathPrefix(folderPath: String): List<VideoItemEntity>
 
@@ -100,7 +102,10 @@ interface VideoItemDao {
     @Query("""
         SELECT * FROM video_item
         WHERE syncRelationId = :syncRelationId
-          AND (relativePath = :folderPath OR relativePath LIKE :folderPath || '/%')
+          AND CASE
+              WHEN :folderPath = '' THEN 1
+              ELSE (relativePath = :folderPath OR relativePath LIKE :folderPath || '/%')
+          END
     """)
     suspend fun getByPathPrefixAndRelation(folderPath: String, syncRelationId: Long): List<VideoItemEntity>
 
@@ -163,7 +168,10 @@ interface VideoItemDao {
         FROM video_item v
         LEFT JOIN playback_record pr ON pr.videoItemId = v.id
         WHERE v.fileName LIKE '%' || :query || '%' COLLATE NOCASE
-        AND (v.parentPath = :folder OR v.parentPath LIKE :folder || '/%')
+        AND CASE
+            WHEN :folder = '' THEN 1
+            ELSE (v.parentPath = :folder OR v.parentPath LIKE :folder || '/%')
+        END
     """)
     fun searchByFileNameInFolder(query: String, folder: String): Flow<List<VideoItemWithPlayback>>
 
@@ -175,7 +183,10 @@ interface VideoItemDao {
 
     @Query("""
         SELECT DISTINCT parentPath FROM video_item 
-        WHERE parentPath = :folder OR parentPath LIKE :folder || '/%'
+        WHERE CASE
+            WHEN :folder = '' THEN 1
+            ELSE (parentPath = :folder OR parentPath LIKE :folder || '/%')
+        END
     """)
     fun getParentPathsInFolder(folder: String): Flow<List<String>>
 
@@ -194,7 +205,10 @@ interface VideoItemDao {
             SUM(CASE WHEN mediaType = 'IMAGE' THEN 1 ELSE 0 END) as totalImageCount,
             COALESCE(SUM(fileSize), 0) as totalSize
         FROM video_item
-        WHERE relativePath LIKE :folderPath || '/%'
+        WHERE CASE
+            WHEN :folderPath = '' THEN 1
+            ELSE relativePath LIKE :folderPath || '/%'
+        END
     """
     )
     suspend fun getRecursiveFolderStats(folderPath: String): RecursiveFolderStat

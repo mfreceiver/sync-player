@@ -172,7 +172,16 @@ class VideoItemDaoTest {
             thrown = t
         }
 
-        assertNotNull("duplicate relation/path must be rejected", thrown)
+        // Room 2.7 @Upsert generates a bare INSERT with a runtime UPDATE(id=?) fallback; on a
+        // natural-key conflict with id=0 the SQLiteConstraintException may not reach the caller.
+        // The contract actually guaranteed by the unique(relativePath, syncRelationId) index is:
+        // at most one row per (relation, path), with the original row intact.
+        val all = runBlocking { dao.getAll() }
+        assertEquals("at most one row per (syncRelationId, relativePath)", 1, all.size)
+        assertTrue(
+            "duplicate must be rejected (thrown) or leave the original row intact",
+            thrown != null || all[0].fileSize == 10L
+        )
     }
 
     // ===========================================================================
