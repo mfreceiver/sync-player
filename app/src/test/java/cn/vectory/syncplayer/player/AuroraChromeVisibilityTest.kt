@@ -14,7 +14,9 @@ class AuroraChromeVisibilityTest {
                 SeekSource.entries.forEach { source ->
                     val result = resolveAuroraChromeVisibility(fullscreen, controls, source)
 
-                    assertEquals(!fullscreen && controls, result.showControlRow)
+                    // The full control row follows showControls identically in both
+                    // modes — FULLSCREEN only changes the default (hidden on entry).
+                    assertEquals(controls, result.showControlRow)
                     assertEquals(
                         1,
                         listOf(result.showProgressZone, result.showMinimizedProgress).count { it },
@@ -23,6 +25,20 @@ class AuroraChromeVisibilityTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun `fullscreen with visible controls shows the full control row`() {
+        val result = resolveAuroraChromeVisibility(
+            isFullscreen = true,
+            showControls = true,
+            seekSource = SeekSource.NONE,
+        )
+
+        assertTrue(result.showControlRow)
+        assertTrue(result.showTopRow)
+        assertTrue(result.showProgressZone)
+        assertFalse(result.showMinimizedProgress)
     }
 
     @Test

@@ -313,11 +313,22 @@ class PlayerViewModel @Inject constructor(
     fun getVideoUri(): String? = _uiState.value.videoItem?.let { cn.vectory.syncplayer.provider.MediaUris.mediaUri(it.id).toString() }
 
     fun toggleFullscreen() {
-        _uiState.update { it.copy(isFullscreen = !it.isFullscreen) }
+        setFullscreen(!_uiState.value.isFullscreen)
     }
 
     fun setFullscreen(fullscreen: Boolean) {
-        _uiState.update { it.copy(isFullscreen = fullscreen) }
+        _uiState.update {
+            if (fullscreen && !it.isFullscreen) {
+                // Entering FULLSCREEN: hide the full controls inside the SAME atomic
+                // state update, so no UI LaunchedEffect can observe isFullscreen=true
+                // with a stale showControls=true (one-frame control-row flash).
+                it.copy(isFullscreen = true, showControls = false)
+            } else {
+                // Exiting, or re-asserting while already fullscreen: keep the user's
+                // current showControls value (they may have toggled it back on).
+                it.copy(isFullscreen = fullscreen)
+            }
+        }
     }
 
     fun resolveOrientation(videoWidth: Int?, videoHeight: Int?): Int {

@@ -39,13 +39,17 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -124,6 +128,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -140,7 +145,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
+import java.math.BigDecimal
 
 /** Player-private fixed art direction; it deliberately does not use dynamic theme colours. */
 internal object AuroraTokens {
@@ -260,7 +267,9 @@ internal fun resolveAuroraChromeVisibility(
     showControls: Boolean,
     seekSource: SeekSource,
 ): AuroraChromeVisibility {
-    val showControlRow = !isFullscreen && showControls
+    // FULLSCREEN no longer suppresses the control row: a single tap toggles
+    // showControls, and the full bottom control area follows it in both modes.
+    val showControlRow = showControls
     val showProgressZone = showControlRow || seekSource != SeekSource.NONE
     return AuroraChromeVisibility(
         showTopRow = isFullscreen || showControls,
@@ -693,10 +702,10 @@ internal fun AuroraSettingsModal(
     var trashTogglePending by remember { mutableStateOf(false) }
     var errorSequenceAtStart by remember { mutableStateOf<Long?>(null) }
     val openingVideoId = remember(visible) { videoId }
-    LaunchedEffect(visible, isFullscreen, showControls, videoId) {
+    LaunchedEffect(visible, showControls, videoId) {
         if (!visible) {
             trashTogglePending = false
-        } else if (isFullscreen || !showControls || videoId == null || videoId != openingVideoId) {
+        } else if (!showControls || videoId == null || videoId != openingVideoId) {
             trashTogglePending = false
             onDismiss()
         }
@@ -714,7 +723,11 @@ internal fun AuroraSettingsModal(
     ) {
         BackHandler(enabled = visible) { onDismiss() }
         Box(
-            modifier = Modifier.fillMaxSize().background(AuroraTokens.AuroraPanelScrim).clickable(onClick = onDismiss),
+            modifier = Modifier
+                .fillMaxSize()
+                .background(AuroraTokens.AuroraPanelScrim)
+                .navigationBarsPadding()
+                .clickable(onClick = onDismiss),
             contentAlignment = Alignment.BottomCenter,
         ) {
             Surface(
@@ -736,7 +749,17 @@ internal fun AuroraSettingsModal(
                 ) {
                     Surface(
                         modifier = Modifier
-                            .fillMaxWidth()
+                            // Content-adaptive width: the panel is as wide as its widest
+                            // row (max intrinsic width of the radio rows / trash row /
+                            // dividers), NOT min(screen, 560dp). Order matters:
+                            // width(IntrinsicSize.Max) is outside widthIn(max), so the
+                            // intrinsic query itself is capped at AuroraPanelMaxWidth
+                            // (and by incoming screen constraints at measure time).
+                            // Rows/dividers keep fillMaxWidth — under this parent they
+                            // fill the FINAL panel width instead of inflating it.
+                            // verticalScroll only unbounds height, so horizontal
+                            // intrinsics pass through untouched.
+                            .width(IntrinsicSize.Max)
                             .widthIn(max = AuroraTokens.AuroraPanelMaxWidth)
                             .heightIn(max = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp * AuroraTokens.AuroraPanelMaxHeightFraction)
                             .padding(horizontal = AuroraTokens.AuroraEdgePadding)
@@ -879,22 +902,106 @@ internal fun AuroraSeekPreviewHost(
             withContext(NonCancellable) { previewExtractor.endSession() }
         }
     }
+    // Horizontal follow uses the IMMEDIATE seek target (latestTarget), not the
+    // throttled previewPosition, so the coarse preview never lags the thumb.
+    // duration <= 0 collapses the fraction to 0.
+    val safeDurationMs = durationMs.coerceAtLeast(0L)
+    val seekFraction = if (safeDurationMs > 0L) {
+        latestTarget.coerceIn(0L, safeDurationMs).toFloat() / safeDurationMs.toFloat()
+    } else {
+        0f
+    }
     when (seekSource) {
         SeekSource.PROGRESS_BAR -> if (scrubState.isFineMode) {
             FineScrubMagnifier(scrubState, bitmap, durationMs)
         } else {
-            AuroraCoarsePreview(bitmap, previewPosition, durationMs)
+            AuroraCoarsePreview(bitmap, previewPosition, durationMs, seekFraction)
         }
-        SeekSource.GESTURE -> AuroraCoarsePreview(bitmap, previewPosition, durationMs)
+        SeekSource.GESTURE -> AuroraCoarsePreview(bitmap, previewPosition, durationMs, seekFraction)
         SeekSource.NONE -> Unit
     }
 }
 
+/**
+ * Resolved geometry for the coarse seek preview: the effective (possibly shrunk)
+ * width AND the horizontal offset, both derived from the same safe-viewport math
+ * so the UI's `.width()` and `.offset()` can never drift apart.
+ */
+internal data class PreviewGeometry(
+    val effectiveWidthPx: Float,
+    val offsetXPx: Float,
+)
+
+/**
+ * Pure geometry for the coarse seek preview, in the preview container's coordinate
+ * space (the player root box).
+ *
+ * - Safe viewport (clamping range): [navigationLeftPx] .. rootWidthPx - [navigationRightPx]
+ *   — the nav-inset-safe area, matching where the bottom progress area lives.
+ * - Track span (mirrors AuroraBottomArea: navigationBarsPadding() then
+ *   AuroraEdgePadding): trackLeft = navLeft + [edgePaddingPx],
+ *   trackRight = root - navRight - [edgePaddingPx]; a degenerate track
+ *   (trackRight < trackLeft) collapses to zero track width.
+ * - Non-finite [fraction] (NaN/±Infinity) is treated as 0, then clamped to 0..1.
+ * - effectiveWidthPx = min(nominal, safeRight - safeLeft) floored at 0, so the
+ *   preview never overflows the safe viewport on narrow screens.
+ * - offsetXPx keeps the preview centered over the thumb, clamped so that
+ *   offsetXPx >= safeLeft AND offsetXPx + effectiveWidthPx <= safeRight.
+ */
+internal fun resolvePreviewGeometry(
+    rootWidthPx: Float,
+    navigationLeftPx: Float,
+    navigationRightPx: Float,
+    edgePaddingPx: Float,
+    fraction: Float,
+    nominalPreviewWidthPx: Float,
+): PreviewGeometry {
+    val safeFraction = if (fraction.isFinite()) fraction.coerceIn(0f, 1f) else 0f
+    val safeLeft = navigationLeftPx
+    val safeRight = rootWidthPx - navigationRightPx
+    val effectiveWidth = min(nominalPreviewWidthPx, (safeRight - safeLeft).coerceAtLeast(0f))
+    val trackLeft = navigationLeftPx + edgePaddingPx
+    val trackRight = max(safeRight - edgePaddingPx, trackLeft)
+    val thumbX = trackLeft + (trackRight - trackLeft) * safeFraction
+    val maxLeft = max(safeLeft, safeRight - effectiveWidth)
+    val offset = (thumbX - effectiveWidth / 2f).coerceIn(safeLeft, maxLeft)
+    return PreviewGeometry(effectiveWidthPx = effectiveWidth, offsetXPx = offset)
+}
+
 @Composable
-private fun AuroraCoarsePreview(bitmap: Bitmap?, positionMs: Long, durationMs: Long) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+private fun AuroraCoarsePreview(
+    bitmap: Bitmap?,
+    positionMs: Long,
+    durationMs: Long,
+    seekFraction: Float,
+) {
+    // Horizontal follow: the preview tracks the progress thumb instead of staying
+    // pinned to the horizontal center. The preview host fills the same player root
+    // box as the bottom progress area, so this container's coordinate space matches
+    // the real track's window coordinates. resolvePreviewGeometry derives BOTH the
+    // clamping viewport (nav-inset-safe area) and the track span from the same
+    // insets, and returns the effective width + offset that the Surface consumes
+    // directly — width and offset can never disagree. Vertical anchor is unchanged
+    // (bottom).
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val navigationBars = WindowInsets.navigationBars
+        // RTL is a known residual risk: absolute LTR X coordinates, consistent with
+        // the progress fill/click math which is also LTR-only (no half-RTL support).
+        val geometry = resolvePreviewGeometry(
+            rootWidthPx = with(density) { maxWidth.toPx() },
+            navigationLeftPx = navigationBars.getLeft(density, LayoutDirection.Ltr).toFloat(),
+            navigationRightPx = navigationBars.getRight(density, LayoutDirection.Ltr).toFloat(),
+            edgePaddingPx = with(density) { AuroraTokens.AuroraEdgePadding.toPx() },
+            fraction = seekFraction,
+            nominalPreviewWidthPx = with(density) { AuroraTokens.AuroraPreviewWidth.toPx() },
+        )
         Surface(
-            modifier = Modifier.width(AuroraTokens.AuroraPreviewWidth).heightIn(max = AuroraTokens.AuroraPreviewMaxHeight),
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .absoluteOffset { IntOffset(geometry.offsetXPx.roundToInt(), 0) }
+                .width(with(density) { geometry.effectiveWidthPx.toDp() })
+                .heightIn(max = AuroraTokens.AuroraPreviewMaxHeight),
             color = AuroraTokens.AuroraSurface,
             shape = RoundedCornerShape(AuroraTokens.AuroraPanelRadius),
         ) {
@@ -1014,6 +1121,47 @@ internal fun AuroraPill(overlay: PlayerOverlay?) {
                     )
                     Text(auroraOverlayText(current), color = AuroraTokens.AuroraText, style = MaterialTheme.typography.bodyMedium)
                 }
+            }
+        }
+    }
+}
+
+internal fun formatSpeedMultiplier(multiplier: Float): String =
+    runCatching {
+        BigDecimal(multiplier.toString()).stripTrailingZeros().toPlainString()
+    }.getOrDefault(multiplier.toString())
+
+@Composable
+internal fun AuroraSpeedPill(multiplier: Float) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Surface(
+            modifier = Modifier.border(
+                AuroraTokens.AuroraPanelBorder,
+                AuroraTokens.AuroraGradient,
+                RoundedCornerShape(AuroraTokens.AuroraPillRadius),
+            ),
+            shape = RoundedCornerShape(AuroraTokens.AuroraPillRadius),
+            color = AuroraTokens.AuroraPillFill,
+        ) {
+            Row(
+                modifier = Modifier.padding(
+                    horizontal = AuroraTokens.AuroraPillPaddingH,
+                    vertical = AuroraTokens.AuroraPillPaddingV,
+                ),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(AuroraTokens.AuroraTopBarGap),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.FastForward,
+                    contentDescription = null,
+                    tint = AuroraTokens.AuroraText,
+                    modifier = Modifier.size(AuroraTokens.AuroraIconSize),
+                )
+                Text(
+                    stringResource(R.string.player_speed_multiplier, formatSpeedMultiplier(multiplier)),
+                    color = AuroraTokens.AuroraText,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             }
         }
     }

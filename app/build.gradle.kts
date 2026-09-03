@@ -108,6 +108,10 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Robolectric-backed Compose layout tests (createComposeRule on the unit
+        // side) need real resources for stringResource + native graphics for
+        // text measurement.
+        unitTests.isIncludeAndroidResources = true
     }
 
     // Lint gate blocks on errors. Debt paid off in the CI scaffold round
@@ -207,6 +211,12 @@ dependencies {
     testImplementation(libs.coroutines.test)
     testImplementation(libs.turbine)
     testImplementation(libs.room.testing)
+    // Compose layout tests on the JVM (Robolectric): real resources + native
+    // graphics text metrics, so width assertions are meaningful.
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
 
     // Android Instrumentation Testing
     androidTestImplementation(libs.room.testing)

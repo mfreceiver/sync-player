@@ -407,8 +407,8 @@ fun PlayerScreen(
     val videoUri = uiState.videoItem
         ?.let { cn.vectory.syncplayer.provider.MediaUris.mediaUri(it.id).toString() }
 
-    LaunchedEffect(uiState.isFullscreen, uiState.showControls, uiState.videoItem?.id) {
-        if (showSettingsPopup && (uiState.isFullscreen || !uiState.showControls || uiState.videoItem == null)) {
+    LaunchedEffect(uiState.showControls, uiState.videoItem?.id) {
+        if (showSettingsPopup && (!uiState.showControls || uiState.videoItem == null)) {
             showSettingsPopup = false
         }
     }
@@ -516,6 +516,9 @@ fun PlayerScreen(
             onDismiss = { showSettingsPopup = false },
             onSpeedChange = viewModel::setPlaybackSpeed,
             onDirectionChange = { fullscreen ->
+                // Close the settings panel explicitly before switching mode/overlay —
+                // never rely on indirect state changes to dismiss it.
+                showSettingsPopup = false
                 viewModel.setFullscreen(fullscreen)
                 viewModel.showOverlay(
                     PlayerOverlay.Orientation(
@@ -538,7 +541,12 @@ fun PlayerScreen(
             videoUri = videoUri,
             previewExtractor = previewExtractor,
         )
-        AuroraPill(uiState.currentOverlay)
+        val speedOverlayMultiplier = uiState.speedOverlayMultiplier
+        if (speedOverlayMultiplier != null) {
+            AuroraSpeedPill(speedOverlayMultiplier)
+        } else {
+            AuroraPill(uiState.currentOverlay)
+        }
         DoubleTapRipple(rippleEvent)
 
         SnackbarHost(

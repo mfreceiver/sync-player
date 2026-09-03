@@ -19,6 +19,7 @@
 
     <!-- Player -->
     <string name="player_speed_up">加速</string>
+    <string name="player_speed_multiplier">%1$s×</string>
     <string name="player_direction">方向</string>
     <string name="player_speed">速度</string>
 
