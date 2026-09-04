@@ -853,6 +853,7 @@ internal fun AuroraSeekPreviewHost(
     progressScrubState: StateFlow<ProgressScrubUiState>,
     gesturePositionMs: Long,
     durationMs: Long,
+    bottomChromeHeightPx: Int,
     videoUri: String?,
     previewExtractor: SeekPreviewExtractor,
 ) {
@@ -915,9 +916,9 @@ internal fun AuroraSeekPreviewHost(
         SeekSource.PROGRESS_BAR -> if (scrubState.isFineMode) {
             FineScrubMagnifier(scrubState, bitmap, durationMs)
         } else {
-            AuroraCoarsePreview(bitmap, previewPosition, durationMs, seekFraction)
+            AuroraCoarsePreview(bitmap, previewPosition, durationMs, seekFraction, bottomChromeHeightPx)
         }
-        SeekSource.GESTURE -> AuroraCoarsePreview(bitmap, previewPosition, durationMs, seekFraction)
+        SeekSource.GESTURE -> AuroraCoarsePreview(bitmap, previewPosition, durationMs, seekFraction, bottomChromeHeightPx)
         SeekSource.NONE -> Unit
     }
 }
@@ -968,12 +969,28 @@ internal fun resolvePreviewGeometry(
     return PreviewGeometry(effectiveWidthPx = effectiveWidth, offsetXPx = offset)
 }
 
+/**
+ * Vertical clearance between the preview's bottom edge and the container bottom,
+ * in px: measured chrome height + [gapPx] ONLY.
+ *
+ * The chrome height is MEASURED (PlayerScreen's onSizeChanged around the bottom
+ * area) and therefore ALREADY contains AuroraBottomArea's navigationBarsPadding().
+ * The nav-bar inset must NOT be added on top of it — the signature deliberately
+ * omits an inset parameter to make that contract explicit; actual regression
+ * protection comes from the non-zero navigation-inset layout test.
+ */
+internal fun resolvePreviewBottomClearancePx(
+    bottomChromeHeightPx: Int,
+    gapPx: Float,
+): Float = bottomChromeHeightPx + gapPx
+
 @Composable
 private fun AuroraCoarsePreview(
     bitmap: Bitmap?,
     positionMs: Long,
     durationMs: Long,
     seekFraction: Float,
+    bottomChromeHeightPx: Int,
 ) {
     // Horizontal follow: the preview tracks the progress thumb instead of staying
     // pinned to the horizontal center. The preview host fills the same player root
@@ -981,8 +998,17 @@ private fun AuroraCoarsePreview(
     // the real track's window coordinates. resolvePreviewGeometry derives BOTH the
     // clamping viewport (nav-inset-safe area) and the track span from the same
     // insets, and returns the effective width + offset that the Surface consumes
-    // directly — width and offset can never disagree. Vertical anchor is unchanged
-    // (bottom).
+    // directly — width and offset can never disagree.
+    //
+    // Vertical anchor: the preview's bottom edge sits ABOVE the bottom chrome
+    // (progress zone + optional control row) with AuroraPreviewGap clearance,
+    // instead of flush against the container bottom. [bottomChromeHeightPx] is the
+    // chrome's MEASURED height (PlayerScreen: onSizeChanged on the bottom-area
+    // wrapper), never a guessed constant — and that measurement already includes
+    // AuroraBottomArea's navigationBarsPadding(), so the clearance below adds the
+    // gap only. Both visibility cases (gesture seek with the control row hidden,
+    // progress-bar seek with full chrome) and both orientations resolve correctly.
+    // GESTURE and coarse PROGRESS_BAR paths share this composable.
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val navigationBars = WindowInsets.navigationBars
@@ -996,10 +1022,22 @@ private fun AuroraCoarsePreview(
             fraction = seekFraction,
             nominalPreviewWidthPx = with(density) { AuroraTokens.AuroraPreviewWidth.toPx() },
         )
+        // Bottom clearance: measured chrome height + gap ONLY. The chrome's measured
+        // height already includes AuroraBottomArea's navigationBarsPadding()
+        // (PlayerScreen's onSizeChanged measures the wrapper around the padded
+        // Column), so adding the nav-bar inset again here would double-count it on
+        // gesture-nav devices and lift the preview one nav bar too high. Applied as
+        // a negative offset on a bottom-aligned child, so the preview's bottom edge
+        // lands exactly (chrome top - gap) in root coordinates.
+        val bottomClearancePx = resolvePreviewBottomClearancePx(
+            bottomChromeHeightPx = bottomChromeHeightPx,
+            gapPx = with(density) { AuroraTokens.AuroraPreviewGap.toPx() },
+        )
         Surface(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .absoluteOffset { IntOffset(geometry.offsetXPx.roundToInt(), 0) }
+                .absoluteOffset { IntOffset(geometry.offsetXPx.roundToInt(), -bottomClearancePx.roundToInt()) }
+                .testTag("player_aurora_coarse_preview")
                 .width(with(density) { geometry.effectiveWidthPx.toDp() })
                 .heightIn(max = AuroraTokens.AuroraPreviewMaxHeight),
             color = AuroraTokens.AuroraSurface,

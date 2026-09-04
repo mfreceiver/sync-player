@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -460,6 +461,13 @@ fun PlayerScreen(
         }
     }
 
+    // Measured height of the bottom chrome wrapper (progress zone + optional
+    // control row), hoisted here so the seek preview host can anchor the coarse
+    // preview above it. Lives outside the conditional so the lambda capture stays
+    // stable; the value is only read while a preview is visible, and the chrome is
+    // always composed then (seekSource != NONE implies showProgressZone).
+    var bottomChromeHeightPx by remember { mutableIntStateOf(0) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -478,7 +486,17 @@ fun PlayerScreen(
         )
 
         if (chromeVisibility.showProgressZone || chromeVisibility.showControlRow) {
-            Box(modifier = Modifier.align(Alignment.BottomCenter)) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    // Measured (never guessed) bottom-chrome height — fed to the seek
+                    // preview host so the coarse preview anchors above the progress
+                    // zone in both visibility cases (with/without control row) and
+                    // both orientations. This wrapper measurement INCLUDES
+                    // AuroraBottomArea's navigationBarsPadding(), so consumers must
+                    // not add the nav-bar inset again.
+                    .onSizeChanged { bottomChromeHeightPx = it.height },
+            ) {
                 AuroraBottomArea(
                     visibility = chromeVisibility,
                     viewModel = viewModel,
@@ -538,6 +556,7 @@ fun PlayerScreen(
             progressScrubState = viewModel.progressScrubState,
             gesturePositionMs = (uiState.gestureSeekPosition * uiState.duration).toLong(),
             durationMs = uiState.duration,
+            bottomChromeHeightPx = bottomChromeHeightPx,
             videoUri = videoUri,
             previewExtractor = previewExtractor,
         )
