@@ -14,6 +14,7 @@ import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.volume.SeekableReadHandle
 import cn.vectory.syncplayer.sync.SyncErrorCode
 import cn.vectory.syncplayer.sync.SyncException
 import cn.vectory.syncplayer.sync.SyncOperation
@@ -34,6 +35,7 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.OutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -43,6 +45,15 @@ sealed class DeleteMediaResult {
     data class SkippedNotFound(val id: Long) : DeleteMediaResult()
     data class Failed(val id: Long, val error: SyncException) : DeleteMediaResult()
 }
+
+/**
+ * Structured, leak-free diagnostic detail for log statements (security red line #6):
+ * [SyncException] → its [SyncErrorCode] name; anything else → the exception class simple
+ * name. NEVER the throwable itself (its message/stack chain can carry paths, filenames,
+ * ids or backend messages), NEVER ids/paths interpolated from the caller.
+ */
+internal fun safeErrorDetail(e: Throwable): String =
+    (e as? SyncException)?.code?.name ?: e.javaClass.simpleName
 
 /**
  * Outcome of a base-path-guarded trash-toggle.
@@ -110,7 +121,7 @@ class FileOperationsUseCase @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to update star", e)
+                Log.e(TAG, "Failed to update star: ${safeErrorDetail(e)}")
                 onError(syncErrorMessage(e, context))
             }
         }
@@ -172,7 +183,7 @@ class FileOperationsUseCase @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to toggle trashed id=$videoItemId", e)
+            Log.e(TAG, "Failed to toggle trashed: ${safeErrorDetail(e)}")
             ToggleTrashResult.Failed(
                 SyncException(SyncErrorCode.UNKNOWN, SyncOperation.DELETE, cause = e)
             )
@@ -206,7 +217,7 @@ class FileOperationsUseCase @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to delete file id=$videoItemId", e)
+                Log.e(TAG, "Failed to delete file: ${safeErrorDetail(e)}")
                 onError(syncErrorMessage(e, context))
             }
         }
@@ -235,7 +246,11 @@ class FileOperationsUseCase @Inject constructor(
      * (without sensitive data — no fileName / path / underlying message) and surfaces as `null`,
      * which the UI maps to a "cannot share" message.
      */
-    suspend fun buildShareIntent(videoItemId: Long): Intent? = withContext(Dispatchers.IO) {
+    suspend fun buildShareIntent(videoItemId: Long): Intent? {
+        var outFile: File? = null
+        var deferredCancellation: CancellationException? = null
+        return try {
+            val result = withContext(Dispatchers.IO) {
         val video = videoRepository.getById(videoItemId) ?: return@withContext null
 
         // Fail-closed volume ownership: ciphertext lives only on the active volume; a record with
@@ -245,37 +260,78 @@ class FileOperationsUseCase @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "buildShareIntent: volumeId lookup failed for id=$videoItemId", e)
+            Log.w(TAG, "buildShareIntent: volumeId lookup failed: ${safeErrorDetail(e)}")
             return@withContext null
         }
         if (video.volumeId != currentVolumeId) {
-            Log.w(TAG, "buildShareIntent: id=$videoItemId volume mismatch, refusing to share")
+            Log.w(TAG, "buildShareIntent: volume mismatch, refusing to share (fail-closed)")
             return@withContext null
         }
         if (video.iv.size != CryptoScheme.IV_LEN) {
-            Log.w(TAG, "buildShareIntent: id=$videoItemId iv length ${video.iv.size} != ${CryptoScheme.IV_LEN}")
+            Log.w(TAG, "buildShareIntent: iv length ${video.iv.size} != ${CryptoScheme.IV_LEN}")
             return@withContext null
         }
 
-        try {
-            ShareTempFiles.cleanupOldShareTempFiles(context)
+        ShareTempFiles.cleanupOldShareTempFiles(context)
             val safeName = ShareTempFiles.sanitizeFileName(video.fileName)
-            val outFile = File(ShareTempFiles.shareDir(context), safeName)
-            decryptWholeTo(video, outFile)
-
-            val authority = "${context.packageName}.fileprovider"
-            val uri = FileProvider.getUriForFile(context, authority, outFile)
-            val mimeType = getMimeType(video.fileName)
-            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = mimeType
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            // BUG-017: id-suffixed collision-free name — a second share of the same (or a
+            // same-named) video gets its OWN file instead of truncating the first recipient's.
+            outFile = ShareTempFiles.uniqueShareFile(context, safeName, video.id)
+            try {
+                val closeCancellation = decryptWholeTo(video, outFile!!)
+                if (closeCancellation != null) {
+                    deferredCancellation = closeCancellation
+                    return@withContext null
+                }
+            } catch (t: Throwable) {
+                // Cleanup responsibility must span the whole "file created → decrypt returned"
+                // window: decryptWholeTo's inner outFile.delete() only guards failures after
+                // FileOutputStream opens — openCiphertextRead / contentKey failures happen
+                // before that and would otherwise leave the pre-created empty file behind.
+                // Deleting twice is a harmless no-op; CancellationException is cleaned up and
+                // then rethrown verbatim (red line #3 — runCatching only swallows the delete's
+                // own failure, never `t`).
+                outFile?.let { runCatching { it.delete() } }
+                if (t is CancellationException) {
+                    deferredCancellation = t
+                    null
+                } else {
+                    throw t
+                }
             }
-            Intent.createChooser(shareIntent, context.getString(R.string.context_share_file))
+            if (deferredCancellation != null) return@withContext null
+
+            // Cleanup responsibility spans the WHOLE "file created → chooser returned"
+            // window, not just the decrypt: a file that decrypted successfully is still
+            // garbage if URI/Intent construction fails — nothing can ever consume it.
+            // Exactly the file THIS call created (outFile) is removed; in-use files from
+            // earlier shares are never touched. Throwable (incl. CancellationException)
+            // is cleaned up and then rethrown verbatim (red line #3 — runCatching only
+            // swallows the delete's own failure, never `t`).
+            val chooser = try {
+                val authority = "${context.packageName}.fileprovider"
+                val uri = FileProvider.getUriForFile(context, authority, outFile!!)
+                val mimeType = getMimeType(video.fileName)
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = mimeType
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                Intent.createChooser(shareIntent, context.getString(R.string.context_share_file))
+            } catch (t: Throwable) {
+                outFile?.let { runCatching { it.delete() } }
+                throw t
+            }
+            chooser
+            }
+            deferredCancellation?.let { throw it }
+            result
         } catch (e: CancellationException) {
+            outFile?.let { runCatching { it.delete() } }
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "buildShareIntent failed for id=$videoItemId", e)
+            outFile?.let { runCatching { it.delete() } }
+            Log.e(TAG, "buildShareIntent failed: ${safeErrorDetail(e)}")
             null
         }
     }
@@ -300,29 +356,22 @@ class FileOperationsUseCase @Inject constructor(
      * Runs on [Dispatchers.IO] since [EncryptedMediaStore.openCiphertextRead] and
      * [RangeDecryptor.readRange] perform blocking SAF/FD IO.
      */
-    private suspend fun decryptWholeTo(video: VideoItemEntity, outFile: File) {
+    private suspend fun decryptWholeTo(video: VideoItemEntity, outFile: File): CancellationException? {
         require(video.iv.size == CryptoScheme.IV_LEN) {
             "iv length ${video.iv.size} != ${CryptoScheme.IV_LEN}"
         }
         val store = mediaStore
+        var closeFailure: Throwable? = null
         withContext(Dispatchers.IO) {
             val handle = store.openCiphertextRead(video.id)
+            var primaryFailure: Throwable? = null
             try {
                 val key = store.contentKey()
                 val decryptor = RangeDecryptor(key, video.iv, video.fileSize)
                 var written = 0L
                 try {
                     FileOutputStream(outFile).use { out ->
-                        var offset = 0L
-                        val size = video.fileSize
-                        while (offset < size) {
-                            // CHUNK_SIZE fits in Int (64 KiB); (size - offset) is at most one chunk.
-                            val len = minOf(CryptoScheme.CHUNK_SIZE, (size - offset).toInt())
-                            val plain = decryptor.readRange(handle, offset, len)
-                            out.write(plain)
-                            offset += plain.size
-                            written += plain.size
-                        }
+                        written = drainDecryptor(decryptor, handle, out, video.fileSize)
                     }
                     // Paranoid length check; RangeDecryptor already enforces this via GCM/truncation.
                     check(written == video.fileSize) {
@@ -333,12 +382,66 @@ class FileOperationsUseCase @Inject constructor(
                     // CancellationException still propagates (runCatching swallows only the delete's
                     // own failure, not `e`).
                     runCatching { outFile.delete() }
+                    primaryFailure = e
                     throw e
                 }
             } finally {
-                try { handle.close() } catch (_: Exception) {}
+                try {
+                    handle.close()
+                } catch (failure: Throwable) {
+                    if (primaryFailure == null) {
+                        runCatching { outFile.delete() }
+                        // Defer throwing until after withContext returns so its dispatcher
+                        // boundary cannot replace the handle's exact exception instance.
+                        closeFailure = failure
+                    }
+                    if (failure !== primaryFailure && primaryFailure != null) {
+                        primaryFailure.addSuppressed(failure)
+                    }
+                }
             }
         }
+        return when (val failure = closeFailure) {
+            null -> null
+            is CancellationException -> failure
+            else -> throw failure
+        }
+    }
+
+    /**
+     * Walks the full [size]-byte plaintext of a v2 ciphertext through [decryptor] into [out],
+     * returning the total bytes written.
+     *
+     * Extracted from [decryptWholeTo] so the chunk-walk loop is directly unit-testable:
+     * a fake [RangeDecryptor] can drive multi-GiB sizes without materializing real
+     * ciphertext, and loop-safety contracts (request-length bounding, no-progress
+     * detection) get first-class tests.
+     */
+    internal fun drainDecryptor(
+        decryptor: RangeDecryptor,
+        handle: SeekableReadHandle,
+        out: OutputStream,
+        size: Long,
+    ): Long {
+        var written = 0L
+        var offset = 0L
+        while (offset < size) {
+            // Long-domain min: for files ≥ 2 GiB the remaining (size - offset) exceeds
+            // Int.MAX_VALUE — casting FIRST overflows into a negative request length.
+            // The Int cast happens only on the already-bounded result.
+            val len = minOf(CryptoScheme.CHUNK_SIZE.toLong(), size - offset).toInt()
+            val plain = decryptor.readRange(handle, offset, len)
+            // Inside the loop bytes provably remain, so a zero-byte read means the source
+            // stalled — a loop here would spin forever with offset never advancing. Fail
+            // explicitly instead (RangeDecryptor's contract is all-or-nothing anyway).
+            check(plain.isNotEmpty()) {
+                "no-progress read at offset $offset with ${size - offset} bytes remaining"
+            }
+            out.write(plain)
+            offset += plain.size
+            written += plain.size
+        }
+        return written
     }
 
     fun markFolderRead(
@@ -361,7 +464,7 @@ class FileOperationsUseCase @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to mark folder read", e)
+                Log.e(TAG, "Failed to mark folder read: ${safeErrorDetail(e)}")
                 onError(syncErrorMessage(e, context))
             }
         }
@@ -417,7 +520,7 @@ class FileOperationsUseCase @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to delete folder", e)
+                Log.e(TAG, "Failed to delete folder: ${safeErrorDetail(e)}")
                 onError(syncErrorMessage(e, context))
             }
         }
@@ -486,7 +589,7 @@ class FileOperationsUseCase @Inject constructor(
         // never clean via the app. Index-only delete is the honest, recoverable choice.
         val currentVolumeId = mediaStore.volumeId
         if (video.volumeId != currentVolumeId) {
-            Log.w(TAG, "deleteMediaById: id=$id volume not confirmed " +
+            Log.w(TAG, "deleteMediaById: volume not confirmed " +
                 "(stored volumeId differs from or is unknown for active volume); index-only delete, " +
                 "ciphertext untouched")
             return deleteOtherVolumeIndexLocked(id)
@@ -498,7 +601,7 @@ class FileOperationsUseCase @Inject constructor(
             throw e
         } catch (e: Exception) {
             // exists() itself failed — treat as IO error, do not wipe DB.
-            Log.w(TAG, "exists() failed for id=$id", e)
+            Log.w(TAG, "exists() failed: ${safeErrorDetail(e)}")
             return DeleteMediaResult.Failed(
                 id, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE, cause = e)
             )
@@ -514,29 +617,29 @@ class FileOperationsUseCase @Inject constructor(
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        Log.w(TAG, "exists() after delete failed for id=$id", e)
+                        Log.w(TAG, "exists() after delete failed: ${safeErrorDetail(e)}")
                         return DeleteMediaResult.Failed(
                             id, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE, cause = e)
                         )
                     }
                     if (stillThere) {
-                        Log.e(TAG, "ciphertext still present after delete returned false for id=$id")
+                        Log.e(TAG, "ciphertext still present after delete returned false")
                         return DeleteMediaResult.Failed(
                             id, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE)
                         )
                     }
                     // Race / already gone → idempotent ok
-                    Log.i(TAG, "ciphertext already gone for id=$id")
+                    Log.i(TAG, "ciphertext already gone")
                 }
             } catch (e: FileNotFoundException) {
-                Log.i(TAG, "ciphertext already gone for id=$id")
+                Log.i(TAG, "ciphertext already gone")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 if (isNotFound(e)) {
-                    Log.i(TAG, "ciphertext not found for id=$id")
+                    Log.i(TAG, "ciphertext not found")
                 } else {
-                    Log.e(TAG, "Failed to delete ciphertext for id=$id", e)
+                    Log.e(TAG, "Failed to delete ciphertext: ${safeErrorDetail(e)}")
                     return DeleteMediaResult.Failed(
                         id, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE, cause = e)
                     )
@@ -553,13 +656,13 @@ class FileOperationsUseCase @Inject constructor(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    Log.w(TAG, "thumbExists() after delete failed for id=$id", e)
+                    Log.w(TAG, "thumbExists() after delete failed: ${safeErrorDetail(e)}")
                     return DeleteMediaResult.Failed(
                         id, SyncException(SyncErrorCode.THUMBNAIL_ERROR, SyncOperation.DELETE, cause = e)
                     )
                 }
                 if (stillThere) {
-                    Log.e(TAG, "thumb still present after delete returned false for id=$id")
+                    Log.e(TAG, "thumb still present after delete returned false")
                     return DeleteMediaResult.Failed(
                         id, SyncException(SyncErrorCode.THUMBNAIL_ERROR, SyncOperation.DELETE)
                     )
@@ -572,7 +675,7 @@ class FileOperationsUseCase @Inject constructor(
             if (isNotFound(e)) {
                 // idempotent ok
             } else {
-                Log.e(TAG, "Failed to delete thumb for id=$id", e)
+                Log.e(TAG, "Failed to delete thumb: ${safeErrorDetail(e)}")
                 return DeleteMediaResult.Failed(
                     id, SyncException(SyncErrorCode.THUMBNAIL_ERROR, SyncOperation.DELETE, cause = e)
                 )
@@ -586,7 +689,7 @@ class FileOperationsUseCase @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to delete DB rows for id=$id", e)
+            Log.e(TAG, "Failed to delete DB rows: ${safeErrorDetail(e)}")
             DeleteMediaResult.Failed(
                 id, SyncException(SyncErrorCode.DATABASE_ERROR, SyncOperation.DELETE, cause = e)
             )
@@ -611,7 +714,7 @@ class FileOperationsUseCase @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "deleteOtherVolumeIndex failed for id=$videoItemId", e)
+            Log.w(TAG, "deleteOtherVolumeIndex failed: ${safeErrorDetail(e)}")
             DeleteMediaResult.Failed(
                 videoItemId, SyncException(SyncErrorCode.DATABASE_ERROR, SyncOperation.DELETE, cause = e)
             )

@@ -18,14 +18,22 @@ import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
 import dagger.Lazy
 import io.mockk.*
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.OutputStream
@@ -353,7 +361,7 @@ class SyncEngineTest {
     }
 
     @Test
-    fun `executeSync propagates CancellationException from read probe rollback delete without failed download`() = runTest {
+    fun `executeSync read probe rollback delete throwing CE keeps original failure and counts failed download`() = runTest {
         val relationId = 1L
         val relation = mockk<SyncRelation>()
         every { relation.id } returns relationId
@@ -389,22 +397,27 @@ class SyncEngineTest {
         }
 
         val action = SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "video.mp4", fileSize = 1000L)
+        var returned = true
         val thrown = try {
-            syncEngine.executeSync(relationId, listOf(action), emptyList())
+            returned = syncEngine.executeSync(relationId, listOf(action), emptyList())
             null
         } catch (e: Throwable) {
             e
         }
         coVerify(exactly = 1) { encryptedMediaStore.verifyReadable(any()) }
 
-        assertEquals(SyncPhase.CANCELLED, syncEngine.progress.value.phase)
-        assertEquals(CancellationException::class, thrown!!::class)
-        assertEquals(0, syncEngine.progress.value.failedFiles)
+        // BUG-007 v3.1 语义（guarded「原异常优先」）：COMMITTED 回滚 delete 抛出的 CE 被吞并，
+        // 原 STORAGE_ERROR 胜出——计为 per-action 失败（PARTIAL_FAILED），不传播取消。
+        assertNull(thrown)
+        assertEquals(false, returned)
+        assertEquals(SyncPhase.PARTIAL_FAILED, syncEngine.progress.value.phase)
+        assertEquals(1, syncEngine.progress.value.failedFiles)
         coVerify(exactly = 1) { encryptedMediaStore.delete(302L) }
+        coVerify(exactly = 1) { videoRepository.deleteById(302L) }
     }
 
     @Test
-    fun `executeSync preserves CancellationException when cancellation cleanup fails`() = runTest {
+    fun `executeSync cleanup failure in committed rollback does not mask original error`() = runTest {
         val relationId = 1L
         val relation = mockk<SyncRelation>()
         every { relation.id } returns relationId
@@ -443,18 +456,186 @@ class SyncEngineTest {
         }
 
         val action = SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "video.mp4", fileSize = 1000L)
+        var returned = true
         val thrown = try {
-            syncEngine.executeSync(relationId, listOf(action), emptyList())
+            returned = syncEngine.executeSync(relationId, listOf(action), emptyList())
             null
         } catch (e: Throwable) {
             e
         }
 
-        assertEquals(CancellationException::class, thrown!!::class)
-        assertEquals(SyncPhase.CANCELLED, syncEngine.progress.value.phase)
-        assertEquals(0, syncEngine.progress.value.failedFiles)
+        // BUG-007 v3.1 语义（guarded「原异常优先」）：回滚 delete 的 CE 被吞并、原 STORAGE_ERROR
+        // 胜出计为失败；COMMITTED 分支不调 cancel；行清理在吞并后照常执行。
+        assertNull(thrown)
+        assertEquals(false, returned)
+        assertEquals(SyncPhase.PARTIAL_FAILED, syncEngine.progress.value.phase)
+        assertEquals(1, syncEngine.progress.value.failedFiles)
+        coVerify(exactly = 1) { encryptedMediaStore.verifyReadable(any()) }
         coVerify(exactly = 1) { encryptedMediaStore.delete(303L) }
-        coVerify(exactly = 1) { encryptedMediaStore.cancel(303L) }
+        coVerify(exactly = 0) { encryptedMediaStore.cancel(303L) }
         coVerify(exactly = 1) { videoRepository.deleteById(303L) }
+    }
+
+    // ------------------------------------------------------------------
+    // BUG-018（plan v3.1 §4 引擎侧表征用例 #18/#19）
+    // ------------------------------------------------------------------
+
+    /** 有状态 fake DAO：内存行表支撑 consume/reset/finalize 全套语义（#18/#19 专用）。 */
+    private fun fakeDaoRows(seed: List<PendingSyncActionEntity>): MutableList<PendingSyncActionEntity> {
+        val rows = mutableListOf<PendingSyncActionEntity>().apply { addAll(seed) }
+        coEvery { pendingSyncActionDao.deleteByRelationId(any()) } coAnswers {
+            val rel = firstArg<Long>()
+            rows.removeAll { it.relationId == rel }
+        }
+        coEvery { pendingSyncActionDao.insertAll(any()) } coAnswers {
+            rows.addAll(firstArg())
+        }
+        coEvery { pendingSyncActionDao.replaceForRelation(any(), any()) } coAnswers {
+            val rel = firstArg<Long>()
+            rows.removeAll { it.relationId == rel }
+            rows.addAll(secondArg())
+        }
+        coEvery { pendingSyncActionDao.getPendingByRelationId(any()) } coAnswers {
+            val rel = firstArg<Long>()
+            rows.filter { it.relationId == rel && it.status == "PENDING" }
+        }
+        coEvery { pendingSyncActionDao.resetRunningToPending(any()) } coAnswers {
+            val rel = firstArg<Long>()
+            rows.replaceAll { if (it.relationId == rel && it.status == "RUNNING") it.copy(status = "PENDING") else it }
+        }
+        coEvery { pendingSyncActionDao.markRunning(any()) } coAnswers {
+            val rel = firstArg<Long>()
+            rows.replaceAll { if (it.relationId == rel && it.status == "PENDING") it.copy(status = "RUNNING") else it }
+        }
+        coEvery { pendingSyncActionDao.markCompleted(any()) } coAnswers {
+            val rel = firstArg<Long>()
+            rows.replaceAll { if (it.relationId == rel) it.copy(status = "COMPLETED") else it }
+        }
+        coEvery { pendingSyncActionDao.markFailed(any()) } coAnswers {
+            val rel = firstArg<Long>()
+            rows.replaceAll { if (it.relationId == rel) it.copy(status = "FAILED") else it }
+        }
+        coEvery { pendingSyncActionDao.markCancelled(any()) } coAnswers {
+            val rel = firstArg<Long>()
+            rows.replaceAll { if (it.relationId == rel) it.copy(status = "CANCELLED") else it }
+        }
+        return rows
+    }
+
+    /** 轻量 pass 桩：空 toDownload + DELETE_LOCAL（无 DB 行→计成功）即可走完 executeSyncLocked。 */
+    private fun stubLightPass(relationId: Long): SyncRelation {
+        val relation = mockk<SyncRelation>()
+        every { relation.id } returns relationId
+        every { relation.syncSourceId } returns 10L
+        every { relation.remotePath } returns "/remote"
+        every { relation.localBasePath } returns "/local"
+        every { relation.name } returns "rel"
+        val source = mockk<SyncSource>()
+        every { source.protocol } returns SyncProtocol.SFTP
+        every { source.id } returns 10L
+        coEvery { syncRelationRepository.getById(relationId) } returns relation
+        coEvery { syncSourceRepository.getById(10L) } returns source
+        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
+        every { encryptedMediaStore.volumeId } returns "test-vol"
+        every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns mockk(relaxed = true)
+        coEvery { videoRepository.getByRelativePathAndRelationId(any(), any()) } returns null
+        return relation
+    }
+
+    @Test
+    fun `consumeAndExecute does not observe rows enqueued mid-drain`() = runTest {
+        val relation = stubLightPass(1L)
+        val gate1 = CompletableDeferred<Unit>()
+        val pass1Entered = CompletableDeferred<Unit>()
+        coEvery { syncRelationRepository.getById(1L) } coAnswers {
+            pass1Entered.complete(Unit)
+            gate1.await()
+            relation
+        }
+        val rows = fakeDaoRows(
+            listOf(
+                PendingSyncActionEntity(
+                    relationId = 1L, relationName = "A", localBasePath = "/local",
+                    actionGroup = 1, actionType = "DELETE_LOCAL", relativePath = "a-stale.mp4"
+                )
+            )
+        )
+
+        val drain = launch { syncEngine.consumeAndExecute(1L) }
+        runCurrent()
+        assertTrue("pass#1 must be inside executeSyncLocked holding the mutex", pass1Entered.isCompleted)
+
+        // 并发入队 B：setPendingTask 阻塞在 storageOperationMutex（锁被整个 drain 持有）——
+        // 锁序决定 B 行必然晚于 pass#1 退出写入（BUG-018 §1 根因的引擎侧现实）
+        val enqueue = launch {
+            syncEngine.setPendingTask(
+                PendingSyncTask(
+                    relationId = 1L, relationName = "B", localBasePath = "/local",
+                    toDownload = emptyList(),
+                    toDelete = listOf(SyncAction(type = SyncActionType.DELETE_LOCAL, relativePath = "b-stale.mp4"))
+                )
+            )
+        }
+        runCurrent()
+        assertFalse("B row cannot land while pass#1 holds the mutex", rows.any { it.relationName == "B" })
+
+        gate1.complete(Unit)
+        drain.join()
+        enqueue.join()
+
+        // pass#1 返回后：A 行被 finalize 清除；B 行在表（PENDING）——同一次 drain 不可见
+        assertEquals(1, rows.size)
+        assertEquals("B", rows.single().relationName)
+        assertEquals("PENDING", rows.single().status)
+
+        // 显式再次 drain（协调器的下一次 pass）才消费 B
+        val (task, _) = syncEngine.consumeAndExecute(1L)
+        assertNotNull(task)
+        assertEquals("B", task!!.relationName)
+        assertTrue("finalize must clear B rows after the recovery pass", rows.isEmpty())
+    }
+
+    @Test
+    fun `pass cancelled while waiting for lock leaves row recoverable`() = runTest {
+        stubLightPass(2L)
+        val rows = fakeDaoRows(
+            listOf(
+                PendingSyncActionEntity(
+                    relationId = 2L, relationName = "B", localBasePath = "/local",
+                    actionGroup = 1, actionType = "DELETE_LOCAL", relativePath = "b-stale.mp4"
+                )
+            )
+        )
+
+        // 外部持锁：模拟另一 pass 正在 storageOperationMutex 内
+        val lockHeld = CompletableDeferred<Unit>()
+        val releaseLock = CompletableDeferred<Unit>()
+        val holder = launch {
+            syncEngine.storageOperationMutex.withLock {
+                lockHeld.complete(Unit)
+                releaseLock.await()
+            }
+        }
+        runCurrent()
+        assertTrue(lockHeld.isCompleted)
+
+        // consumeAndExecute 已启动、阻塞在等锁——取消落在「取出后、获 M 前」
+        val job = launch { syncEngine.consumeAndExecute(2L) }
+        runCurrent()
+        assertTrue("consumeAndExecute must be blocked on the mutex", job.isActive)
+        job.cancelAndJoin()
+
+        // B 行未被消费清除，状态仍 PENDING（markRunning 未发生）——弃置语义的行持久
+        assertEquals(1, rows.size)
+        assertEquals("PENDING", rows.single().status)
+
+        releaseLock.complete(Unit)
+        holder.join()
+
+        // 恢复路径：同关系再次 drain 正常消费执行
+        val (task, _) = syncEngine.consumeAndExecute(2L)
+        assertNotNull(task)
+        assertEquals("B", task!!.relationName)
+        assertTrue(rows.isEmpty())
     }
 }

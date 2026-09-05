@@ -501,4 +501,69 @@ class SyncEngineProgressTest {
             syncEngine.progress.value.phase
         )
     }
+
+    // =========================================================================
+    // BUG-008 — 终态计数保留（计划 §BUG-008.3 #2）
+    // =========================================================================
+
+    @Test
+    fun `cancellation mid-run keeps last known counters in terminal progress`() = runTest {
+        // BUG-008：CANCELLED 终态写入构造 fresh SyncProgress，把下载相位已发布的
+        // totalFiles 清零（"0 of 0" 通知）。终态写入必须基于当前进度 copy。
+        val client = mockk<RemoteFileClient>(relaxed = true)
+        every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns client
+
+        val downloadStarted = CompletableDeferred<Unit>()
+        coEvery { client.downloadTo(any(), any(), any()) } coAnswers {
+            downloadStarted.complete(Unit)
+            delay(60_000L)
+            true
+        }
+        stubSuccessfulDownload("slow.mp4", assignedId = 300L)
+
+        val action = SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "slow.mp4", fileSize = 1000L)
+
+        val parentJob = Job()
+        val scope = CoroutineScope(testDispatcher + parentJob)
+        scope.launch {
+            try {
+                syncEngine.executeSync(relationId, listOf(action), emptyList())
+            } catch (_: CancellationException) {
+                // expected
+            }
+        }
+
+        downloadStarted.await()
+        parentJob.cancelAndJoin()
+
+        val p = syncEngine.progress.value
+        assertEquals(SyncPhase.CANCELLED, p.phase)
+        assertFalse("terminal progress must be marked not running", p.isRunning)
+        assertEquals("terminal progress must keep last known totalFiles", 1, p.totalFiles)
+    }
+
+    // =========================================================================
+    // BUG-008 — 终态计数保留（计划 §BUG-008.3 #3，注入点 :644 updateLastSync）
+    // =========================================================================
+
+    @Test
+    fun `unexpected failure after COMPLETED write keeps counters in terminal FAILED`() = runTest {
+        // 注入点：COMPLETED 终态（含精确计数）写入之后的 updateLastSync 抛出非 CE
+        // 异常 → 落入 catch-all 的 FAILED 终态写入。fresh SyncProgress 会把刚发布的
+        // COMPLETED 计数清零；必须 copy 当前值。andThen Unit 让 catch-all 内部的
+        // 第二次 updateLastSync 调用成功返回。
+        makeDownloadableClient(downloadSucceeds = true)
+        stubSuccessfulDownload("video.mp4", assignedId = 100L)
+        coEvery { syncRelationRepository.updateLastSync(any(), any()) } throws RuntimeException("boom") andThen Unit
+
+        val action = SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "video.mp4", fileSize = 1000L)
+        val result = syncEngine.executeSync(relationId, listOf(action), emptyList())
+
+        assertFalse(result)
+        val p = syncEngine.progress.value
+        assertEquals(SyncPhase.FAILED, p.phase)
+        assertEquals("terminal progress must keep totalFiles from COMPLETED state", 1, p.totalFiles)
+        assertEquals("terminal progress must keep completedFiles from COMPLETED state", 1, p.completedFiles)
+        assertEquals(0, p.failedFiles)
+    }
 }

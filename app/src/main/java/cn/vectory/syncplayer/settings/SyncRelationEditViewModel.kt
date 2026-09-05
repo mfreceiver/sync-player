@@ -36,6 +36,46 @@ data class StorageInfo(
     val pathLabel: String,  // 实际路径
 )
 
+/**
+ * Protocol-aware remote path normalization for the save entry (L4-1).
+ *
+ * SMB and SFTP deliberately diverge on anchoring semantics:
+ *  - SMB strips a leading `/` (share-root-relative model); the bare root itself is
+ *    REJECTED (a whole-share sync is the BUG-006 E8 hole; the SMB client layer is
+ *    already fail-closed — this only moves the failure from sync time to save time).
+ *  - SFTP PRESERVES a leading `/` (absolute anchoring; stripping it would flip an
+ *    absolute scan to server-cwd-relative). SFTP root `/` stays a legal sync target.
+ *  - Bare `.` is REJECTED for both protocols: it is cwd-relative and drifting;
+ *    rewriting it to `/` would flip the anchoring and scan the wrong directory.
+ *  - `..` segments are REJECTED for both (sync roots must be canonical stable paths).
+ *  - Empty segments (`a//b`) and non-first `.` segments (`a/./b`) collapse —
+ *    anchor-preserving equivalences. Dots inside a name (`shows/v2.0`) stay as-is.
+ *
+ * Returns null when the input must be rejected. Pure function: no logging, no echo
+ * of the input (red line #6).
+ */
+internal fun normalizeRemotePath(raw: String, protocol: SyncProtocol): String? {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return null
+    val absolute = protocol == SyncProtocol.SFTP && trimmed.startsWith("/")
+    val segments = mutableListOf<String>()
+    for (segment in trimmed.split('/')) {
+        when {
+            segment.isEmpty() || segment == "." -> Unit // collapse empty / dot-only segments
+            segment == ".." -> return null              // traversal rejected for both protocols
+            else -> segments.add(segment)
+        }
+    }
+    if (segments.isEmpty()) {
+        // Path consists solely of separators and `.` segments.
+        return when {
+            absolute -> "/"  // explicit SFTP absolute root — existing legal sync target
+            else -> null     // bare `.` (cwd-relative) and SMB root — both rejected
+        }
+    }
+    return (if (absolute) "/" else "") + segments.joinToString("/")
+}
+
 @HiltViewModel
 class SyncRelationEditViewModel @Inject constructor(
     private val syncRelationRepository: SyncRelationRepository,
@@ -270,10 +310,29 @@ class SyncRelationEditViewModel @Inject constructor(
         viewModelScope.launch {
             _error.value = null
             _saveResult.value = null
-            if (_name.value.isBlank() || _selectedSourceId.value == 0L ||
-                _remotePath.value.isBlank() || _localBasePath.value.isBlank()
+            // L4-1: capture the protocol-relevant fields as ONE snapshot before the first
+            // suspension point — validation, normalization and the persisted relation must
+            // all derive from the same instant of input, so a source/path switch during the
+            // suspension window can never store e.g. an SMB-normalized path on an SFTP source.
+            val sourceId = _selectedSourceId.value
+            val source = _availableSources.value.find { it.id == sourceId }
+            val rawRemotePath = _remotePath.value
+            if (_name.value.isBlank() || sourceId == 0L ||
+                rawRemotePath.isBlank() || _localBasePath.value.isBlank()
             ) {
                 _error.value = context.getString(R.string.relation_complete_fields)
+                return@launch
+            }
+            if (source == null) {
+                // Unknown protocol (source not loaded / stale id): fail closed. Persisting a
+                // path normalized under an ASSUMED protocol could corrupt the anchoring
+                // semantics of the other protocol.
+                _error.value = context.getString(R.string.relation_invalid_remote_path)
+                return@launch
+            }
+            val normalizedRemotePath = normalizeRemotePath(rawRemotePath, source.protocol)
+            if (normalizedRemotePath == null) {
+                _error.value = context.getString(R.string.relation_invalid_remote_path)
                 return@launch
             }
             val normalizedBasePath = try {
@@ -297,8 +356,8 @@ class SyncRelationEditViewModel @Inject constructor(
                     SyncRelation(
                         id = if (relationId > 0) relationId else 0L,
                         name = _name.value.trim(),
-                        syncSourceId = _selectedSourceId.value,
-                        remotePath = _remotePath.value.trim(),
+                        syncSourceId = sourceId,
+                        remotePath = normalizedRemotePath,
                         localBasePath = normalizedBasePath
                     )
                 )

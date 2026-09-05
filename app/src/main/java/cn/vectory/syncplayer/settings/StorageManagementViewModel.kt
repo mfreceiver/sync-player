@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 data class StorageState(
@@ -55,65 +56,100 @@ class StorageManagementViewModel @Inject constructor(
     private val _state = MutableStateFlow(StorageState())
     val state: StateFlow<StorageState> = _state.asStateFlow()
 
+    /**
+     * BUG-004/005：refresh 代次失效（epoch）——发布顺序保证。每次 refresh 领取
+     * 单调递增代次，任一时刻只有最新代次允许写 _state；旧代次在成功路径与
+     * 降级路径的发布点都做代次比对，失配即丢弃，消灭"过期刷新覆盖"。
+     * 注：代次检查与其后的状态赋值是相邻两条语句（无挂起点），当前 viewModelScope
+     * 的 Main 单线程 confinement 下成立；若日后 refresh 移出 Main 或在检查与
+     * 赋值之间插入挂起点，须改用锁/赋值后复检协议。
+     */
+    private val refreshEpoch = AtomicLong(0)
+
     init {
         refresh()
     }
 
     fun refresh() {
+        val epoch = refreshEpoch.incrementAndGet()   // 领取代次；旧 refresh 发布权即时失效
         viewModelScope.launch {
-            val treeUriStr = userPrefs.getMediaStorageTreeUri()
-            val isExternal = treeUriStr != null
-            val externalPath = if (isExternal) resolveTreeDisplayName(context, treeUriStr!!) else null
-            val count = withContext(ioDispatcher) {
-                try { videoItemDao.getTotalItemCount() } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to query file count", e)
-                    Int.MAX_VALUE  // fail-closed: unknown → treat as "has files" → can't switch
+            try {
+                val treeUriStr = userPrefs.getMediaStorageTreeUri()
+                val isExternal = treeUriStr != null
+                val externalPath = if (isExternal) resolveTreeDisplayName(context, treeUriStr!!) else null
+                val count = withContext(ioDispatcher) {
+                    try { videoItemDao.getTotalItemCount() } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to query file count", e)
+                        Int.MAX_VALUE  // fail-closed: unknown → treat as "has files" → can't switch
+                    }
                 }
+                val usableSpaceLabel = withContext(ioDispatcher) {
+                    try {
+                        val bytes = mediaVolumeProvider.current().usableSpace()
+                        if (bytes < 0L) "—" else formatFileSize(bytes)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) { "—" }
+                }
+                val syncRunning = syncEngine.progress.value.isRunning
+                if (refreshEpoch.get() != epoch) return@launch   // 乱序守卫：发布前自检代次
+                _state.value = StorageState(
+                    isExternal = isExternal,
+                    externalPath = externalPath,
+                    usableSpaceLabel = usableSpaceLabel,
+                    mediaFileCount = count,
+                    canSwitch = count == 0 && !syncRunning,
+                    canReset = count > 0 && !syncRunning,
+                    isResetting = _state.value.isResetting,
+                    resetWarning = _state.value?.resetWarning,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to refresh storage state", e)
+                if (refreshEpoch.get() != epoch) return@launch   // 旧失败不得覆盖新成功
+                // BUG-004 降级（URI 首读失败路径）：状态不可知 → 禁用切换/重置
+                //（对存储位置变更 fail-closed，对齐 count 未知按 MAX_VALUE 的既有约定）；
+                // 空间显示 "—"。
+                _state.update { it.copy(usableSpaceLabel = "—", canSwitch = false, canReset = false) }
             }
-            val usableSpaceLabel = withContext(ioDispatcher) {
-                try {
-                    val bytes = mediaVolumeProvider.current().usableSpace()
-                    if (bytes < 0L) "—" else formatFileSize(bytes)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) { "—" }
-            }
-            val syncRunning = syncEngine.progress.value.isRunning
-            _state.value = StorageState(
-                isExternal = isExternal,
-                externalPath = externalPath,
-                usableSpaceLabel = usableSpaceLabel,
-                mediaFileCount = count,
-                canSwitch = count == 0 && !syncRunning,
-                canReset = count > 0 && !syncRunning,
-                isResetting = _state.value.isResetting,
-                resetWarning = _state.value?.resetWarning,
-            )
         }
     }
 
     fun switchToInternal() {
         viewModelScope.launch {
-            syncEngine.storageOperationMutex.withLock {
-                // Re-validate DB inside mutex — canSwitch may be stale
-                val count = videoItemDao.getTotalItemCount()
-                if (count > 0) return@withLock
-                userPrefs.setMediaStorageTreeUri(null)
+            try {
+                syncEngine.storageOperationMutex.withLock {
+                    // Re-validate DB inside mutex — canSwitch may be stale
+                    val count = videoItemDao.getTotalItemCount()
+                    if (count > 0) return@withLock
+                    userPrefs.setMediaStorageTreeUri(null)
+                }
+            } catch (e: CancellationException) {
+                throw e                                    // CE：跳过 refresh（协程已取消）
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to switch to internal storage", e)   // BUG-005：不 crash
             }
-            refresh()
+            refresh()                                      // 内部已自守卫 + 领新代次（发布顺序闸门）
         }
     }
 
     fun switchToExternal(treeUri: String) {
         viewModelScope.launch {
-            syncEngine.storageOperationMutex.withLock {
-                val count = videoItemDao.getTotalItemCount()
-                if (count > 0) return@withLock
-                userPrefs.setMediaStorageTreeUri(treeUri)
+            try {
+                syncEngine.storageOperationMutex.withLock {
+                    val count = videoItemDao.getTotalItemCount()
+                    if (count > 0) return@withLock
+                    userPrefs.setMediaStorageTreeUri(treeUri)
+                }
+            } catch (e: CancellationException) {
+                throw e                                    // CE：跳过 refresh（协程已取消）
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to switch to external storage", e)   // BUG-005：不 crash
             }
-            refresh()
+            refresh()                                      // 内部已自守卫 + 领新代次（发布顺序闸门）
         }
     }
 

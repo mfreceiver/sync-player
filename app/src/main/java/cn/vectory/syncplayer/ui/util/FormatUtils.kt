@@ -71,10 +71,11 @@ internal val fileNameComparator: Comparator<String> = Comparator { a, b ->
 
 fun formatFileSize(bytes: Long): String {
     if (bytes <= 0) return "0 B"
-    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+    val units = arrayOf("B", "KB", "MB", "GB", "TB", "PB")
     val digitGroups = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt()
+        .coerceAtMost(units.size - 1)   // BUG-021: clamp divisor and unit together (≥1 EiB caps at PB)
     val value = bytes / Math.pow(1024.0, digitGroups.toDouble())
-    return "%.1f %s".format(value, units[digitGroups.coerceAtMost(units.size - 1)])
+    return "%.1f %s".format(value, units[digitGroups])
 }
 
 internal fun formatDuration(ms: Long?): String {

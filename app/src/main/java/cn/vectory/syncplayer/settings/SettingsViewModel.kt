@@ -16,11 +16,13 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import androidx.fragment.app.FragmentActivity
+import java.io.IOException
 
 data class SettingsState(
     val volumeBalance: Boolean = false,
@@ -65,7 +67,16 @@ class SettingsViewModel @Inject constructor(
                         mediaStorageTreeUri = mediaStorageTreeUri,
                         usableSpaceLabel = _settingsState.value?.usableSpaceLabel ?: "—",
                     )
-                }.collect { base ->
+                }
+                .retryWhen { cause, attempt ->
+                    if (cause !is IOException) return@retryWhen false
+                    // BUG-003：DataStore 读 IO 故障是文档化的瞬态面；退避后重订阅
+                    // 全部偏好流，防止单次 IOException 永久冻结设置状态。
+                    // CancellationException 非 IOException → 原样传播（红线 3）。
+                    delay(ioRetryBackoffMs(attempt))
+                    true
+                }
+                .collect { base ->
                     _settingsState.value = base
                     refreshUsableSpace()
                 }
@@ -189,5 +200,11 @@ class SettingsViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "SettingsViewModel"
+        private const val SETTINGS_RETRY_INITIAL_MS = 1_000L
+        private const val SETTINGS_RETRY_MAX_MS = 30_000L
+
+        /** 指数退避：1s,2s,4s,8s,16s,30s(封顶)。attempt 先收敛到 [0,5] 再转 Int。 */
+        internal fun ioRetryBackoffMs(attempt: Long): Long =
+            minOf(SETTINGS_RETRY_MAX_MS, SETTINGS_RETRY_INITIAL_MS shl attempt.coerceIn(0L, 5L).toInt())
     }
 }

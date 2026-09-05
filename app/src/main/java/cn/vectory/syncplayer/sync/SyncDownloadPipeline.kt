@@ -9,6 +9,7 @@ import cn.vectory.syncplayer.data.model.SyncAction
 import cn.vectory.syncplayer.data.model.SyncProgress
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncPhase
+import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
@@ -17,6 +18,7 @@ import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.debug.DebugLogger
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.volume.TmpProbeState
 import cn.vectory.syncplayer.ui.util.extractParentPath
 import cn.vectory.syncplayer.ui.util.isImageFile
 import dagger.Lazy
@@ -95,6 +97,47 @@ internal class SyncDownloadPipeline(
     private fun isRetryableSyncException(e: Throwable): Boolean {
         val code = (e as? SyncException)?.code ?: return true
         return code in RETRYABLE_CODES
+    }
+
+    /**
+     * BUG-007：单次下载尝试的三阶段提交状态。清理语义据此分派：
+     *  - [NOT_FINALIZED]：本尝试未进入 finalize——磁盘提交面未被本尝试触碰，旧 final 必然完好，绝不删；
+     *  - [FINALIZE_UNCERTAIN]：已进入 finalize、未取得 true 确认——由三态 tmp 探测收束；
+     *  - [COMMITTED]：finalize 返回 true（SafVolume.rename 含改名后双检）——final=新内容，可安全删。
+     */
+    private enum class AttemptPhase { NOT_FINALIZED, FINALIZE_UNCERTAIN, COMMITTED }
+
+    /**
+     * BUG-010：初始建连纳入 P1-2 白名单重试（与单文件下载重试同参：3 次、
+     * `delay(1000L * attempt)`、[isRetryableSyncException] 白名单、终态码立即抛）。
+     * 失败的 connect 可能残留半建连状态，重试前按 E5 语义先 disconnect。
+     * CE 不重试；终态码（AUTH/ACCESS/...）立即上抛由外层计一次失败——
+     * connect 重试预算与下载重试预算独立，失败计数不放大。
+     */
+    private suspend fun connectWithRetry(
+        client: RemoteFileClient,
+        source: SyncSource,
+        remotePath: String
+    ) {
+        var attempt = 0
+        while (true) {
+            attempt++
+            try {
+                client.connect(source, remotePath)
+                return
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (!isRetryableSyncException(e) || attempt >= 3) throw e
+                try {
+                    client.disconnect()
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (_: Exception) {
+                }
+                delay(1000L * attempt)
+            }
+        }
     }
 
     /** 迁自原 [SyncEngine.executeSyncLocked]（无 relation-mutex 壳，互斥由 Engine 持有）。 */
@@ -179,14 +222,80 @@ internal class SyncDownloadPipeline(
                                 try {
                                     for (action in actionChannel) {
                                         var client = laneClient
+                                        // BUG-007：声明提升至 per-action try 之外——attempt 级清理与
+                                        // 外层 CE 补偿 catch（见下）均需读取 existing/assignedId；
+                                        // uncleanFinalizedId 是「已提交未登记」登记簿，两处清零点：
+                                        // ① 元数据 upsert 成功后（成功侧提交点）② cleanUpAttempt 末尾（清理侧）。
+                                        var existing: VideoItemEntity? = null
+                                        var assignedId = 0L
+                                        var uncleanFinalizedId = 0L
+
+                                        /** BUG-007 唯一清理入口（attempt 级 catch 与外层 CE 补偿共用）。 */
+                                        suspend fun cleanUpAttempt(phase: AttemptPhase, id: Long) {
+                                            suspend fun guarded(op: suspend () -> Unit) {
+                                                // NonCancellable 语境下框架不交付 CE；此兜底只防自定义实现/mock
+                                                // 违约抛 CE。吞并理由「原异常优先」：清理中的任何异常都不得替换
+                                                // 已在传播的原异常，也不得短路后续清理步骤。
+                                                try { op() } catch (_: Exception) {}
+                                            }
+                                            when (phase) {
+                                                AttemptPhase.NOT_FINALIZED -> {
+                                                    // 本尝试从未进入 finalize ⇒ tmp 可能从未创建或已自删，
+                                                    // 旧 final 必然完好——绝不探测、绝不删 final。
+                                                    guarded { store.cancel(id) }
+                                                    if (existing == null) {
+                                                        guarded { videoRepository.deleteById(id) }
+                                                    }
+                                                }
+                                                AttemptPhase.FINALIZE_UNCERTAIN -> {
+                                                    // 探测单独保护（v3.1）：probePendingTmp 对普通调用方 rethrow CE，
+                                                    // 但 NonCancellable 不约束自定义实现/mock 的行为——探测抛出的任何
+                                                    // 异常（含 CE）按「原异常优先」收敛 UNKNOWN 后继续清理。
+                                                    val probe = try {
+                                                        store.probePendingTmp(id)
+                                                    } catch (_: Exception) {
+                                                        TmpProbeState.UNKNOWN
+                                                    }
+                                                    when (probe) {
+                                                        TmpProbeState.PRESENT -> {
+                                                            // tmp 未被消费 ⇒ rename 未发生，旧 final 完好
+                                                            guarded { store.cancel(id) }
+                                                            if (existing == null) {
+                                                                guarded { videoRepository.deleteById(id) }
+                                                            }
+                                                        }
+                                                        TmpProbeState.ABSENT -> {
+                                                            // 进入过 finalize 且 tmp 严格确认缺失 ⇒ 被 rename 消费
+                                                            // （前提链见计划 §2.1）——与 COMMITTED 分支同构
+                                                            guarded { store.delete(id) }
+                                                            guarded { videoRepository.deleteById(id) }
+                                                        }
+                                                        TmpProbeState.UNKNOWN -> {
+                                                            // 探测不可信：删行（行不得指向可能已换的密文），不删 final
+                                                            guarded { videoRepository.deleteById(id) }
+                                                        }
+                                                    }
+                                                }
+                                                AttemptPhase.COMMITTED -> {
+                                                    guarded { store.delete(id) }
+                                                    // 无条件：旧行 iv 指向已覆盖密文；占位行同理（幽灵密文防线）
+                                                    guarded { videoRepository.deleteById(id) }
+                                                }
+                                            }
+                                            // 清理侧清零点：与外层补偿 catch 互斥（恰一次回滚）
+                                            uncleanFinalizedId = 0L
+                                        }
                                         try {
                                             val localRelPath = storagePaths.toLocalRelativePath(relation.localBasePath, action.relativePath)
                                             val fileName = action.relativePath.substringAfterLast("/")
-                                            DebugLogger.d(TAG, "下载: $fileName (${action.fileSize} bytes)")
+                                            // 复审红线：日志不拼 fileName/path——只留字节数。
+                                            DebugLogger.d(TAG, "下载开始: ${action.fileSize} bytes")
 
                                             if (client == null) {
                                                 client = getClient(source.protocol)
-                                                client.connect(source, relation.remotePath)
+                                                // BUG-010: 初始建连走白名单重试（原裸 connect 一抛即弃，
+                                                // 一次弱网抖动使整批文件逐个失败）。
+                                                connectWithRetry(client, source, relation.remotePath)
                                                 laneClient = client
                                             }
 
@@ -200,14 +309,16 @@ internal class SyncDownloadPipeline(
                                                 totalFiles = totalActions
                                             )
 
-                                            val existing = videoRepository.getByRelativePathAndRelationId(localRelPath, relationId)
+                                            existing = videoRepository.getByRelativePathAndRelationId(localRelPath, relationId)
                                             var downloadSuccess = false
                                             var attempts = 0
-                                            var assignedId = existing?.id ?: 0L
+                                            assignedId = existing?.id ?: 0L
                                             var lastIv = ByteArray(0)
 
                                             while (attempts < 3 && !downloadSuccess) {
                                                 attempts++
+                                                // BUG-007：每次尝试重置提交阶段——磁盘提交面的确定性随阶段推进
+                                                var attemptPhase = AttemptPhase.NOT_FINALIZED
                                                 if (attempts > 1) {
                                                     // E5: 重试前重连——上次失败的下载可能已损坏底层传输（SMB session/SFTP channel），
                                                     // 复用旧 client 会再次失败。先断开再建新连接。
@@ -285,47 +396,53 @@ internal class SyncDownloadPipeline(
                                                         SyncOperation.DOWNLOAD,
                                                         path = action.relativePath
                                                     )
-                                                    if (!store.finalize(assignedId)) throw SyncException(
+                                                    // BUG-007：进入 finalize——此后磁盘提交面不确定（rename 可能
+                                                    // 已完成但未确认）。CE/异常保持 FINALIZE_UNCERTAIN（由探测收束）。
+                                                    attemptPhase = AttemptPhase.FINALIZE_UNCERTAIN
+                                                    val finalizedOk = try {
+                                                        store.finalize(assignedId)
+                                                    } catch (e: CancellationException) {
+                                                        throw e
+                                                    } catch (e: Exception) {
+                                                        throw SyncException(
+                                                            SyncErrorCode.FINALIZE_FAILED,
+                                                            SyncOperation.DOWNLOAD,
+                                                            path = action.relativePath,
+                                                            cause = e
+                                                        )
+                                                    }
+                                                    if (!finalizedOk) throw SyncException(
                                                         SyncErrorCode.FINALIZE_FAILED,
                                                         SyncOperation.DOWNLOAD,
                                                         path = action.relativePath
                                                     )
+                                                    // 仅 finalize 返回 true 才确认 COMMITTED（SafVolume.rename 含改名后双检）；
+                                                    // 登记与判定之间无挂起点——登记簿不可能领先于磁盘确认。
+                                                    attemptPhase = AttemptPhase.COMMITTED
+                                                    uncleanFinalizedId = assignedId
                                                     // 可读性探针（Bug 2 修复）：finalize 成功后立即验证文件能 seek + read + SPM2 magic。
-                                                    // SAF 不支持 seek / 任何读取失败 → 回滚 finalize（删 .enc + 删 DB 行）+ 抛 STORAGE_ERROR。
-                                                    // 不在重试白名单 → 立即抛到 outer catch 计 failedDownloadCount；下次 dryRun 因 DB 行已删重下。
+                                                    // SAF 不支持 seek / 任何读取失败 → 抛 STORAGE_ERROR，由 attempt 级 generic catch
+                                                    // 经 cleanUpAttempt(COMMITTED) 单点回滚（删 .enc + 删 DB 行，恰一次）。
                                                     try {
                                                         store.verifyReadable(assignedId)
                                                     } catch (e: CancellationException) {
                                                         throw e
                                                     } catch (e: Exception) {
-                                                        try {
-                                                            store.delete(assignedId)
-                                                        } catch (e: CancellationException) {
-                                                            throw e
-                                                        } catch (_: Exception) {
-                                                        }
-                                                        videoRepository.deleteById(assignedId)
                                                         throw SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DOWNLOAD, path = action.relativePath, cause = e)
                                                     }
                                                 } catch (e: CancellationException) {
                                                     try { sink?.close() } catch (_: Exception) {}
-                                                    withContext(NonCancellable) {
-                                                        try { store.cancel(assignedId) } catch (_: Exception) {}
-                                                        if (existing == null) {
-                                                            try { videoRepository.deleteById(assignedId) } catch (_: Exception) {}
-                                                        }
-                                                    }
+                                                    withContext(NonCancellable) { cleanUpAttempt(attemptPhase, assignedId) }
                                                     throw e
                                                 } catch (e: Exception) {
                                                     try { sink?.close() } catch (_: Exception) {}
-                                                    store.cancel(assignedId)
-                                                    if (existing == null) videoRepository.deleteById(assignedId)
+                                                    withContext(NonCancellable) { cleanUpAttempt(attemptPhase, assignedId) }
                                                     // P1-2: 终态错误（AUTH/ACCESS/PATH_NOT_FOUND/SPACE/FINALIZE/...）
                                                     // 不会在几秒内自愈，重试纯属浪费延迟并放大认证/下载压力，立即抛出，
                                                     // 由外层 catch 计一次 failedDownloadCount。仅瞬态错误继续重试。
                                                     if (!isRetryableSyncException(e)) throw e
                                                     if (attempts >= 3) throw e
-                                                    DebugLogger.w(TAG, "重试 ($attempts/3): ${action.relativePath.substringAfterLast("/")} - ${e.javaClass.simpleName}")
+                                                    DebugLogger.w(TAG, "重试 ($attempts/3): ${e.javaClass.simpleName}")
                                                     delay(1000L * attempts)
                                                 }
                                             }
@@ -335,23 +452,36 @@ internal class SyncDownloadPipeline(
                                             totalBytesTransferred.addAndGet(action.fileSize)
                                             // finalize 成功后才写入最终元数据（iv/fileSize/remoteModifiedTime），
                                             // 保证 DB 与磁盘密文一致；此前 placeholder/existing 不持有误导性 final 值。
+                                            // 复审阻断（BUG-007 后续）：行在 finalize 提交后
+                                            // 消失（并发删除等）＝孤儿密文——明确失败 + 同一
+                                            // NonCancellable 清理入口收束，绝不 SUCCESS 计数。
                                             val finalized = videoRepository.getById(assignedId)
-                                            if (finalized != null) {
-                                                val withMeta = finalized.copy(
-                                                    iv = lastIv,
-                                                    volumeId = store.volumeId,
-                                                    fileSize = action.fileSize,
-                                                    remoteModifiedTime = action.remoteModifiedTime,
-                                                    dateSynced = System.currentTimeMillis()
-                                                )
-                                                videoRepository.upsert(withMeta)
-                                                try {
-                                                    extractMetadata(withMeta)
-                                                } catch (e: CancellationException) {
-                                                    throw e
-                                                } catch (e: Exception) {
-                                                    Log.w(TAG, "Metadata extraction failed for ${withMeta.fileName}", e)
+                                            if (finalized == null) {
+                                                withContext(NonCancellable) {
+                                                    cleanUpAttempt(AttemptPhase.COMMITTED, assignedId)
                                                 }
+                                                throw SyncException(
+                                                    SyncErrorCode.STORAGE_ERROR,
+                                                    SyncOperation.DOWNLOAD
+                                                )
+                                            }
+                                            val withMeta = finalized.copy(
+                                                iv = lastIv,
+                                                volumeId = store.volumeId,
+                                                fileSize = action.fileSize,
+                                                remoteModifiedTime = action.remoteModifiedTime,
+                                                dateSynced = System.currentTimeMillis()
+                                            )
+                                            videoRepository.upsert(withMeta)
+                                            // BUG-007 成功侧清零点：upsert 成功即行/密文一致，其后的取消是
+                                            // 干净中断，不回滚。
+                                            uncleanFinalizedId = 0L
+                                            try {
+                                                extractMetadata(withMeta)
+                                            } catch (e: CancellationException) {
+                                                throw e
+                                            } catch (e: Exception) {
+                                                Log.w(TAG, SyncSafeLog.metadataExtractionFailed(e))
                                             }
                                             syncLogRepository.log(
                                                 action = "DOWNLOAD",
@@ -360,7 +490,8 @@ internal class SyncDownloadPipeline(
                                                 dryRun = false,
                                                 fileSize = action.fileSize
                                             )
-                                            DebugLogger.d(TAG, "完成: $fileName")
+                                            // 复审红线：日志不拼 fileName。
+                                            DebugLogger.d(TAG, "下载完成")
                                             completedCount.incrementAndGet()
                                             progressPublisher.completeDownload(
                                                 relativePath = action.relativePath,
@@ -370,9 +501,26 @@ internal class SyncDownloadPipeline(
                                                 totalFiles = totalActions
                                             )
                                         } catch (e: CancellationException) {
+                                            // BUG-007 外层 CE 补偿：CE 落在元数据窗口（attempt 级清理未经过）时，
+                                            // 登记簿非 0 → 走同一个 cleanUpAttempt 入口回滚已提交产物；
+                                            // attempt 级已清理过则登记簿为 0 → 跳过（恰一次回滚）。
+                                            val id = uncleanFinalizedId
+                                            if (id != 0L) {
+                                                withContext(NonCancellable) { cleanUpAttempt(AttemptPhase.COMMITTED, id) }
+                                            }
                                             workerScope.cancel(e)
                                             throw e
                                         } catch (e: Exception) {
+                                            // 复审阻断（BUG-007 后续）：普通异常也可能落在元数据窗口
+                                            // （getById/upsert 抛普通异常）——登记簿非 0 ⇒ 密文已提交而行仍旧
+                                            // IV/缺失＝索引-密文不一致。与上方 CE 补偿同构：经同一
+                                            // NonCancellable 清理入口回滚（cleanUpAttempt 末尾清零 ⇒ 恰一次；
+                                            // attempt 级已清理则登记簿为 0 ⇒ 跳过）。清理自身异常被 guarded
+                                            // 吞并——原异常优先，继续走下方失败计费；CE 不经此分支（先传播）。
+                                            val id = uncleanFinalizedId
+                                            if (id != 0L) {
+                                                withContext(NonCancellable) { cleanUpAttempt(AttemptPhase.COMMITTED, id) }
+                                            }
                                             val localRelPath = storagePaths.toLocalRelativePath(relation.localBasePath, action.relativePath)
                                             progressPublisher.removeActiveDownload(action.relativePath)
                                             failedDownloadCount.incrementAndGet()
@@ -386,8 +534,8 @@ internal class SyncDownloadPipeline(
                                                 fileSize = action.fileSize,
                                                 errorMessage = syncErrorMessage(e, context)
                                             )
-                                            Log.e(TAG, "Download failed code=${(e as? SyncException)?.code} path=${action.relativePath}", e)
-                                            DebugLogger.w(TAG, "失败: ${action.relativePath.substringAfterLast("/")} - ${e.javaClass.simpleName}")
+                                            Log.e(TAG, SyncSafeLog.failure("DOWNLOAD", e))
+                                            DebugLogger.w(TAG, "下载失败: ${e.javaClass.simpleName}")
                                             // AND-010: 失败动作可能已损坏 lane 的底层传输，丢弃该 client，
                                             // 下一个 action 在本 lane 重新 create+connect（保留旧「每 action 新连接」
                                             // 的故障隔离性，同时全成功路径仍复用连接）。
@@ -436,11 +584,8 @@ internal class SyncDownloadPipeline(
                     // 关系会卡在"看似完成实则未完成"的状态。status 记 SKIPPED（动作未执行），
                     // 但 failedDeleteCount++（关系未真正完成）。
                     failedDeleteCount.incrementAndGet()
-                    Log.w(
-                        TAG,
-                        "DELETE_LOCAL skipped (volume mismatch): path=${action.relativePath} " +
-                            "stored volumeId differs from active volume"
-                    )
+                    // 复审红线：卷不匹配日志不拼 path/volumeId——只留操作种类与原因类别。
+                    Log.w(TAG, SyncSafeLog.skippedVolumeMismatch("DELETE_LOCAL"))
                     syncLogRepository.log(
                         action = "DELETE_LOCAL",
                         relativePath = action.relativePath,
@@ -467,7 +612,7 @@ internal class SyncDownloadPipeline(
                         completedCount.incrementAndGet()
                         progressPublisher.markDeleted(action.relativePath)
                     } else {
-                        Log.w(TAG, "DELETE_LOCAL failed id=${videoItem.id}: mediaGone=$mediaGone thumbGone=$thumbGone")
+                        Log.w(TAG, SyncSafeLog.localDeleteIncomplete("DELETE_LOCAL", videoItem.id, mediaGone, thumbGone))
                         failedDeleteCount.incrementAndGet()
                         syncLogRepository.log(
                             action = "DELETE_LOCAL",
@@ -519,7 +664,9 @@ internal class SyncDownloadPipeline(
             syncLogRepository.clearOldLogs()
             return !hadFailures
         } catch (e: CancellationException) {
-            progressPublisher.value = SyncProgress(
+            // BUG-008: 终态必须 copy 当前进度（保留已 flush 的计数/字节/完成路径），
+            // fresh SyncProgress 会把合并语义里的 0 当成「有意清零」→ "0 of 0"。
+            progressPublisher.value = progressPublisher.value.copy(
                 isRunning = false,
                 phase = SyncPhase.CANCELLED,
                 relationId = relationId,
@@ -528,8 +675,9 @@ internal class SyncDownloadPipeline(
             )
             throw e
         } catch (e: Exception) {
-            DebugLogger.e(TAG, "同步异常退出", e)
-            progressPublisher.value = SyncProgress(
+            // 复审红线：不传原始 Throwable（DebugLogger 会把 stack+message 写入调试环形缓冲）。
+            DebugLogger.e(TAG, SyncSafeLog.failure("SYNC", e))
+            progressPublisher.value = progressPublisher.value.copy(
                 isRunning = false,
                 phase = SyncPhase.FAILED,
                 relationId = relationId,

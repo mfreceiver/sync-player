@@ -39,6 +39,23 @@ class FileVolume(val root: File) : MediaVolume {
     override suspend fun exists(relPath: String): Boolean = withContext(Dispatchers.IO) {
         resolve(relPath).exists()
     }
+
+    /**
+     * BUG-007 existsStrict：**不得用 File.exists()**（其 false 混淆「不存在」与「访问失败」）。
+     * 经 Files.readAttributes 读文件属性：NoSuchFileException ⇒ false（确认缺失）；
+     * 其余 IOException（访问拒绝 / ENOTDIR 类——如父路径是普通文件）上抛，绝不折算「不存在」。
+     */
+    override suspend fun existsStrict(relPath: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            java.nio.file.Files.readAttributes(
+                resolve(relPath).toPath(),
+                java.nio.file.attribute.BasicFileAttributes::class.java
+            )
+            true
+        } catch (e: java.nio.file.NoSuchFileException) {
+            false
+        }
+    }
     override suspend fun mkdirs(dirRelPath: String): Unit = withContext(Dispatchers.IO) {
         resolve(dirRelPath).mkdirs()
     }

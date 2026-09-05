@@ -269,7 +269,31 @@ fun BrowserScreen(
                 // Defer the Snackbar until the async toggle actually succeeds: a failed toggle
                 // must never produce a misleading "moved to trash" Snackbar. Errors land in
                 // viewModel.error and are surfaced by the error Snackbar below.
-                viewModel.toggleTrashedWithUndo(id) {
+                val markerAtRequest = pendingDeleteId
+                viewModel.toggleTrashedWithUndo(
+                    videoItemId = id,
+                    onFailure = {
+                        val (pendingId, latestId) = reconcilePendingDeleteMarker(
+                            pendingDeleteId,
+                            latestPendingDeleteId,
+                            viewModel.getPendingHardDeleteId(),
+                            markerAtRequest,
+                        )
+                        pendingDeleteId = pendingId
+                        latestPendingDeleteId = latestId
+                    }
+                ) {
+                    // A successful toggle means any older CommittingHardDelete was drained by
+                    // the use-case before this operation was recorded. Reconcile against the
+                    // authoritative state without clearing a newer marker.
+                    val (pendingId, latestId) = reconcilePendingDeleteMarker(
+                        pendingDeleteId,
+                        latestPendingDeleteId,
+                        viewModel.getPendingHardDeleteId(),
+                        markerAtRequest,
+                    )
+                    pendingDeleteId = pendingId
+                    latestPendingDeleteId = latestId
                     onTrashedInBrowser(
                         scope, snackbarHostState, viewModel, id,
                         undoTrashMsg, undoActionLbl, undoFailedMsg
@@ -277,30 +301,69 @@ fun BrowserScreen(
                 }
             },
             onDeleted = { id ->
-                // Guard against re-deleting a file that is already pending deletion.
-                if (pendingDeleteId == null) {
-                    pendingDeleteId = id
-                    latestPendingDeleteId = id
-                    viewModel.deleteFileWithUndo(id) {
-                        // onSuccess: the use-case recorded the pending delete and refreshed the
-                        // list. Only NOW show the undo Snackbar.
-                        if (compositionActive) {
-                            onDeletedInBrowser(
-                                scope, snackbarHostState, viewModel, id,
-                                onResolved = {
-                                    pendingDeleteId = null
-                                    latestPendingDeleteId = null
-                                },
-                                undoDeleteMsg, undoActionLbl, undoFailedMsg
-                            )
-                        } else {
-                            // Composition disposed before this callback fired (the composition
-                            // scope is cancelled → the Snackbar path is unreachable). Commit the
-                            // deferred delete via the safety path so it is not silently lost.
-                            viewModel.commitDeferredDeleteSafely(id)
-                            pendingDeleteId = null
-                        }
+                // A retained CommittingHardDelete is recoverable: allow the use-case to drain it
+                // before recording this new delete, but keep the old marker until that succeeds.
+                val (syncedPendingId, syncedLatestId) = reconcilePendingDeleteMarker(
+                    localPendingId = pendingDeleteId,
+                    latestPendingId = latestPendingDeleteId,
+                    authoritativePendingId = viewModel.getPendingHardDeleteId(),
+                    expectedLocalPendingId = pendingDeleteId,
+                )
+                pendingDeleteId = syncedPendingId
+                latestPendingDeleteId = syncedLatestId
+                val currentPendingId = syncedPendingId
+                val hasPendingDebt = currentPendingId != null
+                val hasCommittingDebt = currentPendingId?.let(viewModel::hasCommittingDelete) == true
+                if (shouldStartDeferredDelete(
+                        currentPendingId, id, hasPendingDebt, hasCommittingDebt
+                    )
+                ) {
+                    if (!hasPendingDebt) {
+                        pendingDeleteId = id
+                        latestPendingDeleteId = id
                     }
+                    viewModel.deleteFileWithUndo(
+                        videoItemId = id,
+                        onFailure = {
+                            val (pendingId, latestId) = reconcilePendingDeleteMarker(
+                                pendingDeleteId,
+                                latestPendingDeleteId,
+                                viewModel.getPendingHardDeleteId(),
+                                currentPendingId,
+                            )
+                            pendingDeleteId = pendingId
+                            latestPendingDeleteId = latestId
+                        },
+                        onSuccess = {
+                            // onSuccess: the use-case recorded the pending delete and refreshed the
+                            // list. Only NOW show the undo Snackbar. Reconcile against the
+                            // authoritative state so an older callback cannot clear newer state.
+                            val (pendingId, latestId) = reconcilePendingDeleteMarker(
+                                pendingDeleteId,
+                                latestPendingDeleteId,
+                                viewModel.getPendingHardDeleteId(),
+                                currentPendingId,
+                            )
+                            pendingDeleteId = pendingId
+                            latestPendingDeleteId = latestId
+                            if (compositionActive) {
+                                onDeletedInBrowser(
+                                    scope, snackbarHostState, viewModel, id,
+                                    onResolved = {
+                                        pendingDeleteId = null
+                                        latestPendingDeleteId = null
+                                    },
+                                    undoDeleteMsg, undoActionLbl, undoFailedMsg
+                                )
+                            } else {
+                                // Composition disposed before this callback fired (the composition
+                                // scope is cancelled → the Snackbar path is unreachable). Commit the
+                                // deferred delete via the safety path so it is not silently lost.
+                                viewModel.commitDeferredDeleteSafely(id)
+                                pendingDeleteId = null
+                            }
+                        },
+                    )
                 }
             }
         )
@@ -421,23 +484,65 @@ private fun onDeletedInBrowser(
             actionLabel = actionLabel,
             duration = SnackbarDuration.Short
         )
-        when (result) {
+        val resolved = when (result) {
             SnackbarResult.ActionPerformed -> {
                 // expectedId protection: only cancel if this operation is still the current one.
                 val undoResult = viewModel.undoDelete(expectedId = id)
                 if (undoResult is UndoResult.Failed) {
                     snackbarHostState.showSnackbar(failedMessage)
                 }
+                shouldClearDeferredDelete(
+                    undoResult,
+                    hasAnyPendingDebt = viewModel.getPendingHardDeleteId() != null
+                )
             }
             SnackbarResult.Dismissed -> {
                 // expectedId protection: only commit if this operation is still the current one.
-                viewModel.commitDeferredDelete(expectedId = id)
+                val commitResult = viewModel.commitDeferredDelete(expectedId = id)
+                shouldClearDeferredDelete(
+                    commitResult,
+                    hasAnyPendingDebt = viewModel.getPendingHardDeleteId() != null
+                )
             }
         }
-        // Clear the pending guard regardless of outcome — the operation is resolved.
-        onResolved()
+        // A failed commit remains an owed, non-undoable debt. Keep the marker so a later
+        // operation can retry the drain instead of silently becoming a no-op.
+        if (resolved) onResolved()
     }
 }
+
+/** Whether a snackbar operation has reached a state where its UI pending marker may be cleared. */
+internal fun shouldClearDeferredDelete(
+    result: UndoResult,
+    hasAnyPendingDebt: Boolean = false,
+): Boolean = result !is UndoResult.Failed && !hasAnyPendingDebt
+
+/**
+ * Sync the local BrowserScreen marker with the use-case's authoritative pending state, but only
+ * when the callback still owns the marker it observed at request time.
+ */
+internal fun reconcilePendingDeleteMarker(
+    localPendingId: Long?,
+    latestPendingId: Long?,
+    authoritativePendingId: Long?,
+    expectedLocalPendingId: Long?,
+): Pair<Long?, Long?> {
+    if (localPendingId != expectedLocalPendingId) return localPendingId to latestPendingId
+    val latest = if (latestPendingId == expectedLocalPendingId) {
+        authoritativePendingId
+    } else {
+        latestPendingId
+    }
+    return authoritativePendingId to latest
+}
+
+internal fun shouldStartDeferredDelete(
+    pendingDeleteId: Long?,
+    requestedId: Long,
+    hasPendingDebt: Boolean,
+    hasCommittingDebt: Boolean,
+): Boolean = pendingDeleteId == null || !hasPendingDebt ||
+    hasCommittingDebt || pendingDeleteId == requestedId
 
 @Composable
 private fun AdvancedFilterDialog(

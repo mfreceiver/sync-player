@@ -101,4 +101,83 @@ object ShareTempFiles {
 
         return trimmed
     }
+
+    /**
+     * Max UTF-8 byte budget for the complete share leaf name (stem + suffix + extension).
+     * Kept below the common NAME_MAX (255) so the budgeted name is creatable on any volume.
+     */
+    private const val MAX_LEAF_BYTES = 240
+
+    /** Capped extension budget; leaves guaranteed room for the stem and the "-<id>[-n]" suffix. */
+    private const val MAX_EXT_BYTES = MAX_LEAF_BYTES / 2
+
+    /** Fixed ASCII fallback extension (4 bytes — always within budget) for over-long extensions. */
+    private const val FALLBACK_EXT = ".bin"
+
+    /**
+     * Create a collision-free temp file under `share/` for decrypting video [videoId] into,
+     * named after [sanitized] with the video id appended so two same-named videos never map
+     * to the same path: `stem-<id>.<ext>`, falling back to `stem-<id>-<n>.<ext>` (n = 1, 2, …)
+     * while a candidate is already occupied (BUG-017).
+     *
+     * Uses [File.createNewFile] (atomic create-or-fail) — an existing in-use file is NEVER
+     * overwritten or truncated; the next candidate is tried instead. All leftovers remain
+     * subject to the TTL sweep ([cleanupOldShareTempFiles]).
+     *
+     * Byte budget: every candidate leaf name is ≤ [MAX_LEAF_BYTES] UTF-8 bytes. Only the
+     * stem is truncated (at a Unicode code point boundary — never splitting a surrogate
+     * pair); the full `-<id>[-n]` suffix is always preserved, which guarantees the candidate
+     * sequence strictly differs per attempt and therefore converges; the extension is
+     * separately capped at [MAX_EXT_BYTES] or replaced by [FALLBACK_EXT].
+     *
+     * Guard: a single call tries at most 1000 candidates (n = 0..999); exhaustion fails
+     * explicitly with [IllegalStateException] (surfaced by `buildShareIntent`'s existing
+     * exception boundary as a failed share) rather than looping forever.
+     *
+     * [sanitized] MUST already be a [sanitizeFileName] output (flat, non-empty leaf).
+     */
+    fun uniqueShareFile(context: Context, sanitized: String, videoId: Long): File {
+        val dir = shareDir(context)
+        val dot = sanitized.lastIndexOf('.')
+        val stem = if (dot > 0) sanitized.substring(0, dot) else sanitized
+        val rawExt = if (dot > 0) sanitized.substring(dot) else "" // includes '.'; empty = no ext
+        val ext = if (rawExt.isEmpty()) "" else truncateUtf8(rawExt, MAX_EXT_BYTES) ?: FALLBACK_EXT
+        val extBytes = ext.toByteArray(Charsets.UTF_8).size
+        var n = 0
+        while (true) {
+            val suffix = if (n == 0) "-$videoId" else "-$videoId-$n" // suffix is never truncated
+            val stemBudget = MAX_LEAF_BYTES - extBytes - suffix.toByteArray(Charsets.UTF_8).size
+            // Budget cannot fit even the stem's first char (or is non-positive) → fixed ASCII
+            // fallback stem ("share", 5 bytes); 5 + suffix + ext ≤ MAX holds for every
+            // reachable n (ext ≤ 120, suffix has at most ~20 digits).
+            val stemPart = if (stemBudget <= 0) "share" else truncateUtf8(stem, stemBudget) ?: "share"
+            val candidate = File(dir, "$stemPart$suffix$ext")
+            if (candidate.createNewFile()) return candidate // atomic exclusive create; false = taken
+            check(++n < 1_000) {
+                "uniqueShareFile exhausted 1000 candidate attempts for id=$videoId"
+            }
+        }
+    }
+
+    /**
+     * Truncate [s] to at most [maxBytes] UTF-8 bytes, cutting only at a Unicode code point
+     * boundary (never splitting a surrogate pair). Returns null when the budget cannot fit
+     * the first code point (or is non-positive) — callers substitute an ASCII fallback.
+     */
+    private fun truncateUtf8(s: String, maxBytes: Int): String? {
+        if (maxBytes <= 0) return null
+        val sb = StringBuilder()
+        var used = 0
+        var index = 0
+        while (index < s.length) {
+            val codePoint = s.codePointAt(index)
+            val charCount = Character.charCount(codePoint)
+            val cpBytes = s.substring(index, index + charCount).toByteArray(Charsets.UTF_8).size
+            if (used + cpBytes > maxBytes) break
+            sb.appendCodePoint(codePoint)
+            used += cpBytes
+            index += charCount
+        }
+        return if (sb.isEmpty()) null else sb.toString()
+    }
 }

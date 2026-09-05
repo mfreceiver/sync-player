@@ -129,6 +129,9 @@ class VideoRepository @Inject constructor(
 
     suspend fun updateStar(id: Long, star: Int) = videoItemDao.updateStar(id, star)
 
+    suspend fun updateAudioGain(id: Long, audioGainDb: Float?) =
+        videoItemDao.updateAudioGain(id, audioGainDb)
+
     fun getFlatItemsFlow(): Flow<List<VideoItemEntity>> = videoItemDao.getFlatItemsFlow()
 
     suspend fun getFlatItemsFiltered(

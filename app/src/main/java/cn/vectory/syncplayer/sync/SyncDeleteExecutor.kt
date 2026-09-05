@@ -30,7 +30,9 @@ import kotlinx.coroutines.CancellationException
  * 迁移不变量（与原 [SyncEngine] 内联实现逐条等价）：
  *  1. 卷不匹配（含空/未知 volumeId）→ 不删本地、不删远端、failedActions++、SKIPPED 日志
  *     （红线 2：volume ownership fail-closed）。
- *  2. local-first：本地密文/缩略图未删净不触远端。
+ *  2. remote-first（BUG-001）：远端 ack 前不动本地——远端失败保留全部本地状态
+ *     （行留在回收站标记下，下次清理重推 DELETE_BOTH，防复活循环）；远端成功后本地
+ *     失败由下次镜像同步推导 DELETE_LOCAL 自愈。卷检查恒在循环体最前（先于远端）。
  *  3. 远端 `deleteFile` 幂等（返回 false 表示「本来就不存在」，按成功语义处理）。
  *  4. CancellationException rethrow 分支保留；finally `disconnect()` 保留。
  *  5. 进度上报走传入的 [progressPublisher]（Engine 构造一次并共享的同一实例）。
@@ -85,17 +87,14 @@ internal class SyncDeleteExecutor(
                     completedFiles = completedActions
                 )
 
-                // 1) Local first — never touch remote if local ciphertext/thumb still present.
                 val videoItem = videoRepository.getByRelativePathAndRelationId(action.relativePath, relationId)
                 // 卷一致性防护（同 executeSync 删除路径）：entity 属于另一卷时跳过整个 DELETE_BOTH，
                 // 既不删本地（不属于当前 store 管辖）也不删远端，避免产生半完成状态。
+                // 【红线 2】卷检查必须保持在循环体最前（BUG-001 重排后依然不变）。
                 if (videoItem != null && videoItem.volumeId != store.volumeId) {
                     failedActions++
-                    Log.w(
-                        TAG,
-                        "DELETE_BOTH skipped (volume mismatch): path=${action.relativePath} " +
-                            "stored volumeId differs from active volume"
-                    )
+                    // 复审红线：卷不匹配日志不拼 path/volumeId——只留操作种类与原因类别。
+                    Log.w(TAG, SyncSafeLog.skippedVolumeMismatch("DELETE_BOTH"))
                     syncLogRepository.log(
                         action = "DELETE_BOTH",
                         relativePath = action.relativePath,
@@ -106,12 +105,40 @@ internal class SyncDeleteExecutor(
                     )
                     continue
                 }
+
+                // 1) Remote first (BUG-001) — 远端未 ack 前不动任何本地状态。
+                //    旧 local-first 在远端失败时已删 DB 行 → 下次 dryRun 见「远端仍在 +
+                //    local==null」推导 DOWNLOAD → 回收站复活循环。remote-first 下远端失败
+                //    保留行于回收站标记，下次清理重推 DELETE_BOTH，自终止。
+                val remoteRelPath = storagePaths.toPathUnderBase(relation.localBasePath, action.relativePath)
+                try {
+                    client.deleteFile(remoteRelPath)
+                    // true = deleted; false (SMB !exists) = already gone → both OK
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failedActions++
+                    // 复审红线：不拼 remote path、不传原始 Throwable——操作+错误码+异常类别。
+                    Log.w(TAG, SyncSafeLog.failure("DELETE_BOTH remote", e))
+                    syncLogRepository.log(
+                        action = "DELETE_BOTH",
+                        relativePath = action.relativePath,
+                        status = "FAILED",
+                        dryRun = false,
+                        fileSize = action.fileSize,
+                        errorMessage = syncErrorMessage(e, context)
+                    )
+                    continue
+                }
+
+                // 2) Local — 远端 ack 后才执行；本地删除失败保留 DB 行，由下次镜像
+                //    同步（dryRun 对比远端快照）推导 DELETE_LOCAL 自愈，不自作主张删行。
                 if (videoItem != null) {
                     val mediaGone = deleteStoreMedia(store, videoItem.id)
                     val thumbGone = deleteStoreThumb(store, videoItem.id)
                     if (!(mediaGone && thumbGone)) {
                         failedActions++
-                        Log.w(TAG, "DELETE_BOTH local failed id=${videoItem.id}: mediaGone=$mediaGone thumbGone=$thumbGone")
+                        Log.w(TAG, SyncSafeLog.localDeleteIncomplete("DELETE_BOTH", videoItem.id, mediaGone, thumbGone))
                         syncLogRepository.log(
                             action = "DELETE_BOTH",
                             relativePath = action.relativePath,
@@ -126,27 +153,6 @@ internal class SyncDeleteExecutor(
                     }
                     playbackRepository.deleteByVideoId(videoItem.id)
                     videoRepository.deleteByRelativePathAndRelationId(action.relativePath, relationId)
-                }
-
-                // 2) Remote — false from SMB means "already gone" (idempotent); exceptions are real failures.
-                val remoteRelPath = storagePaths.toPathUnderBase(relation.localBasePath, action.relativePath)
-                try {
-                    client.deleteFile(remoteRelPath)
-                    // true = deleted; false (SMB !exists) = already gone → both OK
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    failedActions++
-                    Log.w(TAG, "DELETE_BOTH remote failed code=${(e as? SyncException)?.code} path=$remoteRelPath", e)
-                    syncLogRepository.log(
-                        action = "DELETE_BOTH",
-                        relativePath = action.relativePath,
-                        status = "FAILED",
-                        dryRun = false,
-                        fileSize = action.fileSize,
-                        errorMessage = syncErrorMessage(e, context)
-                    )
-                    continue
                 }
 
                 syncLogRepository.log(
@@ -187,7 +193,8 @@ internal class SyncDeleteExecutor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            progressPublisher.value = SyncProgress(
+            // BUG-008: 终态必须 copy 当前进度，保留 DELETING 相位已发布的计数。
+            progressPublisher.value = progressPublisher.value.copy(
                 isRunning = false,
                 phase = SyncPhase.FAILED,
                 relationId = relationId,
@@ -220,7 +227,8 @@ internal class SyncDeleteExecutor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to delete media id=$id", e)
+            // 复审红线：只留行 id + 异常类别，不传原始 Throwable。
+            Log.w(TAG, SyncSafeLog.cleanupFailed("deleteStoreMedia", id, e))
             try {
                 !store.exists(id)
             } catch (e: CancellationException) {
@@ -242,7 +250,8 @@ internal class SyncDeleteExecutor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to delete thumb id=$id", e)
+            // 复审红线：只留行 id + 异常类别，不传原始 Throwable。
+            Log.w(TAG, SyncSafeLog.cleanupFailed("deleteStoreThumb", id, e))
             try {
                 !store.thumbExists(id)
             } catch (e: CancellationException) {

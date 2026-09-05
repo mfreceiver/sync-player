@@ -10,44 +10,50 @@ interface VideoItemDao {
     fun getItemsInFolder(folderPath: String): Flow<List<VideoItemEntity>>
 
     @Query("""
-        SELECT DISTINCT SUBSTR(
-            CASE WHEN :folderPath = '' THEN parentPath
-            ELSE SUBSTR(parentPath, LENGTH(:folderPath) + 2)
-            END,
-            1,
-            INSTR(
+        SELECT DISTINCT folderName FROM (
+            SELECT SUBSTR(
                 CASE WHEN :folderPath = '' THEN parentPath
                 ELSE SUBSTR(parentPath, LENGTH(:folderPath) + 2)
-                END || '/',
-                '/'
-            ) - 1
+                END,
+                1,
+                INSTR(
+                    CASE WHEN :folderPath = '' THEN parentPath
+                    ELSE SUBSTR(parentPath, LENGTH(:folderPath) + 2)
+                    END || '/',
+                    '/'
+                ) - 1
+            ) AS folderName
+            FROM video_item
+            WHERE CASE
+                WHEN :folderPath = '' THEN parentPath != ''
+                ELSE substr(parentPath, 1, length(:folderPath) + 1) = :folderPath || '/'
+            END
         )
-        FROM video_item
-        WHERE CASE
-            WHEN :folderPath = '' THEN parentPath != ''
-            ELSE parentPath LIKE :folderPath || '/%'
-        END
+        WHERE folderName != ''
     """)
     fun getSubFolders(folderPath: String): Flow<List<String>>
 
     @Query("""
-        SELECT DISTINCT SUBSTR(
-            CASE WHEN :folderPath = '' THEN parentPath
-            ELSE SUBSTR(parentPath, LENGTH(:folderPath) + 2)
-            END,
-            1,
-            INSTR(
+        SELECT DISTINCT folderName FROM (
+            SELECT SUBSTR(
                 CASE WHEN :folderPath = '' THEN parentPath
                 ELSE SUBSTR(parentPath, LENGTH(:folderPath) + 2)
-                END || '/',
-                '/'
-            ) - 1
+                END,
+                1,
+                INSTR(
+                    CASE WHEN :folderPath = '' THEN parentPath
+                    ELSE SUBSTR(parentPath, LENGTH(:folderPath) + 2)
+                    END || '/',
+                    '/'
+                ) - 1
+            ) AS folderName
+            FROM video_item
+            WHERE CASE
+                WHEN :folderPath = '' THEN parentPath != ''
+                ELSE substr(parentPath, 1, length(:folderPath) + 1) = :folderPath || '/'
+            END
         )
-        FROM video_item
-        WHERE CASE
-            WHEN :folderPath = '' THEN parentPath != ''
-            ELSE parentPath LIKE :folderPath || '/%'
-        END
+        WHERE folderName != ''
     """)
     suspend fun getSubFoldersOnce(folderPath: String): List<String>
 
@@ -88,23 +94,25 @@ interface VideoItemDao {
     @Query("DELETE FROM video_item")
     suspend fun deleteAll()
 
-    /** Items under [folderPath] (exact or descendants). Path-boundary safe (no false prefix match). */
+    /** Items under [folderPath] (exact or descendants). Binary-exact prefix (no LIKE wildcards/case folding). */
     @Query("""
         SELECT * FROM video_item
         WHERE CASE
             WHEN :folderPath = '' THEN 1
-            ELSE (relativePath = :folderPath OR relativePath LIKE :folderPath || '/%')
+            ELSE (relativePath = :folderPath
+                  OR substr(relativePath, 1, length(:folderPath) + 1) = :folderPath || '/')
         END
     """)
     suspend fun getByPathPrefix(folderPath: String): List<VideoItemEntity>
 
-    /** Relation-scoped path prefix query for deleteFolder isolation. */
+    /** Relation-scoped path prefix query for deleteFolder isolation. Binary-exact prefix. */
     @Query("""
         SELECT * FROM video_item
         WHERE syncRelationId = :syncRelationId
           AND CASE
               WHEN :folderPath = '' THEN 1
-              ELSE (relativePath = :folderPath OR relativePath LIKE :folderPath || '/%')
+              ELSE (relativePath = :folderPath
+                    OR substr(relativePath, 1, length(:folderPath) + 1) = :folderPath || '/')
           END
     """)
     suspend fun getByPathPrefixAndRelation(folderPath: String, syncRelationId: Long): List<VideoItemEntity>
@@ -117,7 +125,8 @@ interface VideoItemDao {
         SELECT DISTINCT parentPath FROM video_item
         WHERE CASE
             WHEN :folderPath = '' THEN parentPath LIKE '%/%'
-            ELSE parentPath LIKE :folderPath || '/%/%'
+            ELSE (substr(parentPath, 1, length(:folderPath) + 1) = :folderPath || '/'
+                  AND instr(substr(parentPath, length(:folderPath) + 2), '/') > 0)
         END
     """)
     suspend fun getDeepParentPaths(folderPath: String): List<String>
@@ -170,7 +179,8 @@ interface VideoItemDao {
         WHERE v.fileName LIKE '%' || :query || '%' COLLATE NOCASE
         AND CASE
             WHEN :folder = '' THEN 1
-            ELSE (v.parentPath = :folder OR v.parentPath LIKE :folder || '/%')
+            ELSE (v.parentPath = :folder
+                  OR substr(v.parentPath, 1, length(:folder) + 1) = :folder || '/')
         END
     """)
     fun searchByFileNameInFolder(query: String, folder: String): Flow<List<VideoItemWithPlayback>>
@@ -182,10 +192,11 @@ interface VideoItemDao {
     fun getAllParentPaths(): Flow<List<String>>
 
     @Query("""
-        SELECT DISTINCT parentPath FROM video_item 
+        SELECT DISTINCT parentPath FROM video_item
         WHERE CASE
             WHEN :folder = '' THEN 1
-            ELSE (parentPath = :folder OR parentPath LIKE :folder || '/%')
+            ELSE (parentPath = :folder
+                  OR substr(parentPath, 1, length(:folder) + 1) = :folder || '/')
         END
     """)
     fun getParentPathsInFolder(folder: String): Flow<List<String>>
@@ -207,7 +218,7 @@ interface VideoItemDao {
         FROM video_item
         WHERE CASE
             WHEN :folderPath = '' THEN 1
-            ELSE relativePath LIKE :folderPath || '/%'
+            ELSE substr(relativePath, 1, length(:folderPath) + 1) = :folderPath || '/'
         END
     """
     )
@@ -229,6 +240,11 @@ interface VideoItemDao {
     @Query("UPDATE video_item SET star = :star WHERE id = :id")
     suspend fun updateStar(id: Long, star: Int)
 
+    // Update loudness gain for a video item (single-column write: never resurrects a
+    // deleted row and never clobbers concurrent column updates).
+    @Query("UPDATE video_item SET audioGainDb = :audioGainDb WHERE id = :id")
+    suspend fun updateAudioGain(id: Long, audioGainDb: Float?)
+
     @Query("SELECT * FROM video_item ORDER BY fileName ASC")
     fun getFlatItemsFlow(): Flow<List<VideoItemEntity>>
 
@@ -242,9 +258,9 @@ interface VideoItemDao {
             WHEN :folderPath = '' THEN
                 vi.parentPath != '' AND vi.parentPath NOT LIKE '%/%'
             ELSE
-                vi.parentPath LIKE :folderPath || '/%'
+                (substr(vi.parentPath, 1, length(:folderPath) + 1) = :folderPath || '/'
                 AND LENGTH(SUBSTR(vi.parentPath, LENGTH(:folderPath) + 2))
-                    - LENGTH(REPLACE(SUBSTR(vi.parentPath, LENGTH(:folderPath) + 2), '/', '')) = 0
+                    - LENGTH(REPLACE(SUBSTR(vi.parentPath, LENGTH(:folderPath) + 2), '/', '')) = 0)
         END
     """)
     suspend fun getChildVideoStats(folderPath: String): List<ChildVideoStat>

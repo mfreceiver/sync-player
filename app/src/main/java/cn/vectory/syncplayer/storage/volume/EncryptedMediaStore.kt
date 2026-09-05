@@ -17,6 +17,9 @@ sealed class MediaExistence {
     data class IO_ERROR(val reason: String) : MediaExistence()
 }
 
+/** BUG-007：tmp 密文存在性三态探测结果。 */
+enum class TmpProbeState { PRESENT, ABSENT, UNKNOWN }
+
 /**
  * Encrypted media I/O against the **current** active [MediaVolume].
  *
@@ -91,6 +94,24 @@ class EncryptedMediaStore(
 
     suspend fun cancel(id: Long) {
         volume().delete(tmpMedia(id))
+    }
+
+    /**
+     * BUG-007：tmp 密文存在性三态探测。ABSENT 仅在「已进入过 finalize」语境下**且**底层
+     * [MediaVolume.existsStrict] 返回了完整、严格的「确认未命中」时可解读为「rename 已消费 tmp」；
+     * UNKNOWN = 探测自身失败/结果不完整（查询异常 / null cursor / SAF 加载中），调用方必须
+     * 保守处理（只删行、不删 final）。与既有 [checkExistence] 的三态契约同构。
+     *
+     * CE 传播契约：对普通调用方 rethrow CE 不变（不全局吞取消）；**清理语境
+     * （SyncDownloadPipeline.cleanUpAttempt）的调用点由调用方单独 try/catch 收敛 UNKNOWN**——
+     * 本函数不因清理场景改契约。
+     */
+    suspend fun probePendingTmp(id: Long): TmpProbeState = try {
+        if (volume().existsStrict(tmpMedia(id))) TmpProbeState.PRESENT else TmpProbeState.ABSENT
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        TmpProbeState.UNKNOWN
     }
 
     suspend fun openCiphertextRead(id: Long): SeekableReadHandle = volume().openRead(finalMedia(id))

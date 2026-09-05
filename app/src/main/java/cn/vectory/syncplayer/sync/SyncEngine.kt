@@ -107,8 +107,13 @@ class SyncEngine @Inject constructor(
     /**
      * Atomically consume and execute every pending task under [storageOperationMutex].
      * Eliminates TOCTOU race where reset/switch could intervene between consume and execute.
-     * A task queued while the service job is still active is consumed by this loop instead of
-     * relying on another [SyncService] start, which the service may deliberately coalesce.
+     * Real protocol (BUG-018, plan v3.1): tasks enqueued while a pass of this drain is running
+     * block on [storageOperationMutex] and necessarily land **after** this drain releases it —
+     * they are consumed by the caller's *next* pass, not by the running one. [SyncService]'s
+     * drain coordinator guarantees a follow-up pass while the service lives: every start
+     * request is buffered (UNLIMITED channel, single confined-thread protocol) and discarded
+     * **only** on user cancel / system timeout / destroy, after which the relation recovers
+     * by being started again.
      * Returns the last executed task and its result, or null/false if the queue was empty.
      */
     internal suspend fun consumeAndExecute(

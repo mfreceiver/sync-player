@@ -7,6 +7,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -142,5 +143,46 @@ class SyncProgressPublisherTest {
         )
 
         assertEquals(500L, sut.progress.value.speedBytesPerSec)
+    }
+
+    /**
+     * BUG-008 生产者契约（计划 §BUG-008.3 #1）：终态写入方必须使用 `value.copy(...)`，
+     * 仅显式修改 phase/isRunning 等归属字段；计数器/字节/完成路径来自 flush 后的当前值，
+     * 由 applyRequestedChanges 合并保留。本测试锁定该契约（非红测试，防未来退化）。
+     */
+    @Test
+    fun `copy-based terminal CANCELLED write preserves flushed counters and completedPaths`() = runTest {
+        var clock = 1_000L
+        val sut = publisher { clock }
+
+        sut.beginSyncRun()
+        sut.beginDownload(
+            relativePath = "f0",
+            fileName = "f0",
+            totalBytes = 10_000L,
+            transferredSoFar = 0L,
+            totalDownloadBytes = 10_000L,
+            completedFiles = 0,
+            totalFiles = 10
+        )
+        clock += 600L // 推进节流窗口，确保完成事件真实发布
+        sut.completeDownload(
+            relativePath = "f0",
+            transferredSoFar = 10_000L,
+            totalDownloadBytes = 10_000L,
+            completedFiles = 1,
+            totalFiles = 10
+        )
+
+        // 生产者侧的合法终态写入形态：仅 copy 改 phase/isRunning
+        sut.value = sut.value.copy(isRunning = false, phase = SyncPhase.CANCELLED)
+
+        assertEquals(SyncPhase.CANCELLED, sut.progress.value.phase)
+        assertFalse(sut.progress.value.isRunning)
+        assertEquals(10, sut.progress.value.totalFiles)
+        assertEquals(1, sut.progress.value.completedFiles)
+        assertEquals(10_000L, sut.progress.value.transferredBytes)
+        assertEquals(10_000L, sut.progress.value.totalBytes)
+        assertEquals(setOf("f0"), sut.progress.value.completedPaths)
     }
 }

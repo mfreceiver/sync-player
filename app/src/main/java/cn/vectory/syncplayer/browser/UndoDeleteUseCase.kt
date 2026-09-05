@@ -45,6 +45,13 @@ sealed class UndoableDelete {
      * is called (when the Snackbar expires without undo). Undo simply cancels the pending deletion.
      */
     data class HardDelete(override val id: Long) : UndoableDelete()
+
+    /**
+     * A deferred hard delete whose commit has been attempted and whose final outcome is not yet
+     * confirmed. It is deliberately not undoable: the delete may have partially completed, so
+     * it remains owed and can only be retried by a safe drain.
+     */
+    data class CommittingHardDelete(override val id: Long) : UndoableDelete()
 }
 
 /** Result of an undo attempt. */
@@ -69,8 +76,9 @@ sealed class UndoResult {
  * - [undo]/[commitDeferredDelete] accept an optional [expectedId]. When provided, they only
  *   act if the current pending operation matches that id — preventing a stale snackbar from
  *   committing/cancelling a newer operation.
- * - Sequential hard deletes auto-commit the old pending delete before setting the new one,
- *   so no pending delete is ever silently lost.
+ * - Any new undoable operation that would overwrite a pending hard delete (another hard
+ *   delete, or a trash toggle) auto-commits it first, so no pending delete is ever silently
+ *   lost.
  *
  * Only the most recent delete operation is retained (latest-first semantics per task requirement 6).
  * Volume ownership fail-closed: undo of [TrashToggle] checks that the entity belongs to the
@@ -139,6 +147,13 @@ class UndoDeleteUseCase @Inject constructor(
                     val record = playbackRepository.getByVideoId(videoItemId)
                     val previousTrashed = record?.isTrashed ?: false
 
+                    // BUG-016: a trash toggle must not silently cancel a pending hard delete —
+                    // commit it first; an uncertain result blocks the toggle so the debt stays drainable.
+                    val canProceed = autoCommitPendingHardDeleteLocked(
+                        videoItemId, incomingIsHardDelete = false, onError
+                    )
+                    if (!canProceed) return@withLock
+
                     when (val result = fileOps.toggleTrashedChecked(videoItemId, basePaths)) {
                         is ToggleTrashResult.Success -> {
                             undoState.set(UndoableDelete.TrashToggle(videoItemId, previousTrashed))
@@ -153,7 +168,7 @@ class UndoDeleteUseCase @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to perform trash toggle with undo id=$videoItemId", e)
+                Log.e(TAG, "Failed to perform trash toggle with undo: ${safeErrorDetail(e)}")
                 onError(syncErrorMessage(e, context))
             }
         }
@@ -178,6 +193,15 @@ class UndoDeleteUseCase @Inject constructor(
                     val record = playbackRepository.getByVideoId(videoItemId)
                     val previousTrashed = record?.isTrashed ?: false
 
+                    // BUG-016: a trash toggle must not silently cancel a pending hard delete —
+                    // commit it first; an uncertain result blocks the toggle so the debt stays drainable.
+                    val canProceed = autoCommitPendingHardDeleteLocked(
+                        videoItemId, incomingIsHardDelete = false
+                    ) {
+                        errorFlow.value = it
+                    }
+                    if (!canProceed) return@withLock
+
                     playbackRepository.toggleTrashed(videoItemId)
                     undoState.set(UndoableDelete.TrashToggle(videoItemId, previousTrashed))
                     onSuccess()
@@ -185,7 +209,7 @@ class UndoDeleteUseCase @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to perform trash toggle (no guard) id=$videoItemId", e)
+                Log.e(TAG, "Failed to perform trash toggle (no guard): ${safeErrorDetail(e)}")
                 errorFlow.value = syncErrorMessage(e, context)
             }
         }
@@ -215,35 +239,79 @@ class UndoDeleteUseCase @Inject constructor(
         onSuccess: () -> Unit = {}
     ) {
         scope.launch {
-            mutex.withLock {
-                val existing = undoState.get()
-                if (existing is UndoableDelete.HardDelete && existing.id != videoItemId) {
-                    // Auto-commit the old pending delete before recording the new one.
-                    undoState.set(null)
-                    try {
-                        val result = withContext(Dispatchers.IO) {
-                            fileOps.deleteMediaById(existing.id)
-                        }
-                        when (result) {
-                            is DeleteMediaResult.Success,
-                            is DeleteMediaResult.SkippedNotFound -> { /* committed cleanly */ }
-                            is DeleteMediaResult.Failed -> {
-                                // Old pending delete failed (e.g. IO/permission). Do NOT silently
-                                // drop it — surface to the error flow so the user sees the failure.
-                                Log.e(TAG, "Auto-commit of old pending delete failed id=${existing.id}: ${result.error.code}", result.error)
-                                onError(syncErrorMessage(result.error, context))
-                            }
-                        }
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to auto-commit old pending delete id=${existing.id}", e)
-                        onError(syncErrorMessage(e, context))
-                    }
-                }
+            val recorded = mutex.withLock {
+                // BUG-016: auto-commit any pending hard delete for a DIFFERENT id before
+                // recording the new one (extracted to autoCommitPendingHardDeleteLocked, now
+                // shared by all entries so a trash toggle cannot silently lose one either).
+                val canProceed = autoCommitPendingHardDeleteLocked(
+                    videoItemId, incomingIsHardDelete = true, onError
+                )
+                if (!canProceed) return@withLock false
                 undoState.set(UndoableDelete.HardDelete(videoItemId))
+                true
             }
-            onSuccess()
+            if (recorded) onSuccess()
+        }
+    }
+
+    /**
+     * Auto-commit the currently pending hard delete so the next undoable operation can take
+     * the undo slot without silently losing it (BUG-016 — previously only a sequential hard
+     * delete did this; trash toggles just overwrote the pending delete).
+     *
+     * MUST be called while [mutex] is held (naming per the repo's `*Locked` convention).
+     * Skips when there is nothing to protect: no pending state, a pending trash toggle
+     * (nothing is deferred — overwrite is safe), or a not-yet-started hard delete for the SAME id
+     * being hard-deleted again (same id replaces itself; an already-started delete is drained).
+     *
+     * An uncertain failure is surfaced via [onError] and blocks the incoming operation. The
+     * existing debt must remain drainable rather than being overwritten.
+     */
+    private suspend fun autoCommitPendingHardDeleteLocked(
+        incomingId: Long,
+        incomingIsHardDelete: Boolean,
+        onError: (String) -> Unit,
+    ): Boolean {
+        val existing = undoState.get()
+        val pendingHardDelete = when (existing) {
+            is UndoableDelete.HardDelete,
+            is UndoableDelete.CommittingHardDelete -> existing
+            else -> return true
+        }
+        if (pendingHardDelete is UndoableDelete.HardDelete &&
+            incomingIsHardDelete && incomingId == pendingHardDelete.id
+        ) return true
+        // pending → committing: the delete is now OWED. Only a confirmed successful outcome may
+        // clear the slot. An uncertain result must remain drainable and cannot be overwritten.
+        if (pendingHardDelete is UndoableDelete.HardDelete) {
+            undoState.set(UndoableDelete.CommittingHardDelete(pendingHardDelete.id))
+        }
+        return try {
+            val result = withContext(Dispatchers.IO) {
+                fileOps.deleteMediaById(pendingHardDelete.id)
+            }
+            when (result) {
+                is DeleteMediaResult.Success,
+                is DeleteMediaResult.SkippedNotFound -> {
+                    undoState.set(null)
+                    true
+                }
+                is DeleteMediaResult.Failed -> {
+                    // The attempt may have partially completed. Keep the debt in the
+                    // non-undoable state so a later safe drain can retry it.
+                    Log.e(TAG, "Auto-commit of old pending delete failed: code=${result.error.code}")
+                    onError(syncErrorMessage(result.error, context))
+                    false
+                }
+            }
+        } catch (e: CancellationException) {
+            // The attempt may already have deleted one or more stages. Keep it explicitly
+            // non-undoable and drainable, then propagate CE verbatim.
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to auto-commit old pending delete: ${safeErrorDetail(e)}")
+            onError(syncErrorMessage(e, context))
+            false
         }
     }
 
@@ -265,12 +333,24 @@ class UndoDeleteUseCase @Inject constructor(
         if (expectedId != null && state.id != expectedId) {
             return UndoResult.NothingToUndo
         }
+        if (state is UndoableDelete.CommittingHardDelete) {
+            // A commit may already have removed the ciphertext or thumbnail. It is not safe to
+            // claim undo success or clear the debt; only a confirmed drain may clear it.
+            return UndoResult.NothingToUndo
+        }
         undoState.set(null)
         return when (state) {
             is UndoableDelete.TrashToggle -> undoTrashToggle(state)
             is UndoableDelete.HardDelete -> {
                 // Deferred delete was never executed — just cancel it (idempotent)
                 UndoResult.Success
+            }
+            is UndoableDelete.CommittingHardDelete -> {
+                // Defensive: unreachable through the public API (commits run under [mutex],
+                // and undo re-acquires it before reading the slot). If it were ever
+                // observed, undoing a delete that is already executing would lie about
+                // the file's fate — report NothingToUndo instead.
+                UndoResult.NothingToUndo
             }
         }
     }
@@ -289,23 +369,30 @@ class UndoDeleteUseCase @Inject constructor(
         if (expectedId != null && state.id != expectedId) {
             return UndoResult.NothingToUndo
         }
-        if (state !is UndoableDelete.HardDelete) {
+        if (state !is UndoableDelete.HardDelete && state !is UndoableDelete.CommittingHardDelete) {
             return UndoResult.NothingToUndo
         }
-        // Clear the state before executing (so a concurrent undo won't double-clear)
-        undoState.set(null)
+        // A CommittingHardDelete is an already-started, uncertain attempt. Retrying it is the
+        // only safe operation; it must never become undoable again.
+        if (state is UndoableDelete.HardDelete) {
+            undoState.set(UndoableDelete.CommittingHardDelete(state.id))
+        }
         return try {
             val result = withContext(Dispatchers.IO) {
                 fileOps.deleteMediaById(state.id)
             }
             when (result) {
-                is DeleteMediaResult.Success, is DeleteMediaResult.SkippedNotFound -> UndoResult.Success
+                is DeleteMediaResult.Success, is DeleteMediaResult.SkippedNotFound -> {
+                    undoState.set(null)
+                    UndoResult.Success
+                }
                 is DeleteMediaResult.Failed -> UndoResult.Failed(result.error)
             }
         } catch (e: CancellationException) {
+            // Keep CommittingHardDelete: the operation may have partially completed.
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to commit deferred delete id=${state.id}", e)
+            Log.e(TAG, "Failed to commit deferred delete: ${safeErrorDetail(e)}")
             UndoResult.Failed(SyncException(
                 SyncErrorCode.STORAGE_ERROR,
                 SyncOperation.DELETE,
@@ -338,9 +425,9 @@ class UndoDeleteUseCase @Inject constructor(
                 val result = commitDeferredDelete(expectedId)
                 if (result is UndoResult.Failed) {
                     // The commit failed. The screen is gone (this is the page-leave path) so we
-                    // cannot surface to a UI flow — but we MUST NOT silently drop it. Log it for
-                    // developer diagnostics (no user-facing path/id leak; logs are dev-only).
-                    Log.e(TAG, "commitPendingSafely failed for expectedId=$expectedId: ${result.error.code}", result.error)
+                    // cannot surface to a UI flow — but we MUST NOT silently drop it. Log a
+                    // structured code only for developer diagnostics (no throwable, no ids).
+                    Log.e(TAG, "commitPendingSafely failed: code=${result.error.code}")
                 }
             }
         }
@@ -348,7 +435,11 @@ class UndoDeleteUseCase @Inject constructor(
 
     /** Clear any pending undo state without committing (e.g., on navigation away where undo is preferred). */
     fun clearUndoState() {
-        undoState.set(null)
+        while (true) {
+            val state = undoState.get() ?: return
+            if (state is UndoableDelete.CommittingHardDelete) return
+            if (undoState.compareAndSet(state, null)) return
+        }
     }
 
     /** Whether there is a pending undo state. */
@@ -356,6 +447,20 @@ class UndoDeleteUseCase @Inject constructor(
 
     /** Get the id of the current pending operation, or null if none. */
     fun getPendingId(): Long? = undoState.get()?.let { it.id }
+
+    /** Get the id of current deferred hard-delete debt, ignoring a pending trash toggle. */
+    fun getPendingHardDeleteId(): Long? = when (val state = undoState.get()) {
+        is UndoableDelete.HardDelete,
+        is UndoableDelete.CommittingHardDelete -> state.id
+        is UndoableDelete.TrashToggle,
+        null -> null
+    }
+
+    /** Whether [id] is an uncertain hard-delete debt awaiting a safe drain. */
+    fun hasCommittingDelete(id: Long): Boolean {
+        val state = undoState.get()
+        return state is UndoableDelete.CommittingHardDelete && state.id == id
+    }
 
     /**
      * Test-only: directly set the undo state, bypassing the normal perform methods.
@@ -379,12 +484,12 @@ class UndoDeleteUseCase @Inject constructor(
                 // Entity gone (e.g., already deleted by another operation) — nothing to restore.
                 // This is a benign case: the user's intent (undo the toggle) is moot because
                 // the entity no longer exists. Report success to avoid confusing the user.
-                Log.i(TAG, "undo trash toggle: id=${state.id} entity gone; nothing to restore")
+                Log.i(TAG, "undo trash toggle: entity gone; nothing to restore")
                 return UndoResult.Success
             }
             val currentVolumeId = mediaStore.volumeId
             if (video.volumeId != currentVolumeId) {
-                Log.w(TAG, "undo trash toggle: id=${state.id} volume not confirmed " +
+                Log.w(TAG, "undo trash toggle: volume not confirmed " +
                     "(stored volumeId differs from active); skip restore (fail-closed)")
                 return UndoResult.Failed(SyncException(
                     SyncErrorCode.STORAGE_ERROR,
@@ -397,7 +502,7 @@ class UndoDeleteUseCase @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to undo trash toggle id=${state.id}", e)
+            Log.e(TAG, "Failed to undo trash toggle: ${safeErrorDetail(e)}")
             UndoResult.Failed(SyncException(
                 SyncErrorCode.DATABASE_ERROR,
                 SyncOperation.DELETE,

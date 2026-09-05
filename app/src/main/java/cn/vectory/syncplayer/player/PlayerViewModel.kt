@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.browser.UndoDeleteUseCase
+import cn.vectory.syncplayer.browser.safeErrorDetail
 import cn.vectory.syncplayer.browser.UndoResult
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
@@ -22,6 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -71,6 +73,9 @@ data class PlayerUiState(
     val lastAutoSwitchTime: Long = 0L,
     val hasPlayerError: Boolean = false,
     val error: ErrorEvent? = null,
+    // BUG-019: structured queue-exhaustion terminal — normal EOF semantics, not an
+    // error (no ErrorEvent, no Context-derived copy). UI consumes it and exits.
+    val queueExhausted: Boolean = false,
 )
 
 /**
@@ -109,6 +114,31 @@ class PlayerViewModel @Inject constructor(
      * in [onCleared]) so a just-launched save always completes.
      */
     private val progressSaveScope = CoroutineScope(SupervisorJob() + ioDispatcher)
+
+    private data class PendingProgressSave(val videoId: Long, val position: Long, val duration: Long)
+
+    // BUG-002: single consumer serializes all progress saves issued by THIS VM instance;
+    // FIFO order == call order. Each save runs in its own child job of the consumer so a
+    // CancellationException escaping one repository call cancels only that child —
+    // the consumer loop keeps serving the queue (oracle #1: CE 不得杀死唯一消费者).
+    private val progressSaveChannel = Channel<PendingProgressSave>(Channel.UNLIMITED)
+
+    init { // 与现有 init 块并列
+        progressSaveScope.launch {
+            for (save in progressSaveChannel) {
+                val job = launch {                       // 每次保存一个子 Job（父=消费者协程）
+                    try {
+                        playbackRepository.saveProgress(save.videoId, save.position, save.duration)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to save progress: ${safeErrorDetail(e)}")
+                    }
+                }
+                job.join()                               // 上一保存结束才取下一项：完成序 == 入队序（仅串行保证，无时延上界）
+            }
+        }
+    }
 
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
@@ -171,7 +201,7 @@ class PlayerViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to load preferences", e)
+                Log.e(TAG, "Failed to load preferences: ${safeErrorDetail(e)}")
             }
         }
     }
@@ -202,19 +232,40 @@ class PlayerViewModel @Inject constructor(
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed to load video IDs", e)
+                        Log.e(TAG, "Failed to load video IDs: ${safeErrorDetail(e)}")
                     }
                 }
             }
         }
     }
 
+    // BUG-015: load request generation — a stale request resuming after ANY
+    // suspension point must never overwrite a newer request's committed state.
+    private val loadGeneration = AtomicLong(0L)
+
     fun loadVideo(videoItemId: Long) {
+        val generation = loadGeneration.incrementAndGet()   // 发起即占代
         viewModelScope.launch {
             try {
-                val video = videoRepository.getById(videoItemId)
+                // A request whose body only starts after a newer request was issued is
+                // already stale — its commit would be dropped at the guard below, and its
+                // start-of-run flag clear could erase a terminal the newer request owns.
+                if (generation != loadGeneration.get()) return@launch
+                _uiState.update { it.copy(queueExhausted = false) }   // 每次加载先清终态
+                var candidateId = videoItemId
+                var video = videoRepository.getById(candidateId)
+                // BUG-019: the queue snapshot may reference ids that background sync has since
+                // deleted — skip forward to the next id that still exists; on exhaustion publish
+                // a structured terminal so the UI exits exactly like normal EOF.
+                val ids = _allVideoIds.value
+                var idx = ids.indexOf(candidateId)
+                while (video == null && idx in 0 until ids.size - 1) {
+                    candidateId = ids[++idx]
+                    video = videoRepository.getById(candidateId)
+                }
                 if (video != null) {
                     val record = playbackRepository.getByVideoId(video.id)
+                    if (generation != loadGeneration.get()) return@launch   // BUG-015: 旧代次迟到，丢弃
                     val gain = video.audioGainDb ?: 0f
                     val effectiveGain = if (_uiState.value.volumeBalance && video.audioGainDb != null) gain else 0f
                     _uiState.update { it.copy(
@@ -229,11 +280,19 @@ class PlayerViewModel @Inject constructor(
                     ) }
                     _progressScrubState.value = ProgressScrubUiState()
                     _currentPosition.value = record?.position ?: 0L
+                } else {
+                    if (generation != loadGeneration.get()) return@launch   // BUG-015：耗尽发布同样受代次门控
+                    // Queue exhausted (or id not in queue at all) — keep the current video and
+                    // publish the structured terminal; the UI consumes it and exits. No
+                    // ErrorEvent (this is normal EOF, not an error) and no Context-derived copy
+                    // (i18n: structured state carries the semantics, UI layer owns wording).
+                    _uiState.update { it.copy(queueExhausted = true) }
+                    Log.w(TAG, "loadVideo: target gone and no later queue item exists")
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to load video $videoItemId", e)
+                Log.e(TAG, "Failed to load video: ${safeErrorDetail(e)}")
             }
         }
     }
@@ -250,16 +309,8 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun saveProgress(position: Long, duration: Long) {
-        val videoId = _uiState.value.videoItem?.id ?: return
-        progressSaveScope.launch {
-            try {
-                playbackRepository.saveProgress(videoId, position, duration)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to save progress", e)
-            }
-        }
+        val videoId = _uiState.value.videoItem?.id ?: return   // 无已加载视频：no-op（与现状语义一致）
+        progressSaveChannel.trySend(PendingProgressSave(videoId, position, duration))
     }
 
     /**
@@ -292,7 +343,7 @@ class PlayerViewModel @Inject constructor(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to refresh playback record after toggle id=$videoId", e)
+                    Log.e(TAG, "Failed to refresh playback record after toggle: ${safeErrorDetail(e)}")
                 }
             }
             // Surface the captured id (NOT the current state's id) so a stale Snackbar can never

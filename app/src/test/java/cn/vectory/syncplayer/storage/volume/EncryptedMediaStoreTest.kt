@@ -242,6 +242,7 @@ class EncryptedMediaStoreTest {
             override suspend fun list(dirRelPath: String) = backing.list(dirRelPath)
             override suspend fun delete(relPath: String) = backing.delete(relPath)
             override suspend fun exists(relPath: String) = backing.exists(relPath)
+            override suspend fun existsStrict(relPath: String) = backing.existsStrict(relPath)
             override suspend fun mkdirs(dirRelPath: String) = backing.mkdirs(dirRelPath)
             override suspend fun rename(from: String, to: String) = backing.rename(from, to)
             override fun usableSpace(): Long = backing.usableSpace()

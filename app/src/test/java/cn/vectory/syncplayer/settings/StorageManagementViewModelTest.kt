@@ -10,8 +10,12 @@ import cn.vectory.syncplayer.storage.volume.MediaVolume
 import cn.vectory.syncplayer.storage.volume.MediaVolumeProvider
 import cn.vectory.syncplayer.sync.SyncEngine
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -203,5 +207,219 @@ class StorageManagementViewModelTest {
         val state = testVm.state.value
         assertFalse("isResetting should be false after completion", state.isResetting)
         assertNull("resetWarning should be null on clean success", state.resetWarning)
+    }
+
+    /** Clean volume mock: no files, usable space readable. */
+    private fun cleanVolume(): MediaVolume {
+        val volume = mockk<MediaVolume>()
+        coEvery { volume.list(any()) } returns emptyList()
+        coEvery { volume.exists(any()) } returns false
+        coEvery { volume.delete(any()) } returns true
+        every { volume.usableSpace() } returns 1_000_000L
+        return volume
+    }
+
+    @Test
+    fun `refresh datastore read failure degrades state without crashing`() = runTest(testDispatcher) {
+        // T4 (BUG-004): URI first-read failure must degrade to an unknown state that
+        // forbids all storage mutations (fail-closed), not crash the process.
+        setUpMocks()
+        coEvery { userPrefs.getMediaStorageTreeUri() } throws IOException("disk")
+
+        // Act: init triggers refresh; the URI read fails at the very first stage.
+        val testVm = createVmWith(cleanVolume())
+        advanceUntilIdle()
+
+        // Assert: unknown state → all storage mutations disabled.
+        val state = testVm.state.value
+        assertFalse("canSwitch must be false when URI read failed (unknown state)", state.canSwitch)
+        assertFalse("canReset must be false when URI read failed (unknown state)", state.canReset)
+        // Degradation originates from the URI first read — DAO/space queries never ran.
+        coVerify(exactly = 1) { userPrefs.getMediaStorageTreeUri() }
+        coVerify(exactly = 0) { videoItemDao.getTotalItemCount() }
+        coVerify(exactly = 0) { mediaVolumeProvider.current() }
+    }
+
+    @Test
+    fun `stale successful refresh cannot overwrite newer refresh result`() = runTest(testDispatcher) {
+        // T4a (ordering): an older in-flight refresh (parked at the DAO call) must
+        // not publish its internal-storage result after a newer switch + trailing
+        // refresh already published the external state.
+        setUpMocks()
+        mockkObject(StorageManagementViewModel.Companion) {
+            every { StorageManagementViewModel.resolveTreeDisplayName(any(), any()) } returns "external"
+            // 1st read = init refresh A (internal); 2nd read = switch trailing refresh C (external)
+            coEvery { userPrefs.getMediaStorageTreeUri() } returnsMany listOf(null, "content://tree/external")
+            // Success write stub — setUpMocks() does not stub the setter.
+            coEvery { userPrefs.setMediaStorageTreeUri("content://tree/external") } returns Unit
+            val gateA = CompletableDeferred<Unit>()
+            var daoCalls = 0
+            coEvery { videoItemDao.getTotalItemCount() } coAnswers {
+                daoCalls++
+                if (daoCalls == 1) gateA.await()  // A parks at the count read
+                0
+            }
+
+            // Act₁: A parks; B switches and C publishes the external state.
+            val testVm = createVmWith(cleanVolume())
+            advanceUntilIdle()
+            testVm.switchToExternal("content://tree/external")
+            advanceUntilIdle()
+
+            // Assert₁ (fence before releasing A): C published the success state,
+            // and B actually completed its write call (stub + call count together).
+            assertTrue("C must have published isExternal=true", testVm.state.value.isExternal)
+            assertTrue("C must have published canSwitch=true", testVm.state.value.canSwitch)
+            coVerify(exactly = 1) { userPrefs.setMediaStorageTreeUri("content://tree/external") }
+
+            // Act₂: release A — it now wants to publish its stale internal result.
+            gateA.complete(Unit)
+            advanceUntilIdle()
+
+            // Assert₂: the stale result must not overwrite the newer one.
+            assertTrue("stale refresh must not overwrite newer external state", testVm.state.value.isExternal)
+        }
+    }
+
+    @Test
+    fun `stale failed refresh cannot re-disable after newer success`() = runTest(testDispatcher) {
+        // T4b (ordering): an older refresh whose URI read fails late must not
+        // re-disable operations after a newer switch + refresh published success.
+        setUpMocks()
+        mockkObject(StorageManagementViewModel.Companion) {
+            every { StorageManagementViewModel.resolveTreeDisplayName(any(), any()) } returns "external"
+            coEvery { userPrefs.setMediaStorageTreeUri("content://tree/external") } returns Unit
+            coEvery { videoItemDao.getTotalItemCount() } returns 0
+            val gateA = CompletableDeferred<Unit>()
+            var uriCalls = 0
+            coEvery { userPrefs.getMediaStorageTreeUri() } coAnswers {
+                uriCalls++
+                if (uriCalls == 1) {
+                    gateA.await()
+                    throw IOException("disk")  // A's first read fails late
+                } else {
+                    "content://tree/external"  // C reads external
+                }
+            }
+
+            // Act₁: A parks at its first read; B succeeds and C publishes good state.
+            val testVm = createVmWith(cleanVolume())
+            advanceUntilIdle()
+            testVm.switchToExternal("content://tree/external")
+            advanceUntilIdle()
+
+            // Assert₁ (fence before releasing A): C published success; B completed write.
+            assertTrue("C must have published canSwitch=true", testVm.state.value.canSwitch)
+            assertTrue("C must have published isExternal=true", testVm.state.value.isExternal)
+            coVerify(exactly = 1) { userPrefs.setMediaStorageTreeUri("content://tree/external") }
+
+            // Act₂: release A — its URI read now throws IOException → catch branch.
+            gateA.complete(Unit)
+            advanceUntilIdle()
+
+            // Assert₂: the stale failure must not overwrite the newer success
+            // nor re-disable operations.
+            assertTrue("stale failure must not re-disable canSwitch", testVm.state.value.canSwitch)
+            assertTrue("stale failure must not overwrite isExternal", testVm.state.value.isExternal)
+        }
+    }
+
+    @Test
+    fun `switchToExternal write failure does not crash and keeps state truthful`() = runTest(testDispatcher) {
+        // T5 (BUG-005): DataStore edit failure in switchToExternal must not crash;
+        // the trailing refresh re-reads the unchanged truth (still internal).
+        setUpMocks()
+        // count=0 so the write path is reachable (setUpMocks default is 1).
+        coEvery { videoItemDao.getTotalItemCount() } returns 0
+        coEvery { userPrefs.setMediaStorageTreeUri(any()) } throws IOException("disk")
+
+        val testVm = createVmWith(cleanVolume())
+        advanceUntilIdle()
+        testVm.switchToExternal("content://tree/primary%3ATest")
+        advanceUntilIdle()
+
+        // Assert: no crash (test green itself proves it); state reflects the truth.
+        assertFalse("write failure must bounce back to internal truth", testVm.state.value.isExternal)
+        coVerify(exactly = 1) { userPrefs.setMediaStorageTreeUri("content://tree/primary%3ATest") }
+    }
+
+    @Test
+    fun `switchToInternal write failure does not crash and keeps state truthful`() = runTest(testDispatcher) {
+        // T5a (BUG-005): internal-side write failure — same contract as T5.
+        setUpMocks()
+        coEvery { videoItemDao.getTotalItemCount() } returns 0
+        coEvery { userPrefs.setMediaStorageTreeUri(any()) } throws IOException("disk")
+
+        val testVm = createVmWith(cleanVolume())
+        advanceUntilIdle()
+        testVm.switchToInternal()
+        advanceUntilIdle()
+
+        assertFalse("write failure must keep internal truth", testVm.state.value.isExternal)
+        coVerify(exactly = 1) { userPrefs.setMediaStorageTreeUri(null) }
+    }
+
+    @Test
+    fun `switchToExternal db count failure does not crash and degrades`() = runTest(testDispatcher) {
+        // T6: DAO count failure inside the switch lock must not crash; the trailing
+        // refresh's inner guard degrades count to MAX_VALUE (fail-closed).
+        setUpMocks()
+        coEvery { videoItemDao.getTotalItemCount() } throws RuntimeException("room closed")
+
+        val testVm = createVmWith(cleanVolume())
+        advanceUntilIdle()
+        testVm.switchToExternal("content://tree/x")
+        advanceUntilIdle()
+
+        assertFalse("count failure must keep internal truth", testVm.state.value.isExternal)
+        assertFalse("unknown count must disable switching (fail-closed)", testVm.state.value.canSwitch)
+    }
+
+    @Test
+    fun `switchToInternal db count failure does not crash and degrades`() = runTest(testDispatcher) {
+        // T6a: internal-side DAO failure — same contract as T6.
+        setUpMocks()
+        coEvery { videoItemDao.getTotalItemCount() } throws RuntimeException("room closed")
+
+        val testVm = createVmWith(cleanVolume())
+        advanceUntilIdle()
+        testVm.switchToInternal()
+        advanceUntilIdle()
+
+        assertFalse("count failure must keep internal truth", testVm.state.value.isExternal)
+        assertFalse("unknown count must disable switching (fail-closed)", testVm.state.value.canSwitch)
+    }
+
+    @Test
+    fun `switch rethrows CancellationException and skips refresh`() = runTest(testDispatcher) {
+        // T7 (CE guard): CE must be rethrown (red line 3) — the switch's trailing
+        // refresh is skipped, so the URI is only read by the init refresh.
+        setUpMocks()
+        coEvery { videoItemDao.getTotalItemCount() } returns 0
+        coEvery { userPrefs.setMediaStorageTreeUri(any()) } throws CancellationException("cancelled")
+
+        val testVm = createVmWith(cleanVolume())
+        advanceUntilIdle()
+        testVm.switchToInternal()
+        advanceUntilIdle()
+
+        // Exactly one URI read — the init refresh. If CE were swallowed and the
+        // trailing refresh ran, this would be 2.
+        coVerify(exactly = 1) { userPrefs.getMediaStorageTreeUri() }
+    }
+
+    @Test
+    fun `switchToExternal rethrows CancellationException and skips refresh`() = runTest(testDispatcher) {
+        // T7a (CE guard): external-side CE — same contract as T7.
+        setUpMocks()
+        coEvery { videoItemDao.getTotalItemCount() } returns 0
+        coEvery { userPrefs.setMediaStorageTreeUri(any()) } throws CancellationException("cancelled")
+
+        val testVm = createVmWith(cleanVolume())
+        advanceUntilIdle()
+        testVm.switchToExternal("content://tree/x")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { userPrefs.getMediaStorageTreeUri() }
     }
 }

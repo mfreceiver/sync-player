@@ -21,6 +21,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -31,10 +32,14 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -141,6 +146,50 @@ class UndoDeleteUseCaseTest {
 
         assertEquals(UndoResult.Success, result)
         coVerify(exactly = 1) { playbackRepository.setTrashed(id, true) }
+    }
+
+    @Test
+    fun `hard delete debt query excludes a pending trash toggle`() = runTest {
+        val id = 6L
+
+        useCase.simulateSetUndoState(UndoableDelete.TrashToggle(id, false))
+
+        assertNull(useCase.getPendingHardDeleteId())
+
+        useCase.simulateSetUndoState(UndoableDelete.HardDelete(id))
+        assertEquals(id, useCase.getPendingHardDeleteId())
+
+        useCase.simulateSetUndoState(UndoableDelete.CommittingHardDelete(id))
+        assertEquals(id, useCase.getPendingHardDeleteId())
+    }
+
+    @Test
+    fun `successful trash toggle followed by hard delete enters the deferred delete flow`() = runBlocking {
+        val trashId = 40L
+        val hardDeleteId = 41L
+        val errorFlow = MutableStateFlow<String?>(null)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+
+        coEvery { playbackRepository.getByVideoId(trashId) } returns null
+        coEvery {
+            fileOps.toggleTrashedChecked(trashId, emptyList())
+        } returns ToggleTrashResult.Success
+
+        useCase.performTrashToggle(trashId, emptyList(), scope, errorFlow)
+        assertTrue("trash toggle did not settle", pollUntil(3000L) {
+            useCase.getPendingId() == trashId
+        })
+        assertNull(useCase.getPendingHardDeleteId())
+
+        useCase.performHardDelete(hardDeleteId, scope, errorFlow)
+
+        assertTrue("hard delete did not enter the deferred flow", pollUntil(3000L) {
+            useCase.getPendingId() == hardDeleteId
+        })
+        assertEquals(hardDeleteId, useCase.getPendingHardDeleteId())
+        coVerify(exactly = 0) { fileOps.deleteMediaById(hardDeleteId) }
+
+        scope.cancel()
     }
 
     @Test
@@ -539,28 +588,31 @@ class UndoDeleteUseCaseTest {
 
     /**
      * Auto-committing an old pending delete whose deleteMediaById returns Failed must surface
-     * the error (not silently drop it) AND still proceed to record the new pending delete.
+     * the error and retain the uncertain debt instead of recording a new operation over it.
      */
     @Test
-    fun `sequential hard delete surfaces Failed of auto-committed old pending and still records new id`() = runBlocking {
+    fun `sequential hard delete retains failed auto-committed debt and blocks new id`() = runBlocking {
         val idA = 80L
         val idB = 81L
-        val errorFlow = MutableStateFlow<String?>(null)
+        var surfacedError: String? = null
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
 
-        useCase.performHardDelete(idA, scope, errorFlow)
+        useCase.performHardDelete(idA, scope, { surfacedError = it })
         pollUntil(timeoutMs = 1000L) { useCase.getPendingId() == idA }
 
         val failed = DeleteMediaResult.Failed(idA, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE))
         coEvery { fileOps.deleteMediaById(idA) } returns failed
 
-        useCase.performHardDelete(idB, scope, errorFlow)
-        pollUntil(timeoutMs = 3000L) { useCase.getPendingId() == idB }
+        useCase.performHardDelete(idB, scope, { surfacedError = it })
+        pollUntil(timeoutMs = 3000L) { useCase.getPendingId() == idA }
 
         // Old pending's failure surfaced (not silently dropped)…
-        assertNotNull("auto-commit Failed must surface to errorFlow", errorFlow.value)
-        // …and the new id is still recorded as pending (delete B is not blocked by A's failure).
-        assertEquals(idB, useCase.getPendingId())
+        assertTrue(
+            "auto-commit Failed must surface to onError",
+            pollUntil(timeoutMs = 3000L) { surfacedError != null }
+        )
+        // The new id must not overwrite an already-started, uncertain delete for A.
+        assertEquals(idA, useCase.getPendingId())
         coVerify(exactly = 1) { fileOps.deleteMediaById(idA) }
         scope.cancel()
     }
@@ -694,5 +746,352 @@ class UndoDeleteUseCaseTest {
         assertEquals("undo restores second-toggle's previousTrashed (true)", true, currentTrashed)
 
         scope.cancel()
+    }
+
+    // ===================================================================================
+    // Tests — BUG-016: trash toggle auto-commits pending hard delete
+    // ===================================================================================
+    //
+    // A pending (deferred) hard delete is a delete the user already confirmed — only undo
+    // can cancel it. Before BUG-016, both trash-toggle entries overwrote `undoState`
+    // unconditionally: a toggle after a hard delete silently cancelled that pending delete
+    // (the file was never deleted, but also never undoable-committed — silently lost).
+    // These tests pin the fix: any new operation auto-commits the pending hard delete first
+    // (same contract the sequential-hard-delete path :358 already had), with failures
+    // surfaced via the actual error flow WITHOUT blocking the new operation.
+
+    @Test
+    fun `trash toggle auto commits pending hard delete instead of overwriting it`() = runBlocking {
+        val idA = 10L
+        val idB = 20L
+        val errorFlow = MutableStateFlow<String?>(null)
+        // Real (Unconfined) scope: the auto-commit path runs fileOps.deleteMediaById under
+        // withContext(Dispatchers.IO), which runTest's virtual-time scheduler cannot drive.
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+
+        // First: pending hard delete for A.
+        useCase.performHardDelete(idA, scope, errorFlow)
+        pollUntil(timeoutMs = 1000L) { useCase.getPendingId() == idA }
+
+        coEvery { fileOps.deleteMediaById(idA) } returns DeleteMediaResult.Success(idA)
+        coEvery { playbackRepository.getByVideoId(idB) } returns null
+        coEvery { playbackRepository.toggleTrashed(idB) } returns Unit
+
+        // Then: trash toggle for B — must auto-commit A instead of overwriting it.
+        useCase.performTrashToggleNoGuard(idB, scope, errorFlow)
+        val settled = pollUntil(timeoutMs = 3000L) { useCase.getPendingId() == idB }
+        assertTrue("trash toggle did not settle within timeout", settled)
+
+        // A's deferred delete was actually executed (current code: 0 — RED).
+        coVerify(exactly = 1) { fileOps.deleteMediaById(idA) }
+        // B's toggle is recorded as the new pending operation.
+        assertEquals(idB, useCase.getPendingId())
+        // A's slot is gone — a stale snackbar commit for A can no longer resurrect it.
+        assertEquals(UndoResult.NothingToUndo, useCase.commitDeferredDelete(expectedId = idA))
+
+        scope.cancel()
+    }
+
+    @Test
+    fun `guarded trash toggle auto commits pending hard delete instead of overwriting it`() = runBlocking {
+        val idA = 10L
+        val idB = 21L
+        val basePaths = emptyList<SyncRelationWithSource>()
+        val errorFlow = MutableStateFlow<String?>(null)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+
+        useCase.performHardDelete(idA, scope, errorFlow)
+        pollUntil(timeoutMs = 1000L) { useCase.getPendingId() == idA }
+
+        coEvery { fileOps.deleteMediaById(idA) } returns DeleteMediaResult.Success(idA)
+        coEvery { playbackRepository.getByVideoId(idB) } returns null
+        // The guarded path mutates through toggleTrashedChecked — stub Success so the
+        // toggle completes and records undo state.
+        coEvery { fileOps.toggleTrashedChecked(idB, basePaths) } returns ToggleTrashResult.Success
+
+        useCase.performTrashToggle(idB, basePaths, scope, errorFlow)
+        val settled = pollUntil(timeoutMs = 3000L) { useCase.getPendingId() == idB }
+        assertTrue("guarded trash toggle did not settle within timeout", settled)
+
+        coVerify(exactly = 1) { fileOps.deleteMediaById(idA) }
+        assertEquals(idB, useCase.getPendingId())
+
+        scope.cancel()
+    }
+
+    @Test
+    fun `uncertain failed auto commit is retained and blocks a new toggle`() = runBlocking {
+        val idA = 10L
+        val idB = 22L
+        val realFlow = MutableStateFlow<String?>(null)
+        val errorCount = AtomicInteger(0)
+        // Counting adapter over the REAL flow: performTrashToggleNoGuard reports via
+        // `errorFlow.value = …`, so the adapter counts actual error publications.
+        val countingFlow = object : MutableStateFlow<String?> by realFlow {
+            override var value: String?
+                get() = realFlow.value
+                set(newValue) {
+                    errorCount.incrementAndGet()
+                    realFlow.value = newValue
+                }
+        }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+
+        useCase.performHardDelete(idA, scope, countingFlow)
+        pollUntil(timeoutMs = 1000L) { useCase.getPendingId() == idA }
+
+        val failed = DeleteMediaResult.Failed(
+            idA, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE)
+        )
+        coEvery { fileOps.deleteMediaById(idA) } returns failed
+        coEvery { playbackRepository.getByVideoId(idB) } returns null
+        coEvery { playbackRepository.toggleTrashed(idB) } returns Unit
+
+        useCase.performTrashToggleNoGuard(idB, scope, countingFlow)
+        val settled = pollUntil(timeoutMs = 3000L) { useCase.getPendingId() == idA }
+        assertTrue("uncertain auto-commit debt did not remain", settled)
+
+        // The auto-commit failure surfaced through the actual error flow (not swallowed)…
+        assertTrue(
+            "auto-commit Failed must publish one error",
+            pollUntil(timeoutMs = 3000L) { errorCount.get() == 1 }
+        )
+        // The new toggle must not overwrite an already-started, uncertain delete.
+        coVerify(exactly = 0) { playbackRepository.toggleTrashed(idB) }
+
+        scope.cancel()
+    }
+
+    @Test
+    fun `successful committing drain followed by rejected trash lets the next delete enter`() = runBlocking {
+        val idA = 32L
+        val idB = 33L
+        val idC = 34L
+        val basePaths = emptyList<SyncRelationWithSource>()
+        val errorFlow = MutableStateFlow<String?>(null)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        useCase.simulateSetUndoState(UndoableDelete.CommittingHardDelete(idA))
+
+        coEvery { fileOps.deleteMediaById(idA) } returns DeleteMediaResult.Success(idA)
+        coEvery {
+            fileOps.toggleTrashedChecked(idB, basePaths)
+        } returns ToggleTrashResult.NotAllowed
+
+        useCase.performTrashToggle(idB, basePaths, scope, errorFlow)
+        assertTrue("rejected trash operation did not settle", pollUntil(3000L) {
+            useCase.getPendingId() == null && errorFlow.value != null
+        })
+        coVerify(exactly = 1) { fileOps.deleteMediaById(idA) }
+        coVerify(exactly = 1) { fileOps.toggleTrashedChecked(idB, basePaths) }
+
+        useCase.performHardDelete(idC, scope, errorFlow)
+        assertTrue("next delete was not recorded after debt drain", pollUntil(3000L) {
+            useCase.getPendingId() == idC
+        })
+        coVerify(exactly = 0) { fileOps.deleteMediaById(idC) }
+        scope.cancel()
+    }
+
+    @Test
+    fun `failed delete debt is retried by the next delete before recording it`() = runBlocking {
+        val idA = 23L
+        val idB = 24L
+        val errorFlow = MutableStateFlow<String?>(null)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+
+        coEvery { fileOps.deleteMediaById(idA) } returnsMany listOf(
+            DeleteMediaResult.Failed(
+                idA,
+                SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE)
+            ),
+            DeleteMediaResult.Success(idA)
+        )
+
+        useCase.performHardDelete(idA, scope, errorFlow)
+        assertTrue("initial hard delete was not recorded", pollUntil(3000L) {
+            useCase.getPendingId() == idA
+        })
+
+        useCase.performHardDelete(idB, scope, errorFlow)
+        assertTrue("failed retry must remain observable as debt", pollUntil(3000L) {
+            useCase.getPendingId() == idA
+        })
+        assertTrue("retry failure must be surfaced", pollUntil(3000L) {
+            errorFlow.value != null
+        })
+        coVerify(exactly = 1) { fileOps.deleteMediaById(idA) }
+        coVerify(exactly = 0) { fileOps.deleteMediaById(idB) }
+
+        useCase.performHardDelete(idB, scope, errorFlow)
+        assertTrue("successful retry must allow the new delete", pollUntil(3000L) {
+            useCase.getPendingId() == idB
+        })
+        coVerify(exactly = 2) { fileOps.deleteMediaById(idA) }
+        scope.cancel()
+    }
+
+    @Test
+    fun `same-id hard delete twice still keeps pending without auto commit`() = runBlocking {
+        // Green guard: re-deleting the SAME id replaces nothing — the pending delete for
+        // that id stays pending (same-id overwrite is not a "would lose a delete" case).
+        val id = 10L
+        val errorFlow = MutableStateFlow<String?>(null)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+
+        useCase.performHardDelete(id, scope, errorFlow)
+        pollUntil(timeoutMs = 1000L) { useCase.getPendingId() == id }
+        useCase.performHardDelete(id, scope, errorFlow)
+        pollUntil(timeoutMs = 3000L) { useCase.getPendingId() == id }
+
+        coVerify(exactly = 0) { fileOps.deleteMediaById(any()) }
+        assertEquals(id, useCase.getPendingId())
+
+        scope.cancel()
+    }
+
+    @Test
+    fun `same-id hard delete retries an already committing debt before remaining non-undoable`() = runBlocking {
+        val id = 25L
+        val errorFlow = MutableStateFlow<String?>(null)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        useCase.simulateSetUndoState(UndoableDelete.CommittingHardDelete(id))
+        coEvery { fileOps.deleteMediaById(id) } returns DeleteMediaResult.Success(id)
+
+        useCase.performHardDelete(id, scope, errorFlow)
+
+        assertTrue("same-id committing debt was not drained", pollUntil(3000L) {
+            useCase.getPendingId() == id
+        })
+        coVerify(exactly = 1) { fileOps.deleteMediaById(id) }
+        assertEquals(UndoResult.Success, useCase.undo(expectedId = id))
+        scope.cancel()
+    }
+
+    @Test
+    fun `cancelled auto commit keeps the pending delete drainable`() = runBlocking {
+        // Once auto-commit starts, its outcome is uncertain if cancellation interrupts it.
+        val idA = 10L
+        val idB = 23L
+        val errorFlow = MutableStateFlow<String?>(null)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+
+        useCase.performHardDelete(idA, scope, errorFlow)
+        pollUntil(timeoutMs = 1000L) { useCase.getPendingId() == idA }
+
+        // Gate the auto-commit delete: it starts, then hangs until the test cancels the caller.
+        val deleteStarted = CountDownLatch(1)
+        val releaseDelete = CompletableDeferred<Unit>()
+        coEvery { fileOps.deleteMediaById(idA) } coAnswers {
+            deleteStarted.countDown()
+            releaseDelete.await()
+            DeleteMediaResult.Success(idA)
+        }
+        coEvery { playbackRepository.getByVideoId(idB) } returns null
+
+        useCase.performTrashToggleNoGuard(idB, scope, errorFlow)
+        assertTrue("auto-commit delete never started", deleteStarted.await(5, TimeUnit.SECONDS))
+
+        scope.cancel() // caller cancelled mid-delete → CE must retain non-undoable debt
+        scope.coroutineContext[Job]?.children?.forEach { it.join() }
+
+        val restored = pollUntil(timeoutMs = 3000L) { useCase.getPendingId() == idA }
+        assertTrue(
+            "cancelled auto-commit must keep the non-undoable debt (got ${useCase.getPendingId()})",
+            restored,
+        )
+        // Cancellation is not an error — nothing may be published to the error flow.
+        assertNull(errorFlow.value)
+        // The cancelled toggle never reached its own record step.
+        coVerify(exactly = 0) { playbackRepository.toggleTrashed(idB) }
+
+        assertEquals(UndoResult.NothingToUndo, useCase.undo(expectedId = idA))
+
+        // The retained uncertain delete is still drainable by the safety path.
+        coEvery { fileOps.deleteMediaById(idA) } returns DeleteMediaResult.Success(idA)
+        useCase.commitPendingSafely(expectedId = idA)
+        val drained = pollUntil(timeoutMs = 3000L) { !useCase.hasUndoState() }
+        assertTrue("restored pending delete must be drainable", drained)
+        coVerify(exactly = 2) { fileOps.deleteMediaById(idA) }
+    }
+
+    @Test
+    fun `cancelled commitDeferredDelete keeps the pending delete drainable`() = runBlocking {
+        // Same contract on the snackbar-expire commit path: once the delete starts, a mid-delete
+        // cancellation must retain a non-undoable pending debt.
+        val id = 30L
+        useCase.simulateSetUndoState(UndoableDelete.HardDelete(id))
+
+        val deleteStarted = CountDownLatch(1)
+        val releaseDelete = CompletableDeferred<Unit>()
+        coEvery { fileOps.deleteMediaById(id) } coAnswers {
+            deleteStarted.countDown()
+            releaseDelete.await()
+            DeleteMediaResult.Success(id)
+        }
+        val commitScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val cancellation = CancellationException("cancel deferred commit")
+        val result = CompletableDeferred<Throwable?>()
+        val job = commitScope.launch {
+            try {
+                useCase.commitDeferredDelete(expectedId = id)
+                result.complete(null)
+            } catch (t: Throwable) {
+                result.complete(t)
+            }
+        }
+
+        assertTrue("commit delete never started", deleteStarted.await(5, TimeUnit.SECONDS))
+        job.cancel(cancellation)
+        job.join()
+
+        assertSame(cancellation, result.await())
+        assertTrue("cancelled commit must keep the pending state", useCase.hasUndoState())
+        assertEquals(id, useCase.getPendingId())
+        assertEquals(UndoResult.NothingToUndo, useCase.undo(expectedId = id))
+
+        // Still drainable: a retry commit runs the delete to a confirmed terminal.
+        coEvery { fileOps.deleteMediaById(id) } returns DeleteMediaResult.Success(id)
+        assertEquals(UndoResult.Success, useCase.commitDeferredDelete(expectedId = id))
+        coVerify(exactly = 2) { fileOps.deleteMediaById(id) }
+    }
+
+    @Test
+    fun `partial delete cancellation is not undoable and safe drain retries the delete`() = runBlocking {
+        val id = 31L
+        useCase.simulateSetUndoState(UndoableDelete.HardDelete(id))
+
+        val deleteStarted = CountDownLatch(1)
+        val thumbAndDbStage = CompletableDeferred<Unit>()
+        val cancellation = CancellationException("cancel after ciphertext")
+        var ciphertextDeleted = false
+        coEvery { fileOps.deleteMediaById(id) } coAnswers {
+            ciphertextDeleted = true
+            deleteStarted.countDown()
+            thumbAndDbStage.await()
+            DeleteMediaResult.Success(id)
+        } andThen DeleteMediaResult.Success(id)
+
+        val commitScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val failure = CompletableDeferred<Throwable?>()
+        val job = commitScope.launch {
+            try {
+                useCase.commitDeferredDelete(expectedId = id)
+                failure.complete(null)
+            } catch (t: Throwable) {
+                failure.complete(t)
+            }
+        }
+
+        assertTrue("staged delete never started", deleteStarted.await(5, TimeUnit.SECONDS))
+        assertTrue(ciphertextDeleted)
+        job.cancel(cancellation)
+        job.join()
+
+        assertSame(cancellation, failure.await())
+        assertEquals(UndoResult.NothingToUndo, useCase.undo(expectedId = id))
+        assertEquals(id, useCase.getPendingId())
+        assertEquals(UndoResult.Success, useCase.commitDeferredDelete(expectedId = id))
+        coVerify(exactly = 2) { fileOps.deleteMediaById(id) }
+        commitScope.cancel()
     }
 }

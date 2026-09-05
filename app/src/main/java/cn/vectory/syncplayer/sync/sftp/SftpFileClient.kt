@@ -16,7 +16,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import net.schmizz.sshj.SSHClient
+import net.schmizz.sshj.sftp.Response
 import net.schmizz.sshj.sftp.SFTPClient
+import net.schmizz.sshj.sftp.SFTPException
 import net.schmizz.sshj.userauth.UserAuthException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -295,6 +297,21 @@ class SftpFileClient internal constructor(
             true
         } catch (e: CancellationException) {
             throw e
+        } catch (e: SFTPException) {
+            // CQ-001: 已取消则终结为 CE，不包装成 REMOTE_DELETE_FAILED。
+            currentCoroutineContext().ensureActive()
+            if (e.statusCode == Response.StatusCode.NO_SUCH_FILE) {
+                // BUG-009: 幂等——远端「本来就不存在」（TOCTOU：扫描时在、执行时已被并发方
+                // 删除）按成功语义处理，与 SMB `!exists → false` 契约对齐；误报
+                // REMOTE_DELETE_FAILED 会把可收敛动作计为失败（PARTIAL_FAILED 误报）。
+                return@withContext false
+            }
+            // 仅 NO_SUCH_FILE 判幂等；PERMISSION_DENIED 等其余状态码仍是真失败（「删不掉」
+            // 绝不能被吞成成功，否则远端泄漏成为 silent 垃圾）。
+            throw SyncException(
+                SyncErrorCode.REMOTE_DELETE_FAILED, SyncOperation.DELETE,
+                path = remotePath, cause = e
+            )
         } catch (e: Exception) {
             // CQ-001: 已取消则终结为 CE，不包装成 REMOTE_DELETE_FAILED。
             currentCoroutineContext().ensureActive()

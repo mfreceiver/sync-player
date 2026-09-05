@@ -7,9 +7,12 @@ import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.sync.SyncErrorCode
 import cn.vectory.syncplayer.sync.SyncException
+import cn.vectory.syncplayer.sync.SyncOperation
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import net.schmizz.sshj.sftp.Response
+import net.schmizz.sshj.sftp.SFTPException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
@@ -20,6 +23,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -319,6 +323,81 @@ class SftpTransportCancellationTest {
 
         assertTrue(t is SyncException)
         assertEquals(SyncErrorCode.REMOTE_DELETE_FAILED, (t as SyncException).code)
+    }
+
+    // -------------------------------------- BUG-009: deleteFile NO_SUCH_FILE idempotency
+
+    @Test
+    fun `deleteFile maps NO_SUCH_FILE to idempotent false`() {
+        connectSuccessfully()
+        every { sftpClient.rm(any()) } throws SFTPException(Response.StatusCode.NO_SUCH_FILE, "no such file")
+
+        // BUG-009 (red under old catch-all): already-gone must return false (idempotent success,
+        // aligned with SMB !exists → false), never REMOTE_DELETE_FAILED.
+        val result = runCatching { runBlocking { client.deleteFile("v.mp4") } }
+
+        assertFalse("NO_SUCH_FILE must be idempotent false, not an exception", result.isFailure)
+        assertFalse(result.getOrNull() ?: true)
+    }
+
+    @Test
+    fun `deleteFile maps other SFTP errors to REMOTE_DELETE_FAILED`() {
+        connectSuccessfully()
+        every { sftpClient.rm(any()) } throws SFTPException(Response.StatusCode.PERMISSION_DENIED, "permission denied")
+
+        val t = runCatching { runBlocking { client.deleteFile("v.mp4") } }.exceptionOrNull()
+
+        assertTrue("expected SyncException but was ${t?.javaClass}", t is SyncException)
+        assertEquals(SyncErrorCode.REMOTE_DELETE_FAILED, (t as SyncException).code)
+        assertEquals(SyncOperation.DELETE, (t as SyncException).operation)
+    }
+
+    @Test
+    fun `deleteFile wraps SyncException input per existing catch-all contract`() {
+        connectSuccessfully()
+        val input = SyncException(SyncErrorCode.REMOTE_DELETE_FAILED, SyncOperation.DELETE)
+        every { sftpClient.rm(any()) } throws input
+
+        val t = runCatching { runBlocking { client.deleteFile("v.mp4") } }.exceptionOrNull()
+
+        assertTrue("expected SyncException but was ${t?.javaClass}", t is SyncException)
+        val se = t as SyncException
+        assertTrue("catch-all must rewrap into a NEW instance, not pass through", se !== input)
+        assertEquals(SyncErrorCode.REMOTE_DELETE_FAILED, se.code)
+        assertEquals(SyncOperation.DELETE, se.operation)
+        assertTrue("cause must be the original input instance", se.cause === input)
+    }
+
+    @Test
+    fun `deleteFile success returns true`() {
+        connectSuccessfully()
+
+        val result = runBlocking { client.deleteFile("v.mp4") }
+
+        assertTrue(result)
+    }
+
+    @Test
+    fun `deleteFile requires connection`() {
+        val fresh = SftpFileClient(context, sshClientFactory = { sshClient })
+
+        val t = runCatching { runBlocking { fresh.deleteFile("v.mp4") } }.exceptionOrNull()
+
+        assertTrue("expected SyncException but was ${t?.javaClass}", t is SyncException)
+        assertEquals(SyncErrorCode.NOT_CONNECTED, (t as SyncException).code)
+    }
+
+    @Test
+    fun `deleteFile rethrows direct CancellationException without wrapping`() {
+        connectSuccessfully()
+        every { sftpClient.rm(any()) } throws CancellationException("cancelled by test")
+
+        val t = runCatching { runBlocking { client.deleteFile("v.mp4") } }.exceptionOrNull()
+
+        assertTrue(
+            "expected CancellationException but was ${t?.javaClass}",
+            t is CancellationException
+        )
     }
 
     // ------------------------------------------- recursion active check (directed)

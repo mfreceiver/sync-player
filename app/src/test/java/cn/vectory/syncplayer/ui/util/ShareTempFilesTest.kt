@@ -5,8 +5,11 @@ import cn.vectory.syncplayer.ui.util.ShareTempFiles.FALLBACK_NAME
 import cn.vectory.syncplayer.ui.util.ShareTempFiles.cleanupOldShareTempFiles
 import cn.vectory.syncplayer.ui.util.ShareTempFiles.sanitizeFileName
 import cn.vectory.syncplayer.ui.util.ShareTempFiles.shareDir
+import cn.vectory.syncplayer.ui.util.ShareTempFiles.uniqueShareFile
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -284,5 +287,188 @@ class ShareTempFilesTest {
         // Pin the fallback: it MUST have a video extension so the share Intent MIME resolves to
         // something the recipient knows how to open even when the source name was unusable.
         assertTrue(FALLBACK_NAME.endsWith(".mp4"))
+    }
+
+    // ===================================================================================
+    // uniqueShareFile — BUG-017: collision-free, never-overwrite share temp files
+    // ===================================================================================
+    //
+    // Mirrors of the production budget constants (kept local so the test locks the CONTRACT:
+    // leaf ≤ 240 UTF-8 bytes, ext ≤ 120, full "-id[-n]" suffix always preserved).
+
+    @Test
+    fun `uniqueShareFile embeds video id in the leaf name`() {
+        val ctx = newContext()
+        shareDir(ctx)
+
+        val f = uniqueShareFile(ctx, "ep1.mp4", 42L)
+
+        assertEquals("ep1-42.mp4", f.name)
+        assertTrue(f.exists())
+        assertEquals(0L, f.length()) // empty file awaiting decrypt
+    }
+
+    @Test
+    fun `uniqueShareFile handles extension-less names`() {
+        val ctx = newContext()
+        shareDir(ctx)
+
+        assertEquals("README-7", uniqueShareFile(ctx, "README", 7L).name)
+    }
+
+    @Test
+    fun `uniqueShareFile yields distinct files for same name different ids`() {
+        val ctx = newContext()
+        shareDir(ctx)
+
+        val f1 = uniqueShareFile(ctx, "ep1.mp4", 1L)
+        val f2 = uniqueShareFile(ctx, "ep1.mp4", 2L)
+
+        assertNotEquals(f1.absolutePath, f2.absolutePath)
+        assertTrue(f1.exists())
+        assertTrue(f2.exists())
+    }
+
+    @Test
+    fun `uniqueShareFile falls back to suffix when same id file already exists`() {
+        val ctx = newContext()
+        val dir = shareDir(ctx)
+        val sentinel = ByteArray(64) { 7 }
+        val inUse = File(dir, "ep1-42.mp4").apply { writeBytes(sentinel) }
+
+        val f2 = uniqueShareFile(ctx, "ep1.mp4", 42L)
+
+        assertEquals("ep1-42-1.mp4", f2.name)
+        // Content-level proof the in-use file was NOT overwritten/truncated (an empty file's
+        // unchanged length would prove nothing).
+        assertArrayEquals(sentinel, inUse.readBytes())
+        assertTrue(f2.exists())
+    }
+
+    @Test
+    fun `uniqueShareFile names are safe for FALLBACK collisions`() {
+        val ctx = newContext()
+        shareDir(ctx)
+
+        assertEquals("video-1.mp4", uniqueShareFile(ctx, FALLBACK_NAME, 1L).name)
+        assertEquals("video-2.mp4", uniqueShareFile(ctx, FALLBACK_NAME, 2L).name)
+    }
+
+    @Test
+    fun `long ASCII stem is truncated but suffix and budget hold`() {
+        val ctx = newContext()
+        shareDir(ctx)
+        val longName = "a".repeat(300) + ".mp4" // 300-byte stem — far over the leaf budget
+
+        val f = uniqueShareFile(ctx, longName, 42L)
+
+        assertTrue(f.name.toByteArray(Charsets.UTF_8).size <= 240)
+        assertTrue(f.name.endsWith("-42.mp4")) // full id suffix + ext preserved
+        assertTrue(f.name.startsWith("aaa")) // stem prefix preserved
+        assertTrue(f.exists())
+    }
+
+    @Test
+    fun `long CJK-emoji stem truncates at code point boundary`() {
+        val ctx = newContext()
+        shareDir(ctx)
+
+        val cjk = uniqueShareFile(ctx, "视".repeat(200) + ".mp4", 42L) // 600-byte stem
+        val emoji = uniqueShareFile(ctx, "😀".repeat(100) + ".mp4", 42L) // 400-byte stem
+
+        for (f in listOf(cjk, emoji)) {
+            assertTrue(f.name.toByteArray(Charsets.UTF_8).size <= 240)
+            assertTrue(f.name.endsWith("-42.mp4"))
+            // Lossless UTF-8 round-trip proves no isolated surrogate: a surrogate pair split
+            // by the truncation would re-encode as '?', changing the string.
+            assertEquals(f.name, String(f.name.toByteArray(Charsets.UTF_8), Charsets.UTF_8))
+        }
+    }
+
+    @Test
+    fun `over-long extension is capped or falls back`() {
+        val ctx = newContext()
+        shareDir(ctx)
+        val name = "ep1." + "x".repeat(200) // ext = 201 bytes, over MAX_EXT_BYTES
+
+        val f1 = uniqueShareFile(ctx, name, 42L)
+
+        assertTrue(f1.name.toByteArray(Charsets.UTF_8).size <= 240)
+        val extBytes = f1.name.substring(f1.name.lastIndexOf('.')).toByteArray(Charsets.UTF_8).size
+        assertTrue("ext must be capped at 120 bytes, was $extBytes", extBytes <= 120)
+        assertTrue(f1.exists())
+
+        // A subsequent share of the same id still converges (-42-1) — never overwrites.
+        val f2 = uniqueShareFile(ctx, name, 42L)
+        assertTrue(f2.exists())
+        assertTrue(f2.name.startsWith("ep1-42-1."))
+        assertTrue(f2.name.toByteArray(Charsets.UTF_8).size <= 240)
+    }
+
+    @Test
+    fun `repeated shares of the same long name converge within bounds`() {
+        val ctx = newContext()
+        shareDir(ctx)
+        val longName = "a".repeat(300) + ".mp4"
+
+        // Test-side bound: 100 calls initiated by the test (100 files). Hang protection for
+        // a SINGLE call is production's 1000-candidate guard (pinned by the guard test below).
+        val files = (0 until 100).map { uniqueShareFile(ctx, longName, 42L) }
+
+        val names = files.map { it.name }
+        assertEquals("all 100 leaf names must be distinct", 100, names.toSet().size)
+        files.forEach {
+            assertTrue(it.exists())
+            assertTrue(it.name.toByteArray(Charsets.UTF_8).size <= 240)
+        }
+    }
+
+    @Test
+    fun `long names with different ids never collide`() {
+        val ctx = newContext()
+        shareDir(ctx)
+        val longName = "a".repeat(300) + ".mp4"
+
+        val f1 = uniqueShareFile(ctx, longName, 1L)
+        val f2 = uniqueShareFile(ctx, longName, 2L)
+
+        assertNotEquals(f1.absolutePath, f2.absolutePath)
+        assertTrue(f1.exists() && f2.exists())
+        assertTrue(f1.name.endsWith("-1.mp4"))
+        assertTrue(f2.name.endsWith("-2.mp4"))
+    }
+
+    @Test
+    fun `guard fails explicitly when all candidates are pre-occupied`() {
+        val ctx = newContext()
+        val dir = shareDir(ctx)
+        val stem = "a".repeat(300)
+        val ext = ".mp4"
+        val videoId = 42L
+
+        // Independent test-side re-computation of the candidate sequence (same budget rule:
+        // truncate stem to 240 - extBytes - suffixBytes, keep the full "-id[-n]" suffix,
+        // capped ext, n = 0..999). Deliberately duplicating the rule: if the production
+        // rule ever drifts, the two sequences diverge and this test turns red via
+        // "candidates not exhausted → call succeeded".
+        val candidates = (0 until 1000).map { n ->
+            val suffix = if (n == 0) "-$videoId" else "-$videoId-$n"
+            val budget = 240 - ext.toByteArray(Charsets.UTF_8).size -
+                suffix.toByteArray(Charsets.UTF_8).size
+            val stemPart = if (budget <= 0) "share"
+                else stem.substring(0, budget.coerceAtMost(stem.length))
+            "$stemPart$suffix$ext"
+        }
+        val sentinels = candidates.mapIndexed { i, name -> name to "s$i".toByteArray() }.toMap()
+        sentinels.forEach { (name, bytes) -> File(dir, name).writeBytes(bytes) }
+
+        val thrown = runCatching { uniqueShareFile(ctx, "$stem$ext", videoId) }.exceptionOrNull()
+
+        // Exhaustion = explicit failure (check guard), not a hang and not a silent return.
+        assertTrue("guard must fail explicitly, got: $thrown", thrown is IllegalStateException)
+        // Zero overwrite: every pre-occupied candidate is byte-identical afterwards.
+        sentinels.forEach { (name, bytes) -> assertArrayEquals(bytes, File(dir, name).readBytes()) }
+        // Zero extra artifacts: the failed attempt created no 1001st file.
+        assertEquals(1000, dir.listFiles()!!.size)
     }
 }

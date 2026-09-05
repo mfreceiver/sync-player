@@ -15,9 +15,11 @@ import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
 import dagger.Lazy
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -78,6 +80,11 @@ class SyncDownloadPipelineClientReuseTest {
             if (base.isNotEmpty()) "$base/$rel" else rel
         }
     }
+
+    private val source = SyncSource(
+        id = 10L, name = "s", protocol = SyncProtocol.SMB, host = "h", port = 445,
+        username = "u", password = "p"
+    )
 
     /** 所有 action 的下载成功路径（占位行 → finalize → 元数据回写）。 */
     private fun stubSuccessfulDownloadPath() {
@@ -158,5 +165,92 @@ class SyncDownloadPipelineClientReuseTest {
         // 2 个 action 且仅第 1 个失败 → 恰好 2 次 client 创建
         //（首个 lane 的 client 被丢弃后重建，或两个 lane 各建一次；无论调度如何均为 2）。
         verify(exactly = 2) { clientFactory.create(SyncProtocol.SMB) }
+    }
+
+    // ------------------------------------------------------------------ BUG-010: initial connect retry
+
+    @Test
+    fun `initial connect transient failure is retried within whitelist and action succeeds`() = runTest {
+        stubBasics()
+        stubSuccessfulDownloadPath()
+        val client = mockk<RemoteFileClient>(relaxed = true)
+        every { clientFactory.create(SyncProtocol.SMB) } returns client
+        val connectCalls = AtomicInteger(0)
+        coEvery { client.connect(any(), any()) } coAnswers {
+            // 前 2 次瞬态失败（白名单码），第 3 次成功。
+            if (connectCalls.incrementAndGet() <= 2) {
+                throw SyncException(SyncErrorCode.NETWORK_UNAVAILABLE, SyncOperation.CONNECT)
+            }
+        }
+        coEvery { client.downloadTo(any(), any(), any()) } returns true
+
+        val result = sut.executeSyncLocked(1L, listOf(downloadAction(0)), emptyList())
+
+        assertTrue("transient connect failure must recover within the whitelist", result)
+        val p = publisher.value
+        assertEquals(1, p.completedFiles)
+        assertEquals(0, p.failedFiles)
+        coVerify(exactly = 3) { client.connect(any(), any()) }
+        // 每次重试前按 E5 语义先 disconnect 清理半建连状态（2 次失败 → 2 次）。
+        coVerify(exactly = 2) { client.disconnect() }
+    }
+
+    @Test
+    fun `initial connect terminal failure fails fast without retry`() = runTest {
+        stubBasics()
+        stubSuccessfulDownloadPath()
+        val client = mockk<RemoteFileClient>(relaxed = true)
+        every { clientFactory.create(SyncProtocol.SMB) } returns client
+        coEvery { client.connect(any(), any()) } throws
+            SyncException(SyncErrorCode.AUTHENTICATION_FAILED, SyncOperation.CONNECT)
+
+        val result = sut.executeSyncLocked(1L, listOf(downloadAction(0)), emptyList())
+
+        assertFalse(result)
+        val p = publisher.value
+        assertEquals(1, p.failedFiles)
+        // 终态码（AUTH）不重试：恰好 1 次建连尝试。
+        coVerify(exactly = 1) { client.connect(any(), any()) }
+    }
+
+    @Test
+    fun `initial connect retries give up after 3 attempts and count one failure`() = runTest {
+        stubBasics()
+        stubSuccessfulDownloadPath()
+        val client = mockk<RemoteFileClient>(relaxed = true)
+        every { clientFactory.create(SyncProtocol.SMB) } returns client
+        coEvery { client.connect(any(), any()) } throws
+            SyncException(SyncErrorCode.NETWORK_UNAVAILABLE, SyncOperation.CONNECT)
+
+        val result = sut.executeSyncLocked(1L, listOf(downloadAction(0)), emptyList())
+
+        assertFalse(result)
+        val p = publisher.value
+        // connect 重试在 helper 内部消化，失败计数不放大：仍只计 1 次。
+        assertEquals(1, p.failedFiles)
+        coVerify(exactly = 3) { client.connect(any(), any()) }
+    }
+
+    @Test
+    fun `cancellation during initial connect propagates without retry`() = runTest {
+        stubBasics()
+        stubSuccessfulDownloadPath()
+        val client = mockk<RemoteFileClient>(relaxed = true)
+        every { clientFactory.create(SyncProtocol.SMB) } returns client
+        coEvery { client.connect(any(), any()) } throws CancellationException("cancelled by test")
+
+        val thrown = try {
+            sut.executeSyncLocked(1L, listOf(downloadAction(0)), emptyList())
+            null
+        } catch (e: Throwable) {
+            e
+        }
+
+        assertTrue(
+            "expected CancellationException but was ${thrown?.javaClass}",
+            thrown is CancellationException
+        )
+        // CE 不重试：恰好 1 次建连尝试。
+        coVerify(exactly = 1) { client.connect(any(), any()) }
     }
 }

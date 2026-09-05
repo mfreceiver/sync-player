@@ -153,6 +153,17 @@ fun PlayerScreen(
     }
 
     val currentOnExit by rememberUpdatedState(onExit)
+
+    // BUG-019: consume the structured exhaustion terminal — exit exactly like normal EOF.
+    LaunchedEffect(uiState.queueExhausted) {
+        // key 用组合值触发 relaunch；判断体再核对 VM 当前终态（StateFlow 现值）——
+        // 防止读取"已被新请求成功加载清除 flag"的旧 composition 值而误退出。
+        if (viewModel.uiState.value.queueExhausted && !isExiting) {
+            isExiting = true
+            currentOnExit()
+        }
+    }
+
     val playerListener = remember {
         object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {

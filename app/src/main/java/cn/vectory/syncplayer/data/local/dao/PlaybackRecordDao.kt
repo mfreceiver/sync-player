@@ -52,8 +52,8 @@ interface PlaybackRecordDao {
         INNER JOIN video_item vi ON pr.videoItemId = vi.id
         WHERE CASE
             WHEN :folderPath = '' THEN vi.relativePath NOT LIKE '%/%'
-            ELSE vi.relativePath LIKE :folderPath || '/%'
-                 AND SUBSTR(vi.relativePath, LENGTH(:folderPath) + 2) NOT LIKE '%/%'
+            ELSE (substr(vi.relativePath, 1, length(:folderPath) + 1) = :folderPath || '/'
+                  AND SUBSTR(vi.relativePath, LENGTH(:folderPath) + 2) NOT LIKE '%/%')
         END
     """)
     fun getByFolderFlow(folderPath: String): Flow<List<PlaybackRecordEntity>>
@@ -62,7 +62,10 @@ interface PlaybackRecordDao {
     @Query("""
         UPDATE playback_record SET isCompleted = :completed
         WHERE videoItemId IN (
-            SELECT id FROM video_item WHERE relativePath LIKE :folderPath || '/%'
+            SELECT id FROM video_item WHERE CASE
+                WHEN :folderPath = '' THEN 1
+                ELSE substr(relativePath, 1, length(:folderPath) + 1) = :folderPath || '/'
+            END
         )
     """)
     suspend fun updateCompletedByFolder(folderPath: String, completed: Boolean)
@@ -71,7 +74,11 @@ interface PlaybackRecordDao {
     @Query("""
         SELECT vi.id FROM video_item vi
         LEFT JOIN playback_record pr ON pr.videoItemId = vi.id
-        WHERE vi.relativePath LIKE :folderPath || '/%' AND pr.id IS NULL
+        WHERE CASE
+            WHEN :folderPath = '' THEN 1
+            ELSE substr(vi.relativePath, 1, length(:folderPath) + 1) = :folderPath || '/'
+        END
+        AND pr.id IS NULL
     """)
     suspend fun getVideoIdsWithoutRecord(folderPath: String): List<Long>
 

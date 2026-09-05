@@ -143,6 +143,46 @@ class SafVolume(
         resolveDocId(relPath) != null
     }
 
+    /**
+     * BUG-007 existsStrict：全路径 strict traversal（**不复用** resolveDocId/findChildDocId
+     * 的宽松语义——后者把 null cursor 吞成「未找到」、把中间目录失败吞成整路径不存在）。
+     * 逐段解析：任一段 query 返回 null cursor / 抛异常 / cursor 声明 EXTRA_LOADING=true
+     * （provider 仍在异步加载、结果可能不完整）⇒ 上抛 IOException，绝不折算「不存在」；
+     * 全部段完整遍历结束未命中 ⇒ false。
+     */
+    override suspend fun existsStrict(relPath: String): Boolean = withContext(Dispatchers.IO) {
+        if (relPath.isEmpty() || relPath == "/") return@withContext true
+        var docId = rootDocId
+        for (segment in relPath.split('/').filter { it.isNotEmpty() }) {
+            docId = findChildDocIdStrict(docId, segment) ?: return@withContext false
+        }
+        true
+    }
+
+    /**
+     * [findChildDocId] 的严格变体：查询不可信（null cursor / provider 异常 / EXTRA_LOADING）
+     * 一律上抛 IOException，绝不折算「未找到」；「完整遍历且确认未命中」返回 null。
+     * 命中则返回子文档 docId（供下一段续查）。
+     */
+    private suspend fun findChildDocIdStrict(parentDocId: String, displayName: String): String? {
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocId)
+        val projection = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+        val cursor = context.contentResolver.query(childrenUri, projection, null, null, null)
+            ?: throw java.io.IOException("SAF provider returned null cursor while resolving '$displayName'")
+        cursor.use { c ->
+            if (c.getExtras()?.getBoolean(DocumentsContract.EXTRA_LOADING, false) == true) {
+                throw java.io.IOException("SAF provider still loading children while resolving '$displayName'")
+            }
+            while (c.moveToNext()) {
+                val name = c.getString(c.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME))
+                if (name == displayName) {
+                    return c.getString(c.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID))
+                }
+            }
+        }
+        return null
+    }
+
     override suspend fun mkdirs(dirRelPath: String): Unit = withContext(Dispatchers.IO) {
         ensureDirectories(dirRelPath)
     }

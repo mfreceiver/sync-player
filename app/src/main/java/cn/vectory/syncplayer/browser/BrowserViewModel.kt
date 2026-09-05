@@ -257,8 +257,21 @@ class BrowserViewModel @Inject constructor(
      * the undo Snackbar until the async toggle actually succeeds — so a failed toggle never
      * produces a misleading "moved to trash" Snackbar. On failure the error lands in [_error].
      */
-    fun toggleTrashedWithUndo(videoItemId: Long, onSuccess: () -> Unit) {
-        undoDeleteUseCase.performTrashToggle(videoItemId, coordinator.basePathsSnapshot(), viewModelScope, ::showError, onSuccess)
+    fun toggleTrashedWithUndo(
+        videoItemId: Long,
+        onFailure: () -> Unit = {},
+        onSuccess: () -> Unit,
+    ) {
+        undoDeleteUseCase.performTrashToggle(
+            videoItemId,
+            coordinator.basePathsSnapshot(),
+            viewModelScope,
+            onError = {
+                showError(it)
+                onFailure()
+            },
+            onSuccess = onSuccess,
+        )
     }
 
     override fun isFileInBaseDir(relativePath: String): Boolean {
@@ -275,8 +288,19 @@ class BrowserViewModel @Inject constructor(
      * Snackbar until then, so a delete that fails before recording state never shows a
      * "deleted" Snackbar.
      */
-    fun deleteFileWithUndo(videoItemId: Long, onSuccess: () -> Unit) {
-        undoDeleteUseCase.performHardDelete(videoItemId, viewModelScope, ::showError) {
+    fun deleteFileWithUndo(
+        videoItemId: Long,
+        onSuccess: () -> Unit,
+        onFailure: () -> Unit = {}
+    ) {
+        undoDeleteUseCase.performHardDelete(
+            videoItemId,
+            viewModelScope,
+            onError = {
+                showError(it)
+                onFailure()
+            }
+        ) {
             coordinator.refresh()
             onSuccess()
         }
@@ -305,6 +329,12 @@ class BrowserViewModel @Inject constructor(
         }
         return result
     }
+
+    /** Whether [id] is an uncertain hard-delete debt that can only be safely drained. */
+    fun hasCommittingDelete(id: Long): Boolean = undoDeleteUseCase.hasCommittingDelete(id)
+
+    /** Current pending operation id, including an uncertain hard-delete debt. */
+    fun getPendingHardDeleteId(): Long? = undoDeleteUseCase.getPendingHardDeleteId()
 
     /**
      * Page-leave safety commit: fire-and-forget on the use-case's own safety scope, so a

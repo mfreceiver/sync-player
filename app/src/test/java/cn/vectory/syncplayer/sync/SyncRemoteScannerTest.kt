@@ -84,6 +84,21 @@ class SyncRemoteScannerTest {
     }
 
     @Test
+    fun `listFiles throwing SCAN_INCOMPLETE yields empty download and delete sets with scanError code`() = runTest {
+        stubBasics()
+        coEvery { client.listFiles(any()) } throws RemoteScanIncompleteException()
+        coEvery { videoRepository.getBySyncRelationId(1L) } returns listOf(
+            localItem("a.mp4", 1L, 0L), localItem("b.mp4", 1L, 0L)
+        )
+
+        val r = sut.dryRunLocked(1L)
+
+        assertEquals(SyncErrorCode.SCAN_INCOMPLETE, r.error?.code)
+        assertTrue(r.toDownload.isEmpty())
+        assertTrue(r.toDelete.isEmpty())
+    }
+
+    @Test
     fun `remote A,B and local A,C yields DOWNLOAD B and DELETE_LOCAL C`() = runTest {
         stubBasics()
         coEvery { client.listFiles("/remote") } returns listOf(remote("A.mp4", 1L, 0L), remote("B.mp4", 2L, 0L))

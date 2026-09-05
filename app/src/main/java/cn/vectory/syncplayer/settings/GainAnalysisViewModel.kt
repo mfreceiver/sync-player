@@ -67,7 +67,8 @@ class GainAnalysisViewModel @Inject constructor(
     private val _failedIds = MutableStateFlow<Set<Long>>(emptySet())
     val failedIds = _failedIds.asStateFlow()
 
-    private var analysisJob: kotlinx.coroutines.Job? = null
+    internal var analysisJob: kotlinx.coroutines.Job? = null
+        private set
 
     fun discover() {
         viewModelScope.launch {
@@ -157,9 +158,10 @@ class GainAnalysisViewModel @Inject constructor(
                                 try {
                                     val result = audioGainAnalyzer.analyze(MediaUris.mediaUri(video.id))
                                     if (result != null) {
-                                        videoRepository.upsert(
-                                            video.copy(audioGainDb = result.gainDb)
-                                        )
+                                        // Single-column update: a whole-row upsert of the discover
+                                        // snapshot would roll back concurrent column changes (e.g.
+                                        // star) and could revive rows deleted during analysis.
+                                        videoRepository.updateAudioGain(video.id, result.gainDb)
                                         completedMutex.withLock {
                                             _completedIds.value = _completedIds.value + video.id
                                         }

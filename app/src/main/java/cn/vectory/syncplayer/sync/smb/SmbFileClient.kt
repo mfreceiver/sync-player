@@ -175,6 +175,10 @@ class SmbFileClient internal constructor(
         val pathParts = path.trim('/').split("/")
         val share = pathParts.firstOrNull() ?: ""
         val remoteSubPath = pathParts.drop(1).joinToString("/")
+        // E8: 空 share = root 扫描。root 之下条目的相对路径在本客户端模型中不可构造
+        // （URL 无 share 段），任何"成功"输出（空列表/垃圾路径）都会让 dryRun 推导
+        // DELETE_LOCAL —— 必须在枚举之前失败，绝不返回快照。
+        if (share.isEmpty()) throw RemoteScanIncompleteException()
         val smbUrl = if (remoteSubPath.isNotEmpty()) {
             "smb://$currentHost/$share/$remoteSubPath/"
         } else {
@@ -328,9 +332,13 @@ class SmbFileClient internal constructor(
         } else {
             "/$share/"
         }
-        val idx = smbUrl.indexOf(marker)
-        if (idx < 0) return smbUrl.substringAfterLast('/')
-        return smbUrl.substring(idx + marker.length).trimEnd('/')
+        val anchoredPrefix = "smb://$currentHost$marker"
+        // 锚定校验：URL 必须以 smb://host/share/base/ 开头。share 为空（root 扫描）或任何
+        // 结构意外（URL 不在扫描根之下）都判为快照不可信 → E8 失败路径，绝不产出垃圾路径。
+        if (!smbUrl.startsWith(anchoredPrefix)) throw RemoteScanIncompleteException()
+        val rel = smbUrl.substring(anchoredPrefix.length).trimEnd('/')
+        if (rel.isEmpty()) throw RemoteScanIncompleteException()
+        return rel
     }
 
     override suspend fun downloadTo(

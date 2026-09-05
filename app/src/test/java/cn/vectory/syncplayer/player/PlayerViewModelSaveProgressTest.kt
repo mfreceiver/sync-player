@@ -12,6 +12,8 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
@@ -23,8 +25,13 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * AND-001 regression tests for [PlayerViewModel.saveProgress].
@@ -129,5 +136,149 @@ class PlayerViewModelSaveProgressTest {
         advanceUntilIdle()
 
         coVerify(exactly = 0) { playbackRepository.saveProgress(any(), any(), any()) }
+    }
+
+    // ------------------------------------------------------------------
+    // BUG-002: single-FIFO-consumer serialization. Order assertions via
+    // coVerifyOrder only prove entry order into the mock; the authoritative
+    // evidence is a stateful fake recording the FINAL persisted value at each
+    // save's completion point (secondArg = position). Gate releases always go
+    // in `finally` so a failing assertion never strands a suspended save.
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `saveProgress serializes concurrent saves - final persisted value equals last call`() = runTest {
+        val vm = createVm()
+        loadVideo42(vm)
+        val persisted = AtomicLong(-1L)
+        val gate = CompletableDeferred<Unit>()
+        coEvery { playbackRepository.saveProgress(42L, 30_000L, 100_000L) } coAnswers {
+            gate.await()
+            persisted.set(30_000L)
+        }
+        coEvery { playbackRepository.saveProgress(42L, 100_000L, 100_000L) } coAnswers { persisted.set(100_000L) }
+
+        vm.saveProgress(30_000L, 100_000L)
+        vm.saveProgress(100_000L, 100_000L)
+        try {
+            // Serialized: the 100k save is still queued behind the gated 30k save.
+            // (Current impl: both launched in parallel — 100k has already landed.)
+            assertNotEquals(100_000L, persisted.get())
+        } finally {
+            gate.complete(Unit)
+            advanceUntilIdle()
+        }
+        // FIFO completion: 30k first, then 100k — final value == last call.
+        assertEquals(100_000L, persisted.get())
+    }
+
+    @Test
+    fun `saveProgress keeps FIFO completion order across interleaved calls`() = runTest {
+        val vm = createVm()
+        loadVideo42(vm)
+        val persisted = AtomicLong(-1L)
+        val events = mutableListOf<String>()
+        val gate = CompletableDeferred<Unit>()
+        coEvery { playbackRepository.saveProgress(42L, 30_000L, 100_000L) } coAnswers {
+            gate.await()
+            persisted.set(30_000L)
+            events.add("30k")
+        }
+        coEvery { playbackRepository.saveProgress(42L, 100_000L, 100_000L) } coAnswers {
+            persisted.set(100_000L)
+            events.add("100k")
+        }
+
+        vm.saveProgress(30_000L, 100_000L)
+        vm.saveProgress(100_000L, 100_000L)
+        try {
+            assertNotEquals(100_000L, persisted.get())
+        } finally {
+            gate.complete(Unit)
+            advanceUntilIdle()
+        }
+        assertEquals(listOf("30k", "100k"), events.toList())
+        assertEquals(100_000L, persisted.get())
+    }
+
+    @Test
+    fun `final save of previous video is not dropped when switching videos`() = runTest {
+        val vm = createVm()
+        val persistedById = ConcurrentHashMap<Long, Long>()
+        val gate = CompletableDeferred<Unit>()
+        val firstCall = AtomicBoolean(true)
+        coEvery { videoRepository.getById(43L) } returns videoEntity(43L)
+        coEvery { playbackRepository.getByVideoId(43L) } returns null
+        coEvery { playbackRepository.saveProgress(eq(42L), any(), any()) } coAnswers {
+            if (firstCall.compareAndSet(true, false)) gate.await()   // gate only the FIRST 42-save (42@30k)
+            persistedById[42L] = secondArg()                          // position — NOT thirdArg (duration)
+        }
+        coEvery { playbackRepository.saveProgress(eq(43L), any(), any()) } coAnswers { persistedById[43L] = secondArg() }
+
+        loadVideo42(vm)
+        vm.saveProgress(30_000L, 100_000L)      // consumer takes 42@30k, blocks in gate
+        vm.saveProgress(100_000L, 100_000L)     // 42's final save is queued behind it
+        try {
+            vm.loadVideo(43L)
+            advanceUntilIdle()
+            assertEquals(43L, vm.uiState.value.videoItem?.id)   // new video loaded, independent of the blocked save chain
+            vm.saveProgress(1_000L, 100_000L)                   // new video's save queued too
+        } finally {
+            gate.complete(Unit)
+        }
+        advanceUntilIdle()
+        // Both videos' saves executed, each at its OWN last value. A conflated
+        // channel implementation would keep 42 at its gated first write (30k)
+        // and drop the queued 100k final save.
+        assertEquals(mapOf(42L to 100_000L, 43L to 1_000L), persistedById)
+    }
+
+    @Test
+    fun `a save throwing CancellationException does not kill the consumer`() = runTest {
+        val vm = createVm()
+        loadVideo42(vm)
+        val persisted = AtomicLong(-1L)
+        coEvery { playbackRepository.saveProgress(42L, 1_000L, 100_000L) } coAnswers {
+            throw CancellationException("spurious CE from repo internals")
+        }
+        coEvery { playbackRepository.saveProgress(42L, 2_000L, 100_000L) } coAnswers { persisted.set(2_000L) }
+
+        vm.saveProgress(1_000L, 100_000L)
+        vm.saveProgress(2_000L, 100_000L)
+        advanceUntilIdle()
+
+        // The consumer keeps serving the queue after one save's CE.
+        assertEquals(2_000L, persisted.get())
+    }
+
+    @Test
+    fun `consumer continues after a regular save exception`() = runTest {
+        val vm = createVm()
+        loadVideo42(vm)
+        val persisted = AtomicLong(-1L)
+        coEvery { playbackRepository.saveProgress(42L, 1_000L, 100_000L) } coAnswers { throw RuntimeException("db") }
+        coEvery { playbackRepository.saveProgress(42L, 2_000L, 100_000L) } coAnswers { persisted.set(2_000L) }
+
+        vm.saveProgress(1_000L, 100_000L)
+        vm.saveProgress(2_000L, 100_000L)
+        advanceUntilIdle()
+
+        assertEquals(2_000L, persisted.get())
+    }
+
+    @Test
+    fun `legal seek-backward save is not monotonicity-clamped`() = runTest {
+        val vm = createVm()
+        loadVideo42(vm)
+        val persisted = AtomicLong(-1L)
+        coEvery { playbackRepository.saveProgress(42L, any(), any()) } coAnswers { persisted.set(secondArg()) }
+
+        vm.saveProgress(100_000L, 100_000L)
+        vm.saveProgress(5_000L, 100_000L)
+        advanceUntilIdle()
+
+        // A deliberate seek-backward save takes effect per call order; no layer
+        // may "monotonic-clamp" it away.
+        assertEquals(5_000L, persisted.get())
     }
 }
