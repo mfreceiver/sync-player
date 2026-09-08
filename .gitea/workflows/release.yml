@@ -1,6 +1,8 @@
-# release: 受保护 v* tag push 触发，出签名包。
+# release: 受保护 v* tag push 触发出签名包；也可手动 dispatch——必填 tag 输入，
+#          构建 checkout 该 tag 所指 commit（从任意分支发起均可，只认 tag，绝不猜测）。
 # 签名密钥经 Gitea Secrets 注入（RELEASE_KEYSTORE base64 + 3 密码）。
-# 产物：APK / mapping.txt / SHA256SUMS → Gitea Release（由 scripts/gitea/publish-release.sh 上传）。
+# 产物：APK + SHA256SUMS → Gitea Release（由 scripts/gitea/publish-release.sh 上传）。
+#       有意不上传 mapping.txt（个人侧载应用，无线上崩溃符号化需求；本地保留可选）。
 # sync-player 是个人侧载应用（不入 Play Store），故不出 AAB。
 # 无外部 action（不依赖 github.com）。
 name: release
@@ -9,6 +11,10 @@ on:
   push:
     tags: [ 'v*' ]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的 v* tag（必须已存在于远端；构建会 checkout 该 tag 所指 commit）'
+        required: true
 
 jobs:
   release:
@@ -21,6 +27,9 @@ jobs:
           # 设为 http://<lan-ip>:<port> 让 runner 经局域网直连 Gitea（省公网 hairpin）。
           # 未设置时回退公网 HTTPS，保证离开局域网也能跑。
           GITEA_LAN_URL: ${{ vars.MY_GITEA_LAN_URL }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          DISPATCH_TAG: ${{ inputs.tag || github.event.inputs.tag }}
         run: |
           set -e
           BASE="${GITEA_LAN_URL:-http://192.168.3.252:11330}"
@@ -34,7 +43,24 @@ jobs:
           git config --global advice.detachedHead false
           git clone "$BASE/mfreceiver/sync-player.git" .
           git fetch --tags --force
-          git checkout -q "${{ github.sha }}"
+          # ── 发布标签绑定：发布对象必须是明确且已存在的 v* tag，绝不猜测 ──
+          # tag push 用触发 tag；手动 dispatch 用必填输入（任意分支发起均可，只认 tag）。
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            TAG="$DISPATCH_TAG"
+          else
+            TAG="$REF_NAME"
+          fi
+          [[ "$TAG" == v* ]] || { echo "❌ 发布目标必须是 v* tag，实际得到 '$TAG'"; exit 1; }
+          # 解引用到 commit：annotated tag 的 tag object ≠ commit，必须 ^{commit} 剥壳；
+          # tag 缺失/非法/无法解引用立即失败——不用 github.sha 或「最近 tag」兜底。
+          TAG_COMMIT="$(git rev-parse -q --verify "refs/tags/$TAG^{commit}" 2>/dev/null)" \
+            || { echo "❌ tag '$TAG' 不存在或无法解析为 commit（fetch --tags 之后仍缺失）"; exit 1; }
+          git checkout -q --detach "$TAG_COMMIT"
+          [[ "$(git rev-parse HEAD)" == "$TAG_COMMIT" ]] \
+            || { echo "❌ checkout 后 HEAD $(git rev-parse HEAD) ≠ tag '$TAG' 所指 commit $TAG_COMMIT"; exit 1; }
+          echo "==> 发布绑定：tag=$TAG commit=$(git rev-parse --short HEAD)"
+          # 后续步骤（release-check / publish / 通知）统一使用这个已校验的 tag。
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
 
       - name: 恢复临时 keystore（从 Secrets）
         env:
@@ -62,6 +88,7 @@ jobs:
             || { echo "❌ keyAlias='$RELEASE_KEY_ALIAS' 不存在于 CI keystore（本机重跑 setup-secrets.sh）"; exit 1; }
 
       - name: release-check（clean + lintRelease + testDebugUnitTest + assembleRelease）
+        # 使用 Checkout 步骤经 GITHUB_ENV 传下的 RELEASE_TAG（已校验并绑定 tag 所指 commit）。
         run: ./scripts/ci/release-check.sh
 
       - name: 上传产物到 Gitea Release
@@ -71,7 +98,8 @@ jobs:
           GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # 走局域网直连（与 Checkout 同源）；未设置时 publish-release.sh 自身默认公网 HTTPS。
           GITEA_URL: ${{ vars.MY_GITEA_LAN_URL || 'http://192.168.3.252:11330' }}
-          TAG: ${{ github.ref_name }}
+          # 发布绑定：不用 github.ref_name（dispatch 时是发起分支名），用 Checkout 已校验的 tag。
+          TAG: ${{ env.RELEASE_TAG }}
         run: ./scripts/gitea/publish-release.sh "$TAG"
 
       - name: 清理临时 keystore
@@ -85,7 +113,8 @@ jobs:
         if: always()
         env:
           WECOM_WEBHOOK: ${{ vars.WECOM_WEBHOOK }}
-          TAG: ${{ github.ref_name }}
+          # 绑定前的极早期失败尚无 RELEASE_TAG，此时回退触发 ref，保证失败通知仍可读。
+          TAG: ${{ env.RELEASE_TAG || github.ref_name }}
           OUTCOME: ${{ job.status }}
         run: |
           BASE="http://192.168.3.252:11330/mfreceiver/sync-player"

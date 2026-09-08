@@ -16,7 +16,7 @@
 #   3. 生成 changelog（上次 tag..HEAD 的 conventional commits 自动分类）
 #   4. 创建 annotated tag（注释 = changelog）
 #   5. git push origin <tag> → 触发 release.yml（clean+lintRelease+testDebug+assembleRelease
-#      → artifacts/ → publish-release.sh 上传 APK/mapping/SHA256SUMS + PATCH release body 写入 changelog）
+#      → artifacts/ → publish-release.sh 上传 APK/SHA256SUMS + PATCH release body 写入 changelog）
 #
 # 前置:
 #   1. 4 个 RELEASE_* Secrets 已建（./scripts/gitea/setup-secrets.sh）
@@ -119,6 +119,6 @@ git push origin "$TAG"
 echo ""
 echo "✅ tag $TAG 已推送。release.yml 将自动："
 echo "   clean + lintRelease + testDebugUnitTest + assembleRelease（签名）"
-echo "   → publish-release.sh：上传 APK/mapping/SHA256SUMS + PATCH release body（写入 changelog）"
+echo "   → publish-release.sh：上传 APK/SHA256SUMS + PATCH release body（写入 changelog）"
 echo "   Actions: http://192.168.3.252:11330/mfreceiver/sync-player/actions"
 echo "   Release: http://192.168.3.252:11330/mfreceiver/sync-player/releases/tag/$TAG"
