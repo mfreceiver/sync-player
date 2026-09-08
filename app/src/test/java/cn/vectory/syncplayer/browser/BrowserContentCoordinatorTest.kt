@@ -16,6 +16,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +30,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.CoroutineContext
 
 /**
  * Unit tests for [BrowserContentCoordinator], the content-state owner extracted from
@@ -187,5 +190,42 @@ class BrowserContentCoordinatorTest {
         assertEquals(ViewMode.GRID, sut.viewMode.value)
         assertEquals(4, sut.gridColumns.value)
         assertEquals(BrowseMode.FILE, sut.browseMode.value)
+    }
+
+    /**
+     * F07 (调度一致性): loadSubFolders performs Room I/O (getSubFoldersOnce) and must
+     * run it on the INJECTED ioDispatcher — not a hardwired Dispatchers.Default. The
+     * recording dispatcher counts every dispatch and runs blocks inline, so the
+     * assertion is deterministic and thread-identity independent. Count-based assertion
+     * only, per project convention.
+     */
+    private class RecordingDispatcher : CoroutineDispatcher() {
+        val dispatchCount = AtomicInteger(0)
+        override fun dispatch(context: CoroutineContext, block: Runnable) {
+            dispatchCount.incrementAndGet()
+            block.run()
+        }
+    }
+
+    @Test
+    fun loadSubFolders_runsQueriesOnInjectedIoDispatcher() = runTest {
+        stubQueries()
+        coEvery { videoRepository.getSubFoldersOnce("videos") } returns listOf("a", "b")
+        val ioDispatcher = RecordingDispatcher()
+        val sut = BrowserContentCoordinator(
+            videoRepository = videoRepository,
+            playbackRepository = playbackRepository,
+            syncRelationRepository = syncRelationRepository,
+            userPrefs = userPrefs,
+            scope = CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler)),
+            ioDispatcher = ioDispatcher
+        )
+        val nodes = sut.loadSubFolders("videos")
+        assertTrue(
+            "loadSubFolders I/O must dispatch through the injected ioDispatcher",
+            ioDispatcher.dispatchCount.get() >= 1
+        )
+        assertEquals(2, nodes.size)
+        assertTrue(nodes.all { it.fullPath == "videos/${it.name}" })
     }
 }

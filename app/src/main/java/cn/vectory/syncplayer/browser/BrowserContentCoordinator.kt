@@ -406,7 +406,14 @@ internal class BrowserContentCoordinator(
     /** Read-only snapshot of the current sync-relation base paths. */
     fun basePathsSnapshot(): List<SyncRelationWithSource> = basePaths.value
 
-    suspend fun loadSubFolders(folderPath: String): List<DirectoryNode> = withContext(Dispatchers.Default) {
+    /**
+     * Reads subfolders for the picker and wraps them in [DirectoryNode]s. The Room query
+     * is I/O and therefore runs on the injected [ioDispatcher] (F07: was hardwired to
+     * Dispatchers.Default, which starves the shared Default pool with DB waits). The
+     * trailing name-sort + node mapping stays in the same block — it is O(children) and
+     * negligible next to the query it follows.
+     */
+    suspend fun loadSubFolders(folderPath: String): List<DirectoryNode> = withContext(ioDispatcher) {
         val subDirs = videoRepository.getSubFoldersOnce(folderPath)
         val basePathsSet = basePaths.value.map { it.relation.localBasePath }.toSet()
         subDirs.sortedWith(fileNameComparator).map { name ->

@@ -62,18 +62,26 @@ class SearchViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
-    val searchResults: StateFlow<List<BrowseItem>> = combine(
-        _query.debounce(300),
-        _searchScope,
-        _query.flatMapLatest { q ->
-            if (q.isBlank()) flowOf(emptyList())
-            else videoRepository.searchByFileNameInFolder(q, searchFolder)
-        },
-        scopedFolderPaths
-    ) { query: String, scope: SearchScope, fileResults: List<cn.vectory.syncplayer.data.local.dao.VideoItemDao.VideoItemWithPlayback>, folders: List<String> ->
-        if (query.isBlank()) return@combine emptyList<BrowseItem>()
-        buildSearchResults(query, scope, fileResults, folders)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val searchResults: StateFlow<List<BrowseItem>> = _query
+        .debounce(300)
+        .flatMapLatest { query ->
+            if (query.isBlank()) {
+                // 空 query 短路：不建管道、不触发 repo 查询，直接清空结果。
+                flowOf(emptyList())
+            } else {
+                // F03 单管道化：同一防抖后的 query 捕获进整个下游——文件结果、
+                // 文件夹过滤、scope 全部绑定同一个 query；flatMapLatest 天然取消
+                // 旧查询管道，杜绝「query A 的状态配 query B 的结果」交叉配对。
+                combine(
+                    videoRepository.searchByFileNameInFolder(query, searchFolder),
+                    scopedFolderPaths,
+                    _searchScope
+                ) { fileResults, folders, scope ->
+                    buildSearchResults(query, scope, fileResults, folders)
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private fun buildSearchResults(
         query: String,
