@@ -117,25 +117,52 @@ class EncryptedMediaStore(
     suspend fun openCiphertextRead(id: Long): SeekableReadHandle = volume().openRead(finalMedia(id))
 
     /**
-     * Finalize 后的可读性探针：打开密文读句柄并校验 SPM2 magic。
+     * Finalize 后的可读性探针（F14/T10 增强）：O(1) 三方一致性检查——
+     *
+     *  1. **完整 16B header 解析**：复用 [CryptoScheme.decodeHeader] 的严格校验
+     *     （magic/version/reserved/chunkSizeKiB/明文长非负），不重复定义任何格式常量；
+     *  2. **实际密文文件大小** == [CryptoScheme.cipherLengthFor]（header 声明的明文长），
+     *     拦截 finalize→提交窗口内的截断/追加损坏；
+     *  3. **可信预期明文长度** [expectedPlaintextLength]（调用方显式传入；pipeline 侧为
+     *     远端源文件大小 `action.fileSize`）== header 声明的明文长——不依赖 DB 是否已有
+     *     最终 metadata（upsert 前占位行 fileSize=0，不可作为预期来源）。
      *
      * 用于在 finalize 成功后立即检测该卷是否真的能解密读取（SAF 不支持 seek 时 openRead
-     * 抛 UnsupportedOperationException；密文损坏/短读时校验失败）。任何失败都抛异常，
-     * 让调用方（SyncEngine）回滚 finalize，避免"下载成功但永远打不开"的幽灵文件。
+     * 抛 UnsupportedOperationException；密文损坏/截断/内容错配时三方检查失败）。任何失败
+     * 都抛异常（绝不静默通过、绝不返回脏明文），让调用方（SyncDownloadPipeline）的既有
+     * finalize 补偿链包装为 STORAGE_ERROR 并单点回滚。
      *
-     * 注意：只验证 seek + read + magic 三件事，不解密 chunk（GCM 解密由 RangeDecryptor
-     * 在播放路径上做，key/iv 已在 DB 里，不在本探针职责内）。
+     * 注意：只做 header 解析 + 长度算术，不解密任何 chunk（逐 chunk GCM 认证仍由
+     * RangeDecryptor 在播放路径上兜底，key/iv 已在 DB 里，不在本探针职责内）。
      */
-    suspend fun verifyReadable(id: Long) {
+    suspend fun verifyReadable(id: Long, expectedPlaintextLength: Long) {
+        require(expectedPlaintextLength >= 0) {
+            "expectedPlaintextLength must be non-negative: $expectedPlaintextLength"
+        }
         val h = openCiphertextRead(id)
         try {
-            val magic = ByteArray(CryptoScheme.MAGIC.size)
-            val n = h.read(magic, 0, magic.size)
-            if (n != magic.size) {
-                throw java.io.IOException("read probe short read: got $n/${magic.size} bytes")
+            // 循环满读 16B header：read 可能部分返回，EOF（n<=0）即视为截断/损坏
+            val headerBuf = ByteArray(CryptoScheme.HEADER_SIZE)
+            var off = 0
+            while (off < headerBuf.size) {
+                val n = h.read(headerBuf, off, headerBuf.size - off)
+                if (n <= 0) {
+                    throw java.io.IOException("read probe short read: got $off/${headerBuf.size} bytes")
+                }
+                off += n
             }
-            if (!magic.contentEquals(CryptoScheme.MAGIC)) {
-                throw java.io.IOException("read probe: header magic mismatch")
+            val header = CryptoScheme.decodeHeader(headerBuf)
+            if (header.plaintextLength != expectedPlaintextLength) {
+                throw java.io.IOException(
+                    "read probe: header plaintext length ${header.plaintextLength} != expected $expectedPlaintextLength"
+                )
+            }
+            val expectedCipherLen = CryptoScheme.cipherLengthFor(header.plaintextLength)
+            val actualSize = h.size()
+            if (actualSize != expectedCipherLen) {
+                throw java.io.IOException(
+                    "read probe: ciphertext size $actualSize != expected $expectedCipherLen (plaintext ${header.plaintextLength})"
+                )
             }
         } finally {
             try { h.close() } catch (_: Exception) {}

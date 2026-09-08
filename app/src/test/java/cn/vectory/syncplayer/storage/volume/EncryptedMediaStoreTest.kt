@@ -61,7 +61,7 @@ class EncryptedMediaStoreTest {
         // 未 finalize 的 id：finalMedia 位置无文件 → openRead 抛 FileNotFoundException
         var caught: Throwable? = null
         try {
-            store.verifyReadable(77L)
+            store.verifyReadable(77L, 0L)
         } catch (e: Throwable) {
             caught = e
         }
@@ -73,25 +73,90 @@ class EncryptedMediaStoreTest {
         val plain = ByteArray(2048) { (it and 0xFF).toByte() }
         store.openEncryptSink(id, CryptoScheme.newIv(), plain.size.toLong()).use { it.write(plain) }
         assertTrue(store.finalize(id))
-        // finalize 后密文有正确的 SPM2 magic → 探针不应抛
-        store.verifyReadable(id)
+        // finalize 后密文有正确的 16B SPM2 header，且实际密文长 == cipherLengthFor(2048)
+        // → 三方一致（header 解析 / 实际大小 / 显式预期明文长）→ 探针不应抛
+        store.verifyReadable(id, plain.size.toLong())
     }
 
     @Test fun verifyReadableDetectsCorruptHeader() = runTest {
         val root = File(createTempDirectory().toFile(), "v").apply { mkdirs() }
         val store = newStore(FileVolume(root)); val id = 13L
-        // 直接往 finalMedia 位置写一个非 SPM2 magic 的文件
+        // 直接往 finalMedia 位置写一个非 SPM2 magic 的文件（6 字节，先于 16B header 满读失败）
         val finalRel = MediaPaths.mediaRelPath(id)
         FileVolume(root).openWrite(finalRel).use {
             it.write(byteArrayOf(0x00, 0x01, 0x02, 0x03, 0x04, 0x05))
         }
         var caught: Throwable? = null
         try {
-            store.verifyReadable(id)
+            store.verifyReadable(id, 6L)
         } catch (e: IOException) {
             caught = e
         }
         assertNotNull("verifyReadable must throw IOException on magic mismatch", caught)
+    }
+
+    // ---------------- F14/T10：O(1) 三方一致性探针 ----------------
+
+    /** 真实 CryptoScheme 产出 fixture：完整明文 → sink 加密 → finalize → final 密文文件。 */
+    private suspend fun newStoreWithFinalizedCiphertext(id: Long, plainSize: Int): Pair<EncryptedMediaStore, File> {
+        val root = File(createTempDirectory().toFile(), "v").apply { mkdirs() }
+        val store = newStore(FileVolume(root))
+        val plain = ByteArray(plainSize) { (it and 0xFF).toByte() }
+        store.openEncryptSink(id, CryptoScheme.newIv(), plain.size.toLong()).use { it.write(plain) }
+        assertTrue(store.finalize(id))
+        return store to File(root, MediaPaths.mediaRelPath(id))
+    }
+
+    /** 截断的密文文件（finalize→提交间截断形态）→ header 仍完整但实际密文长 ≠ cipherLengthFor(声明明文长) → 拒绝。 */
+    @Test fun verifyReadableRejectsTruncatedCiphertext() = runTest {
+        val (store, finalFile) = newStoreWithFinalizedCiphertext(id = 20L, plainSize = 2048)
+        val full = finalFile.readBytes()
+        finalFile.writeBytes(full.copyOfRange(0, full.size - 100))
+        var caught: Throwable? = null
+        try {
+            store.verifyReadable(20L, 2048L)
+        } catch (e: IOException) {
+            caught = e
+        }
+        assertNotNull("truncated ciphertext must be rejected", caught)
+    }
+
+    /** 文件被追加（变大）→ 实际密文长与 cipherLengthFor(声明明文长) 不匹配 → 拒绝。 */
+    @Test fun verifyReadableRejectsSizeMismatchWithDeclaredLength() = runTest {
+        val (store, finalFile) = newStoreWithFinalizedCiphertext(id = 21L, plainSize = 2048)
+        finalFile.appendBytes(byteArrayOf(0x7F))
+        var caught: Throwable? = null
+        try {
+            store.verifyReadable(21L, 2048L)
+        } catch (e: IOException) {
+            caught = e
+        }
+        assertNotNull("ciphertext size mismatch vs cipherLengthFor(declared) must be rejected", caught)
+    }
+
+    /** header 声明的明文长 ≠ 显式传入的可信预期（action.fileSize）→ 拒绝（三方检查第 ③ 项）。 */
+    @Test fun verifyReadableRejectsExpectedLengthMismatch() = runTest {
+        val (store, _) = newStoreWithFinalizedCiphertext(id = 22L, plainSize = 2048)
+        var caught: Throwable? = null
+        try {
+            // 文件本身完整一致，但预期 4096 ≠ header 声明 2048 → 必须拒绝
+            store.verifyReadable(22L, 4096L)
+        } catch (e: IOException) {
+            caught = e
+        }
+        assertNotNull("header-declared length mismatching expected length must be rejected", caught)
+    }
+
+    /** 负数预期长度是调用方编程错误 → IllegalArgumentException（防御性契约）。 */
+    @Test fun verifyReadableRejectsNegativeExpectedLength() = runTest {
+        val (store, _) = newStoreWithFinalizedCiphertext(id = 23L, plainSize = 32)
+        var caught: Throwable? = null
+        try {
+            store.verifyReadable(23L, -1L)
+        } catch (e: IllegalArgumentException) {
+            caught = e
+        }
+        assertNotNull("negative expectedPlaintextLength must be rejected", caught)
     }
 
     @Test fun twoArgSinkIsUnsupported() = runTest {
