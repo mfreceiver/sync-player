@@ -12,8 +12,9 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -22,6 +23,10 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.sync.SyncErrorCode
+import cn.vectory.syncplayer.sync.SyncException
+import cn.vectory.syncplayer.sync.SyncOperation
+import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.ui.components.FormResultText
 
 
@@ -34,8 +39,6 @@ fun SyncSourceEditScreen(
     viewModel: SyncSourceEditViewModel = hiltViewModel()
 ) {
     val extendedColors = LocalExtendedColors.current
-    val connectSuccessStr = stringResource(R.string.source_connect_success)
-    val sourceSaveSuccessStr = stringResource(R.string.source_save_success)
     val name by viewModel.name.collectAsStateWithLifecycle()
     val protocol by viewModel.protocol.collectAsStateWithLifecycle()
     val host by viewModel.host.collectAsStateWithLifecycle()
@@ -190,13 +193,24 @@ fun SyncSourceEditScreen(
                         }
                     }
 
-                    testResult?.let {
+                    testResult?.let { result ->
                         Spacer(Modifier.height(8.dp))
-                        FormResultText(message = it, isSuccess = it.contains(connectSuccessStr) || it.contains(sourceSaveSuccessStr))
+                        FormResultText(
+                            message = sourceTestResultText(result, host),
+                            isSuccess = result is SourceTestResult.Connected
+                        )
                     }
-                    saveResult?.let {
+                    saveResult?.let { result ->
                         Spacer(Modifier.height(4.dp))
-                        FormResultText(message = it, isSuccess = it.contains(connectSuccessStr) || it.contains(sourceSaveSuccessStr))
+                        FormResultText(
+                            message = sourceSaveResultText(result, host),
+                            isSuccess = when (result) {
+                                is SourceSaveResult.Saved, is SourceSaveResult.Deleted -> true
+                                is SourceSaveResult.BlockedByRelations,
+                                is SourceSaveResult.SaveFailed,
+                                is SourceSaveResult.DeleteFailed -> false
+                            }
+                        )
                     }
                 }
         }
@@ -224,8 +238,44 @@ fun SyncSourceEditScreen(
     }
 
     LaunchedEffect(saveResult) {
-        if (saveResult?.contains(sourceSaveSuccessStr) == true) {
+        // F09: 仅保存成功返回列表（类型驱动；与原字符串匹配行为等价）。
+        if (saveResult is SourceSaveResult.Saved) {
             onNavigateToSourceList()
         }
     }
 }
+
+/**
+ * F09: 类型化结果 → 展示文案。只复用既有 string 资源；错误细节按 F02 模式用
+ * 结构化码经共享的 [syncErrorMessage] 码→资源映射重建（不重写 mapper）。
+ * [host] 来自表单，覆盖异常内嵌 host 以保留主机信息（syncErrorMessage 的
+ * host 参数即为「caller knows the source being tested」场景设计）。
+ */
+@Composable
+private fun sourceTestResultText(result: SourceTestResult, host: String): String = when (result) {
+    is SourceTestResult.Connected -> stringResource(R.string.source_connect_success)
+    is SourceTestResult.TestFailed -> stringResource(
+        R.string.source_connect_failed,
+        resolvedSyncErrorText(result.code, SyncOperation.CONNECT, host)
+    )
+}
+
+@Composable
+private fun sourceSaveResultText(result: SourceSaveResult, host: String): String = when (result) {
+    is SourceSaveResult.Saved -> stringResource(R.string.source_save_success)
+    is SourceSaveResult.Deleted -> stringResource(R.string.source_delete_success)
+    is SourceSaveResult.BlockedByRelations ->
+        stringResource(R.string.source_has_relations, result.relationCount)
+    is SourceSaveResult.SaveFailed -> stringResource(
+        R.string.source_save_failed,
+        resolvedSyncErrorText(result.code, SyncOperation.DOWNLOAD, host)
+    )
+    is SourceSaveResult.DeleteFailed -> stringResource(
+        R.string.source_delete_failed,
+        resolvedSyncErrorText(result.code, SyncOperation.DELETE, host)
+    )
+}
+
+@Composable
+private fun resolvedSyncErrorText(code: SyncErrorCode, operation: SyncOperation, host: String?): String =
+    syncErrorMessage(SyncException(code, operation), LocalContext.current, host)

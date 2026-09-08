@@ -1,17 +1,18 @@
 package cn.vectory.syncplayer.settings
 
-import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.sync.RemoteFileClientFactory
-import cn.vectory.syncplayer.sync.syncErrorMessage
+import cn.vectory.syncplayer.sync.SyncErrorCode
+import cn.vectory.syncplayer.sync.SyncException
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,11 +20,45 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * F09: typed connection-test outcome. The ViewModel only carries the type (+ structured
+ * [SyncErrorCode]); display strings are mapped at the Screen via stringResource against
+ * existing entries — the ViewModel never produces copy.
+ */
+sealed interface SourceTestResult {
+    data object Connected : SourceTestResult
+    data class TestFailed(val code: SyncErrorCode) : SourceTestResult
+}
+
+/** F09: typed save/delete outcome — 仅 Saved 触发返回导航；颜色由类型分支决定。 */
+sealed interface SourceSaveResult {
+    data object Saved : SourceSaveResult
+    data object Deleted : SourceSaveResult
+
+    /** 数据源仍被同步关系引用，拒绝删除（沿用旧行为渲染为警示色）。 */
+    data class BlockedByRelations(val relationCount: Int) : SourceSaveResult
+    data class SaveFailed(val code: SyncErrorCode) : SourceSaveResult
+    data class DeleteFailed(val code: SyncErrorCode) : SourceSaveResult
+}
+
+/**
+ * F09: 失败码归一（file-private，仅本页类型化结果使用）。对 SyncException 直接取 code；
+ * 对非 SyncException 的回退分类镜像 [cn.vectory.syncplayer.sync.syncErrorMessage]
+ * （SocketTimeout/UnknownHost→超时族、ConnectException→CONNECTION_REFUSED、其余→UNKNOWN），
+ * 以便 Screen 按 F02 模式用码重建既有资源文案。
+ */
+private fun resolveFailureCode(e: Throwable): SyncErrorCode =
+    (e as? SyncException)?.code ?: when (e) {
+        is SocketTimeoutException -> SyncErrorCode.TIMEOUT
+        is UnknownHostException -> SyncErrorCode.UNKNOWN_HOST
+        is ConnectException -> SyncErrorCode.CONNECTION_REFUSED
+        else -> SyncErrorCode.UNKNOWN
+    }
+
 @HiltViewModel
 class SyncSourceEditViewModel @Inject constructor(
     private val syncSourceRepository: SyncSourceRepository,
     private val remoteFileClientFactory: RemoteFileClientFactory,
-    @ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -58,14 +93,14 @@ class SyncSourceEditViewModel @Inject constructor(
     private val _isTesting = MutableStateFlow(false)
     val isTesting: StateFlow<Boolean> = _isTesting.asStateFlow()
 
-    private val _testResult = MutableStateFlow<String?>(null)
-    val testResult: StateFlow<String?> = _testResult.asStateFlow()
+    private val _testResult = MutableStateFlow<SourceTestResult?>(null)
+    val testResult: StateFlow<SourceTestResult?> = _testResult.asStateFlow()
 
     private val _isSaving = MutableStateFlow(false)
     val isSaving: StateFlow<Boolean> = _isSaving.asStateFlow()
 
-    private val _saveResult = MutableStateFlow<String?>(null)
-    val saveResult: StateFlow<String?> = _saveResult.asStateFlow()
+    private val _saveResult = MutableStateFlow<SourceSaveResult?>(null)
+    val saveResult: StateFlow<SourceSaveResult?> = _saveResult.asStateFlow()
 
     init {
         if (sourceId > 0L) {
@@ -91,11 +126,11 @@ class SyncSourceEditViewModel @Inject constructor(
                 val source = buildSource()
                 val client = remoteFileClientFactory.create(source.protocol)
                 client.testConnection(source, "/")
-                _testResult.value = context.getString(R.string.source_connect_success)
+                _testResult.value = SourceTestResult.Connected
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _testResult.value = context.getString(R.string.source_connect_failed, syncErrorMessage(e, context))
+                _testResult.value = SourceTestResult.TestFailed(resolveFailureCode(e))
             } finally {
                 _isTesting.value = false
             }
@@ -108,11 +143,11 @@ class SyncSourceEditViewModel @Inject constructor(
             _saveResult.value = null
             try {
                 syncSourceRepository.save(buildSource())
-                _saveResult.value = context.getString(R.string.source_save_success)
+                _saveResult.value = SourceSaveResult.Saved
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _saveResult.value = context.getString(R.string.source_save_failed, syncErrorMessage(e, context))
+                _saveResult.value = SourceSaveResult.SaveFailed(resolveFailureCode(e))
             } finally {
                 _isSaving.value = false
             }
@@ -126,15 +161,15 @@ class SyncSourceEditViewModel @Inject constructor(
             try {
                 val count = syncSourceRepository.getRelationCount(sourceId)
                 if (count > 0) {
-                    _saveResult.value = context.getString(R.string.source_has_relations, count)
+                    _saveResult.value = SourceSaveResult.BlockedByRelations(count)
                 } else {
                     syncSourceRepository.delete(sourceId)
-                    _saveResult.value = context.getString(R.string.source_delete_success)
+                    _saveResult.value = SourceSaveResult.Deleted
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _saveResult.value = context.getString(R.string.source_delete_failed, syncErrorMessage(e, context))
+                _saveResult.value = SourceSaveResult.DeleteFailed(resolveFailureCode(e))
             } finally {
                 _isSaving.value = false
             }

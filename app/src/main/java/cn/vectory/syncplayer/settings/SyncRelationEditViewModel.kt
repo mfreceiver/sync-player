@@ -19,9 +19,14 @@ import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.RemoteFileClientFactory
 import cn.vectory.syncplayer.sync.classifyRemoteError
 import cn.vectory.syncplayer.sync.RemoteBrowseError
+import cn.vectory.syncplayer.sync.SyncErrorCode
+import cn.vectory.syncplayer.sync.SyncException
 import cn.vectory.syncplayer.sync.syncErrorMessage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,6 +40,30 @@ data class StorageInfo(
     val typeLabel: String,  // "内部存储" 或 "外部存储"
     val pathLabel: String,  // 实际路径
 )
+
+/**
+ * F09: typed test-drive outcome for the remote-path check. The ViewModel only carries
+ * the type (+ structured [SyncErrorCode]); display strings are mapped at the Screen via
+ * stringResource against existing entries — the ViewModel never produces copy.
+ */
+sealed interface RelationTestResult {
+    /** 远端目录可访问（唯一成功态）。 */
+    data object DirAccessible : RelationTestResult
+
+    /** 前置条件不满足，未发起网络访问。 */
+    data class PreconditionFailed(val reason: Reason) : RelationTestResult {
+        enum class Reason { NO_SOURCE, NO_PATH }
+    }
+
+    /** 访问失败；[code] 为结构化错误码（对非 SyncException 的回退分类镜像 syncErrorMessage）。 */
+    data class AccessFailed(val code: SyncErrorCode) : RelationTestResult
+}
+
+/** F09: typed save/delete outcome — 颜色与导航（仅 Saved 返回列表）由类型分支驱动。 */
+sealed interface RelationSaveResult {
+    data object Saved : RelationSaveResult
+    data object Deleted : RelationSaveResult
+}
 
 /**
  * Protocol-aware remote path normalization for the save entry (L4-1).
@@ -114,7 +143,7 @@ class SyncRelationEditViewModel @Inject constructor(
     private val _isSaving = MutableStateFlow(false)
     val isSaving = _isSaving.asStateFlow()
 
-    private val _saveResult = MutableStateFlow<String?>(null)
+    private val _saveResult = MutableStateFlow<RelationSaveResult?>(null)
     val saveResult = _saveResult.asStateFlow()
 
     private val _error = MutableStateFlow<String?>(null)
@@ -129,7 +158,7 @@ class SyncRelationEditViewModel @Inject constructor(
     private val _isTesting = MutableStateFlow(false)
     val isTesting = _isTesting.asStateFlow()
 
-    private val _testResult = MutableStateFlow<String?>(null)
+    private val _testResult = MutableStateFlow<RelationTestResult?>(null)
     val testResult = _testResult.asStateFlow()
 
     private val _storageInfo = MutableStateFlow<StorageInfo?>(null)
@@ -251,12 +280,16 @@ class SyncRelationEditViewModel @Inject constructor(
             val sourceId = _selectedSourceId.value
             val source = _availableSources.value.find { it.id == sourceId }
             if (source == null) {
-                _testResult.value = context.getString(R.string.relation_select_source_first)
+                _testResult.value = RelationTestResult.PreconditionFailed(
+                    RelationTestResult.PreconditionFailed.Reason.NO_SOURCE
+                )
                 return@launch
             }
             val path = _remotePath.value.trim()
             if (path.isBlank()) {
-                _testResult.value = context.getString(R.string.relation_input_remote_first)
+                _testResult.value = RelationTestResult.PreconditionFailed(
+                    RelationTestResult.PreconditionFailed.Reason.NO_PATH
+                )
                 return@launch
             }
             _isTesting.value = true
@@ -265,15 +298,21 @@ class SyncRelationEditViewModel @Inject constructor(
             try {
                 client.connect(source, path)
                 client.listDirectories(path)
-                _testResult.value = context.getString(R.string.relation_dir_accessible)
+                _testResult.value = RelationTestResult.DirAccessible
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _testResult.value = when (classifyRemoteError(e)) {
-                    RemoteBrowseError.PATH_NOT_FOUND -> context.getString(R.string.relation_dir_not_exist)
-                    RemoteBrowseError.TIMEOUT -> context.getString(R.string.relation_timeout_check_network)
-                    RemoteBrowseError.OTHER -> context.getString(R.string.relation_access_failed, syncErrorMessage(e, context))
-                }
+                // F09: 只携带结构化码，展示由 Screen 映射。对非 SyncException 的回退
+                // 分类镜像 syncErrorMessage（SocketTimeout/UnknownHost→超时族、
+                // ConnectException→CONNECTION_REFUSED、其余→UNKNOWN）。
+                _testResult.value = RelationTestResult.AccessFailed(
+                    (e as? SyncException)?.code ?: when (e) {
+                        is SocketTimeoutException -> SyncErrorCode.TIMEOUT
+                        is UnknownHostException -> SyncErrorCode.UNKNOWN_HOST
+                        is ConnectException -> SyncErrorCode.CONNECTION_REFUSED
+                        else -> SyncErrorCode.UNKNOWN
+                    }
+                )
             } finally {
                 _isTesting.value = false
                 try {
@@ -361,7 +400,7 @@ class SyncRelationEditViewModel @Inject constructor(
                         localBasePath = normalizedBasePath
                     )
                 )
-                _saveResult.value = context.getString(R.string.relation_save_success)
+                _saveResult.value = RelationSaveResult.Saved
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -376,7 +415,7 @@ class SyncRelationEditViewModel @Inject constructor(
         viewModelScope.launch {
             if (relationId <= 0) return@launch
             syncRelationRepository.delete(relationId)
-            _saveResult.value = context.getString(R.string.relation_delete_success)
+            _saveResult.value = RelationSaveResult.Deleted
         }
     }
 }

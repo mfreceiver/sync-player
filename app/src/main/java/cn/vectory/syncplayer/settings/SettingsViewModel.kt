@@ -8,14 +8,13 @@ import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
+import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.security.AuthCapabilityInfo
 import cn.vectory.syncplayer.security.BiometricAuthManager
-import cn.vectory.syncplayer.storage.volume.MediaVolumeProvider
-import cn.vectory.syncplayer.ui.util.formatFileSize
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -23,6 +22,7 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import androidx.fragment.app.FragmentActivity
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicLong
 
 data class SettingsState(
     val volumeBalance: Boolean = false,
@@ -30,8 +30,6 @@ data class SettingsState(
     val secureLockEnabled: Boolean = false,
     /** null = 应用内部默认卷；非 null = SAF tree URI 字符串 */
     val mediaStorageTreeUri: String? = null,
-    /** 可用空间文案，失败时为 "—" */
-    val usableSpaceLabel: String = "—",
 )
 
 @HiltViewModel
@@ -40,11 +38,27 @@ class SettingsViewModel @Inject constructor(
     private val syncLogRepository: SyncLogRepository,
     private val userPrefs: UserPreferencesRepository,
     private val biometricAuthManager: BiometricAuthManager,
-    private val mediaVolumeProvider: MediaVolumeProvider,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
 
     private val _settingsState = MutableStateFlow<SettingsState?>(null)
     val settingsState: StateFlow<SettingsState?> = _settingsState.asStateFlow()
+
+    /**
+     * F04：媒体存储位置显示名的状态源。URI 变化（或进入设置页首读）时在
+     * [ioDispatcher] 上异步解析 SAF tree 显示名——组合期零阻塞，Screen 只读本状态。
+     * null = 解析中/解析失败（Screen 回退固定资源通用文案，绝不回退 URI 派生文本，
+     * 即不走 fallbackUriLabel）。latest-wins：新 URI 请求即刻清空为占位并领取代次，
+     * 慢旧请求的结果按代次丢弃。
+     */
+    private val _storageLocationLabel = MutableStateFlow<String?>(null)
+    val storageLocationLabel: StateFlow<String?> = _storageLocationLabel.asStateFlow()
+
+    /** 最近一次发起解析的 URI（去重，避免其他偏好变化触发的重发射重复解析）。 */
+    private var requestedLocationUri: String? = null
+
+    /** 解析代次：发布前比对，旧请求失配即丢弃（同 refreshEpoch 协议）。 */
+    private val locationResolveEpoch = AtomicLong(0)
 
     val authCapabilityInfo: AuthCapabilityInfo = biometricAuthManager.getAuthCapabilityInfo()
 
@@ -65,7 +79,6 @@ class SettingsViewModel @Inject constructor(
                         quickRecycle = quickRecycle,
                         secureLockEnabled = secureLockEnabled,
                         mediaStorageTreeUri = mediaStorageTreeUri,
-                        usableSpaceLabel = _settingsState.value?.usableSpaceLabel ?: "—",
                     )
                 }
                 .retryWhen { cause, attempt ->
@@ -78,7 +91,7 @@ class SettingsViewModel @Inject constructor(
                 }
                 .collect { base ->
                     _settingsState.value = base
-                    refreshUsableSpace()
+                    maybeResolveStorageLocation(base.mediaStorageTreeUri)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -179,22 +192,29 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    private fun refreshUsableSpace() {
+    /**
+     * F04：URI 变化（或进入设置页首读）时在 [ioDispatcher] 上异步解析显示名。
+     * 同 URI 重发射不重复解析；null URI 直接清空；新请求即刻置占位（null）；
+     * 发布前比对代次——慢旧请求不得覆盖新 URI 状态（latest-wins）。
+     */
+    private fun maybeResolveStorageLocation(treeUri: String?) {
+        if (treeUri == requestedLocationUri) return
+        requestedLocationUri = treeUri
+        val epoch = locationResolveEpoch.incrementAndGet()   // 领取代次：旧解析发布权即时失效
+        _storageLocationLabel.value = null                   // 新请求进入占位态，旧 URI 残留显示一并清空
+        if (treeUri == null) return
         viewModelScope.launch {
-            val label = withContext(Dispatchers.IO) {
+            val resolved = withContext(ioDispatcher) {
                 try {
-                    val bytes = mediaVolumeProvider.current().usableSpace()
-                    if (bytes < 0L) "—" else formatFileSize(bytes)
+                    StorageManagementViewModel.resolveTreeDisplayNameOrNull(context, treeUri)
                 } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to read usable space", e)
-                    "—"
+                    throw e                                  // 红线 3：CE 始终先传播
+                } catch (_: Exception) {
+                    null                                     // 失败/无权限 → null 哨兵（UI 回退固定资源文案）
                 }
             }
-            _settingsState.update { state ->
-                state?.copy(usableSpaceLabel = label)
-            }
+            if (locationResolveEpoch.get() != epoch) return@launch   // latest-wins：乱序守卫
+            _storageLocationLabel.value = resolved
         }
     }
 

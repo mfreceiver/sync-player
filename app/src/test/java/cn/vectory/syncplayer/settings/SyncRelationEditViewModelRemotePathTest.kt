@@ -182,7 +182,8 @@ class SyncRelationEditViewModelRemotePathTest {
         coVerify { syncRelationRepository.save(capture(saved)) }
         assertEquals(1L, saved.captured.syncSourceId)
         assertEquals("media/movies", saved.captured.remotePath)
-        assertNotNull(vm.saveResult.value)
+        // F09: typed result — assert the type, not user-visible text.
+        assertEquals(RelationSaveResult.Saved, vm.saveResult.value)
     }
 
     /**

@@ -30,6 +30,14 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
+/**
+ * F06：SAF 持久化授权（takePersistableUriPermission）失败的结构化错误。
+ * 刻意不携带 URI / 底层 message 字段——错误可呈现、可重试，但无敏感信息可泄漏。
+ */
+sealed interface TreePermissionGrantError {
+    data object Denied : TreePermissionGrantError
+}
+
 data class StorageState(
     val isExternal: Boolean = false,
     val externalPath: String? = null,
@@ -39,6 +47,8 @@ data class StorageState(
     val canReset: Boolean = false,
     val isResetting: Boolean = false,
     val resetWarning: String? = null,
+    /** 非 null = 最近一次 SAF 授权被拒（F06：不再静默）；授权成功即清空。 */
+    val permissionError: TreePermissionGrantError? = null,
 )
 
 @HiltViewModel
@@ -201,6 +211,19 @@ class StorageManagementViewModel @Inject constructor(
     }
 
     /**
+     * F06：SAF take 流程中 takePersistableUriPermission 抛 SecurityException 时由
+     * Screen 调用——错误进入状态（Screen 呈现 + 重试入口），不再静默吞掉。
+     */
+    fun onTreePermissionDenied() {
+        _state.update { it.copy(permissionError = TreePermissionGrantError.Denied) }
+    }
+
+    /** F06：授权成功（take 通过、即将切换）时清除错误状态。 */
+    fun onTreePermissionGranted() {
+        _state.update { it.copy(permissionError = null) }
+    }
+
+    /**
      * Only matches files produced by [MediaPaths.mediaRelPath] (+ temp variants).
      * Strict ASCII digits only — rejects +1, -1, empty, unicode digits.
      */
@@ -225,7 +248,15 @@ class StorageManagementViewModel @Inject constructor(
         private const val TAG = "StorageManagementVM"
 
         /** 尽量解析 SAF tree 目录显示名；失败则回退到 URI 末段。 */
-        fun resolveTreeDisplayName(context: Context, treeUriStr: String): String {
+        fun resolveTreeDisplayName(context: Context, treeUriStr: String): String =
+            resolveTreeDisplayNameOrNull(context, treeUriStr) ?: fallbackUriLabel(treeUriStr)
+
+        /**
+         * F04：解析 SAF tree 目录显示名；失败/无权限返回 null（安全哨兵，由调用方
+         * 回退固定资源通用文案）。**不得**用 [fallbackUriLabel] 作此路径的回退——
+         * 其解析失败时会返回完整 URI 字符串（URI 派生文本不可进 UI）。
+         */
+        fun resolveTreeDisplayNameOrNull(context: Context, treeUriStr: String): String? {
             return try {
                 val uri = treeUriStr.toUri()
                 val docId = android.provider.DocumentsContract.getTreeDocumentId(uri)
@@ -236,9 +267,12 @@ class StorageManagementViewModel @Inject constructor(
                     null, null, null,
                 )?.use { cursor ->
                     if (cursor.moveToFirst()) cursor.getString(0)?.takeIf { it.isNotBlank() } else null
-                } ?: fallbackUriLabel(treeUriStr)
+                }
+            } catch (e: CancellationException) {
+                // 红线：取消必须先传播，绝不吞——解析被取消时抛 CE 而非安全哨兵 null。
+                throw e
             } catch (_: Exception) {
-                fallbackUriLabel(treeUriStr)
+                null
             }
         }
 

@@ -70,8 +70,25 @@ class GainAnalysisViewModel @Inject constructor(
     internal var analysisJob: kotlinx.coroutines.Job? = null
         private set
 
+    // F08: discover 专属执行句柄（与 analysisJob 生命周期完全独立，语义见 discover()）。
+    internal var discoverJob: kotlinx.coroutines.Job? = null
+        private set
+
+    /**
+     * F08 重入防护 — 采用 **single-flight** 语义：上一次 discovery 仍在进行时，重复调用
+     * 直接忽略（返回 no-op）。理由：
+     * 1. discovery 的查询域在整屏生命周期内固定（relationId 来自 SavedStateHandle），
+     *    进行中的重复调用不携带任何新信息；
+     * 2. latest-wins（取消旧 job 再启动新 job）会让旧 job 的 finally 把
+     *    `_isDiscovering` 置 false，与新 job 的 reset 序列交错（状态闪烁 + 竞态窗口）；
+     *    single-flight 完全消除并发 discover 的交错，且与 retryFailed() 已有的
+     *    `_isAnalyzing` 守卫风格一致；
+     * 3. 红线：`analysisJob` 是 launchAnalysis 的分析执行取消句柄，二者生命周期不同，
+     *    绝不复用——discover 不得取消、重启或观察 analysisJob。
+     */
     fun discover() {
-        viewModelScope.launch {
+        if (discoverJob?.isActive == true) return
+        discoverJob = viewModelScope.launch {
             _isDiscovering.value = true
             _error.value = null
             _isComplete.value = false

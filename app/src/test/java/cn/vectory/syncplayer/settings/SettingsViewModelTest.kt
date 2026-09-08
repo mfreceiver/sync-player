@@ -4,7 +4,6 @@ import android.util.Log
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.security.BiometricAuthManager
-import cn.vectory.syncplayer.storage.volume.MediaVolumeProvider
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
@@ -44,7 +43,6 @@ class SettingsViewModelTest {
     private val syncLogRepository = mockk<SyncLogRepository>(relaxed = true)
     private val userPrefs = mockk<UserPreferencesRepository>(relaxed = true)
     private val biometricAuthManager = mockk<BiometricAuthManager>(relaxed = true)
-    private val mediaVolumeProvider = mockk<MediaVolumeProvider>(relaxed = true)
 
     @Before
     fun setUp() {
@@ -76,7 +74,7 @@ class SettingsViewModelTest {
             syncLogRepository = syncLogRepository,
             userPrefs = userPrefs,
             biometricAuthManager = biometricAuthManager,
-            mediaVolumeProvider = mediaVolumeProvider,
+            ioDispatcher = Dispatchers.Main,
         )
 
         // Assert: cancellation must NOT fall into the generic catch — no failure log,
@@ -114,7 +112,7 @@ class SettingsViewModelTest {
             syncLogRepository = syncLogRepository,
             userPrefs = userPrefs,
             biometricAuthManager = biometricAuthManager,
-            mediaVolumeProvider = mediaVolumeProvider,
+            ioDispatcher = Dispatchers.Main,
         )
         advanceUntilIdle()
 
@@ -150,7 +148,7 @@ class SettingsViewModelTest {
             syncLogRepository = syncLogRepository,
             userPrefs = userPrefs,
             biometricAuthManager = biometricAuthManager,
-            mediaVolumeProvider = mediaVolumeProvider,
+            ioDispatcher = Dispatchers.Main,
         )
         advanceUntilIdle()
         assertNotNull("first snapshot must be delivered before the failure", vm.settingsState.value)

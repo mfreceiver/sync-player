@@ -39,9 +39,11 @@ fun StorageManagementScreen(
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         try {
             context.contentResolver.takePersistableUriPermission(treeUri, flags)
+            viewModel.onTreePermissionGranted()
             viewModel.switchToExternal(treeUri.toString())
         } catch (_: SecurityException) {
-            // Persist failed — user can retry
+            // F06：不再静默——上报结构化错误（不含 URI/message），由 UI 呈现 + 重试。
+            viewModel.onTreePermissionDenied()
         }
     }
 
@@ -109,6 +111,33 @@ fun StorageManagementScreen(
                     if (state.canSwitch) openDocumentTree.launch(null)
                 }
             )
+
+            // F06：将可恢复的授权失败紧贴外部存储选项呈现。它是持久状态，不用 Snackbar，
+            // 以免用户从 SAF 返回或滚动后失去重试入口。
+            if (state.permissionError != null) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.storage_permission_denied),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Button(onClick = { openDocumentTree.launch(null) }) {
+                            Text(stringResource(R.string.common_retry))
+                        }
+                    }
+                }
+            }
 
             // Blocked switch message
             if (!state.canSwitch) {

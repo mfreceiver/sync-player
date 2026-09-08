@@ -18,8 +18,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import cn.vectory.syncplayer.sync.RemoteBrowseError
+import cn.vectory.syncplayer.sync.SyncErrorCode
+import cn.vectory.syncplayer.sync.SyncException
+import cn.vectory.syncplayer.sync.SyncOperation
+import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.ui.components.FormResultText
 import androidx.compose.ui.res.stringResource
@@ -60,9 +65,7 @@ fun SyncRelationEditScreen(
     val pathNotFoundStr = stringResource(R.string.relation_remote_path_not_found)
     val remoteTimeoutStr = stringResource(R.string.relation_remote_timeout)
     val remoteBrowseFailedStr = stringResource(R.string.relation_remote_browse_failed)
-    val dirAccessibleStr = stringResource(R.string.relation_dir_accessible)
-    val sourceSaveSuccessStr = stringResource(R.string.source_save_success)
-    val relationSaveSuccessStr = stringResource(R.string.relation_save_success)
+    val selectedSourceHost = sources.find { it.id == selectedSourceId }?.host
 
     LaunchedEffect(browseError) {
         val err = browseError ?: return@LaunchedEffect
@@ -241,20 +244,27 @@ fun SyncRelationEditScreen(
                 }
             }
 
-            testResult?.let {
-                FormResultText(message = it, isSuccess = it.contains(dirAccessibleStr))
+            testResult?.let { result ->
+                FormResultText(
+                    message = relationTestResultText(result, selectedSourceHost),
+                    isSuccess = result is RelationTestResult.DirAccessible
+                )
             }
             error?.let {
                 FormResultText(message = it, isSuccess = false)
             }
-            saveResult?.let {
-                FormResultText(message = it, isSuccess = true)
+            saveResult?.let { result ->
+                FormResultText(
+                    message = relationSaveResultText(result),
+                    isSuccess = result is RelationSaveResult.Saved || result is RelationSaveResult.Deleted
+                )
             }
         }
     }
 
     LaunchedEffect(saveResult) {
-        if (saveResult?.contains(sourceSaveSuccessStr) == true || saveResult?.contains(relationSaveSuccessStr) == true) {
+        // F09: 仅保存成功返回列表（类型驱动；与原字符串匹配行为等价——删除成功不导航）。
+        if (saveResult is RelationSaveResult.Saved) {
             onNavigateToRelationList()
         }
     }
@@ -352,3 +362,42 @@ fun SyncRelationEditScreen(
 
 
  }
+
+/**
+ * F09: 类型化结果 → 展示文案。只复用既有 string 资源；错误细节按 F02 模式
+ * （SyncRelationListScreen.syncOutcomeErrorText）用结构化码经共享的
+ * [syncErrorMessage] 码→资源映射重建（不重写 mapper）。AccessFailed 的码分组
+ * 镜像 classifyRemoteError 三分类；[sourceHost] 覆盖异常内嵌 host 以保留主机
+ * 信息（syncErrorMessage 的 host 参数即为「caller knows the source」场景设计）。
+ */
+@Composable
+private fun relationTestResultText(result: RelationTestResult, sourceHost: String?): String =
+    when (result) {
+        is RelationTestResult.DirAccessible -> stringResource(R.string.relation_dir_accessible)
+        is RelationTestResult.PreconditionFailed -> when (result.reason) {
+            RelationTestResult.PreconditionFailed.Reason.NO_SOURCE ->
+                stringResource(R.string.relation_select_source_first)
+            RelationTestResult.PreconditionFailed.Reason.NO_PATH ->
+                stringResource(R.string.relation_input_remote_first)
+        }
+        is RelationTestResult.AccessFailed -> when (result.code) {
+            SyncErrorCode.PATH_NOT_FOUND -> stringResource(R.string.relation_dir_not_exist)
+            SyncErrorCode.TIMEOUT,
+            SyncErrorCode.UNKNOWN_HOST,
+            SyncErrorCode.NETWORK_UNAVAILABLE -> stringResource(R.string.relation_timeout_check_network)
+            else -> stringResource(
+                R.string.relation_access_failed,
+                syncErrorMessage(
+                    SyncException(result.code, SyncOperation.CONNECT),
+                    LocalContext.current,
+                    sourceHost
+                )
+            )
+        }
+    }
+
+@Composable
+private fun relationSaveResultText(result: RelationSaveResult): String = when (result) {
+    is RelationSaveResult.Saved -> stringResource(R.string.relation_save_success)
+    is RelationSaveResult.Deleted -> stringResource(R.string.relation_delete_success)
+}

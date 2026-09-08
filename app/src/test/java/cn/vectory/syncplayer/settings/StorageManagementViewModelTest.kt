@@ -422,4 +422,50 @@ class StorageManagementViewModelTest {
 
         coVerify(exactly = 1) { userPrefs.getMediaStorageTreeUri() }
     }
+
+    @Test
+    fun `tree permission denied exposes structured error without leaking uri or message`() = runTest(testDispatcher) {
+        // F06: takePersistableUriPermission failure must surface as a structured
+        // error state (not silently swallowed), and the error type carries no
+        // URI / internal message fields — nothing to leak into the UI.
+        setUpMocks()
+        val testVm = createVmWith(cleanVolume())
+        advanceUntilIdle()
+        assertNull("no permission error initially", testVm.state.value.permissionError)
+
+        testVm.onTreePermissionDenied()
+        advanceUntilIdle()
+
+        val error = testVm.state.value.permissionError
+        assertTrue(
+            "denied must surface as TreePermissionGrantError.Denied",
+            error is TreePermissionGrantError.Denied,
+        )
+        // Non-leak contract on the structured type itself.
+        assertFalse(
+            "error state must not carry a URI",
+            error.toString().contains("content://"),
+        )
+        assertFalse(
+            "error state must not carry an internal message",
+            error.toString().contains(secretInternalMessage),
+        )
+    }
+
+    @Test
+    fun `tree permission granted clears error state`() = runTest(testDispatcher) {
+        // F06: a successful take flow clears the error so the retry entry point
+        // disappears once the grant succeeded.
+        setUpMocks()
+        val testVm = createVmWith(cleanVolume())
+        advanceUntilIdle()
+
+        testVm.onTreePermissionDenied()
+        advanceUntilIdle()
+        assertNotNull("error must be visible before success", testVm.state.value.permissionError)
+
+        testVm.onTreePermissionGranted()
+        advanceUntilIdle()
+        assertNull("granted must clear the permission error", testVm.state.value.permissionError)
+    }
 }
