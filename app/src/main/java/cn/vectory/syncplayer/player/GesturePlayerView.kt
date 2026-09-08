@@ -21,6 +21,8 @@ class GesturePlayerView @JvmOverloads constructor(
     private companion object {
         const val VERTICAL_GESTURE_THRESHOLD = 20f
         const val HORIZONTAL_GESTURE_THRESHOLD = 30f
+        const val EDGE_BACK_WIDTH_DP = 24f
+        const val EDGE_BACK_THRESHOLD_DP = 48f
     }
 
     private val playerView = PlayerView(context).apply {
@@ -41,6 +43,18 @@ class GesturePlayerView @JvmOverloads constructor(
     private var touchStartY = 0f
     private var isInLeftHalf = false
     private var initialBrightness = 0f
+    private var edgeBackStart: EdgeBackStart? = null
+    private var edgeBackTriggered = false
+
+    /**
+     * The player UI is unconditionally immersive (system bars always hidden, video
+     * fills the container), so edge-return is always enabled while playing.
+     */
+    var edgeBackEnabled: Boolean = false
+        set(value) {
+            field = value
+            updateSystemGestureExclusionRects()
+        }
 
     private var singleTapCallback: (() -> Unit)? = null
 
@@ -62,6 +76,7 @@ class GesturePlayerView @JvmOverloads constructor(
         fun onSeekOverlay(positionMs: Long, durationMs: Long) {}
         fun onLongPressSpeedOverlay(multiplier: Float) {}
         fun onHideOverlay() {}
+        fun onEdgeBack() {}
     }
 
     enum class DoubleTapZone { PREVIOUS, NEXT, CENTER_TOP, CENTER_BOTTOM }
@@ -77,17 +92,33 @@ class GesturePlayerView @JvmOverloads constructor(
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
 
-        val edgeWidthCap = (200 * resources.displayMetrics.density).toInt()
-        val edgeWidth = minOf(edgeWidthCap, width)
+        updateSystemGestureExclusionRects()
+    }
+
+    private fun updateSystemGestureExclusionRects() {
+        if (!edgeBackEnabled || width == 0 || height == 0) {
+            setSystemGestureExclusionRects(emptyList())
+            return
+        }
+        val edgeWidth = minOf(edgeBackWidthPx, width)
         systemGestureExclusionRects[0].set(0, 0, edgeWidth, height)
         systemGestureExclusionRects[1].set(width - edgeWidth, 0, width, height)
         setSystemGestureExclusionRects(systemGestureExclusionRects)
     }
 
+    private val edgeBackWidthPx: Int
+        get() = (EDGE_BACK_WIDTH_DP * resources.displayMetrics.density).toInt()
+
+    private val edgeBackThresholdPx: Float
+        get() = EDGE_BACK_THRESHOLD_DP * resources.displayMetrics.density
+
+    private enum class EdgeBackStart { LEFT, RIGHT }
+
     fun getPlayerView(): PlayerView = playerView
 
     private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onLongPress(e: MotionEvent) {
+            if (edgeBackStart != null) return
             isLongPressing = true
             gestureListener?.onLongPressSpeedOverlay(speedMultiplier)
             gestureListener?.onSpeedUpChanged(true)
@@ -106,6 +137,30 @@ class GesturePlayerView @JvmOverloads constructor(
             val dyFromStart = e2.y - touchStartY
             val absDxFromStart = abs(dxFromStart)
             val absDyFromStart = abs(dyFromStart)
+
+            // An edge-originating horizontal drag belongs to edge return before it can
+            // become a seek. A clearly vertical drag releases the reservation so the
+            // existing brightness/volume gestures keep their full behavior.
+            edgeBackStart?.let { start ->
+                if (edgeBackTriggered) return true
+                if (absDyFromStart > absDxFromStart && absDyFromStart > VERTICAL_GESTURE_THRESHOLD) {
+                    edgeBackStart = null
+                } else {
+                    val movesInward = when (start) {
+                        EdgeBackStart.LEFT -> dxFromStart > 0f
+                        EdgeBackStart.RIGHT -> dxFromStart < 0f
+                    }
+                    if (
+                        movesInward &&
+                        absDxFromStart >= edgeBackThresholdPx &&
+                        absDxFromStart > absDyFromStart * 1.5f
+                    ) {
+                        edgeBackTriggered = true
+                        gestureListener?.onEdgeBack()
+                    }
+                    return true
+                }
+            }
 
             if (!isSeeking && !isAdjustingVertical) {
                 if (absDyFromStart > absDxFromStart && absDyFromStart > VERTICAL_GESTURE_THRESHOLD) {
@@ -186,14 +241,22 @@ class GesturePlayerView @JvmOverloads constructor(
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        gestureDetector.onTouchEvent(event)
-
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
                 touchStartX = event.x
                 touchStartY = event.y
                 isAdjustingVertical = false
                 isSeeking = false
+                edgeBackTriggered = false
+                edgeBackStart = if (edgeBackEnabled) {
+                    when {
+                        event.x <= edgeBackWidthPx -> EdgeBackStart.LEFT
+                        event.x >= width - edgeBackWidthPx -> EdgeBackStart.RIGHT
+                        else -> null
+                    }
+                } else {
+                    null
+                }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (isLongPressing) {
@@ -216,8 +279,10 @@ class GesturePlayerView @JvmOverloads constructor(
                     gestureListener?.onHideOverlay()
                 }
                 isAdjustingVertical = false
+                edgeBackStart = null
             }
         }
+        gestureDetector.onTouchEvent(event)
         if (isSeeking || isAdjustingVertical || isLongPressing) {
             parent?.requestDisallowInterceptTouchEvent(true)
         }

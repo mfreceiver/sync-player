@@ -18,7 +18,6 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +32,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import cn.vectory.syncplayer.ui.components.showTrashUndoSnackbar
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -122,10 +122,9 @@ fun ImageViewerScreen(
     LaunchedEffect(pendingUndoTrigger) {
         if (pendingUndoTrigger > 0) {
             val expectedId = pendingUndoId ?: return@LaunchedEffect
-            val result = snackbarHostState.showSnackbar(
+            val result = snackbarHostState.showTrashUndoSnackbar(
                 message = undoTrashMessage,
                 actionLabel = undoActionLabel,
-                duration = SnackbarDuration.Short
             )
             when (result) {
                 SnackbarResult.ActionPerformed -> {

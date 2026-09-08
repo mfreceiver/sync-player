@@ -38,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import cn.vectory.syncplayer.ui.components.showTrashUndoSnackbar
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -436,10 +437,9 @@ private fun onTrashedInBrowser(
 ) {
     scope.launch {
         snackbarHostState.currentSnackbarData?.dismiss()
-        val result = snackbarHostState.showSnackbar(
+        val result = snackbarHostState.showTrashUndoSnackbar(
             message = message,
             actionLabel = actionLabel,
-            duration = SnackbarDuration.Short
         )
         when (result) {
             SnackbarResult.ActionPerformed -> {

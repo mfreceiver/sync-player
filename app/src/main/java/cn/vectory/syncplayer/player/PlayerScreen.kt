@@ -25,6 +25,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.res.stringResource
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.browser.UndoResult
+import cn.vectory.syncplayer.ui.components.showTrashUndoSnackbar
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -395,9 +396,15 @@ fun PlayerScreen(
             override fun onHideOverlay() {
                 viewModel.hideOverlay()
             }
+            override fun onEdgeBack() {
+                doExit()
+            }
         }
     }
     gestureView.gestureListener = gestureListener
+    // The player UI is unconditionally immersive (system bars always hidden, video
+    // fills the container), so edge-back must be enabled regardless of uiState.
+    gestureView.edgeBackEnabled = true
 
     var showSettingsPopup by remember { mutableStateOf(false) }
     val previewExtractor = remember { SeekPreviewExtractor(context) }
@@ -443,10 +450,9 @@ fun PlayerScreen(
     LaunchedEffect(pendingUndoTrigger) {
         if (pendingUndoTrigger > 0) {
             val expectedId = pendingUndoId ?: return@LaunchedEffect
-            val result = snackbarHostState.showSnackbar(
+            val result = snackbarHostState.showTrashUndoSnackbar(
                 message = undoTrashMessage,
                 actionLabel = undoActionLabel,
-                duration = SnackbarDuration.Short
             )
             when (result) {
                 SnackbarResult.ActionPerformed -> {

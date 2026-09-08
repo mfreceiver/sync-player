@@ -162,8 +162,9 @@ internal object AuroraTokens {
     val AuroraPanelScrim = Color.Black.copy(alpha = 0.48f)
     val AuroraTrack = AuroraText.copy(alpha = 0.22f)
     val AuroraDisabled = AuroraTextSecondary.copy(alpha = 0.38f)
-    val AuroraPanelFill = AuroraSurface.copy(alpha = 0.96f)
-    val AuroraPillFill = AuroraSurface.copy(alpha = 0.94f)
+    val AuroraPanelFill = AuroraSurface.copy(alpha = 0.84f)
+    val AuroraPillFill = AuroraSurface.copy(alpha = 0.78f)
+    val AuroraControlFill = AuroraSurface.copy(alpha = 0.78f)
     val AuroraGlowBlue = AuroraBlue.copy(alpha = 0.10f)
     val AuroraGlowPurple = AuroraPurple.copy(alpha = 0.10f)
     val AuroraGlowClear = Color.Transparent
@@ -357,13 +358,19 @@ internal fun AuroraTopRow(fileName: String, visible: Boolean, onExit: () -> Unit
                 .padding(horizontal = AuroraTokens.AuroraEdgePadding),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onExit, modifier = Modifier.size(AuroraTokens.AuroraControlSize)) {
-                Icon(
-                    imageVector = Icons.Filled.Close,
-                    contentDescription = stringResource(R.string.player_exit),
-                    tint = AuroraTokens.AuroraText,
-                    modifier = Modifier.size(AuroraTokens.AuroraIconSize),
-                )
+            Surface(
+                modifier = Modifier.size(AuroraTokens.AuroraControlSize),
+                shape = CircleShape,
+                color = AuroraTokens.AuroraControlFill,
+            ) {
+                IconButton(onClick = onExit, modifier = Modifier.fillMaxSize()) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.player_exit),
+                        tint = AuroraTokens.AuroraText,
+                        modifier = Modifier.size(AuroraTokens.AuroraIconSize),
+                    )
+                }
             }
             Spacer(Modifier.width(AuroraTokens.AuroraTopBarGap))
             Text(
@@ -498,7 +505,7 @@ private fun AuroraControlButton(size: androidx.compose.ui.unit.Dp, icon: ImageVe
     Surface(
         modifier = Modifier.size(size).graphicsLayer(scaleX = pressedScale, scaleY = pressedScale),
         shape = CircleShape,
-        color = AuroraTokens.AuroraSurface,
+        color = AuroraTokens.AuroraControlFill,
     ) {
         IconButton(onClick = onClick, modifier = Modifier.fillMaxSize(), interactionSource = interactionSource) {
             Icon(
@@ -525,7 +532,7 @@ private fun AuroraPlayButton(isPlaying: Boolean, onClick: () -> Unit) {
             .size(AuroraTokens.AuroraPlaySize)
             .graphicsLayer(scaleX = pressedScale, scaleY = pressedScale),
         shape = CircleShape,
-        color = AuroraTokens.AuroraSurface,
+        color = AuroraTokens.AuroraControlFill,
     ) {
         IconButton(onClick = onClick, modifier = Modifier.fillMaxSize(), interactionSource = interactionSource) {
             AnimatedContent(
@@ -1040,7 +1047,7 @@ private fun AuroraCoarsePreview(
                 .testTag("player_aurora_coarse_preview")
                 .width(with(density) { geometry.effectiveWidthPx.toDp() })
                 .heightIn(max = AuroraTokens.AuroraPreviewMaxHeight),
-            color = AuroraTokens.AuroraSurface,
+            color = AuroraTokens.AuroraPanelFill,
             shape = RoundedCornerShape(AuroraTokens.AuroraPanelRadius),
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1091,7 +1098,7 @@ internal fun FineScrubMagnifier(state: ProgressScrubUiState, bitmap: Bitmap?, du
                     }
                     .testTag("player_aurora_fine_magnifier"),
                 shape = RoundedCornerShape(AuroraTokens.AuroraPanelRadius),
-                color = AuroraTokens.AuroraSurface,
+                color = AuroraTokens.AuroraPanelFill,
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(AuroraTokens.AuroraEdgePadding)) {
                     Text(
