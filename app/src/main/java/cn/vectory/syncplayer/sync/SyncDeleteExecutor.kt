@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.SyncAction
+import cn.vectory.syncplayer.data.model.SyncOutcome
 import cn.vectory.syncplayer.data.model.SyncProgress
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncPhase
@@ -16,6 +17,8 @@ import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
 import dagger.Lazy
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 /**
  * DELETE_BOTH 执行域（从 [SyncEngine] 上帝类渐进拆分，plan 12.2.0 Task 5）。
@@ -177,20 +180,42 @@ internal class SyncDeleteExecutor(
                 localBasePath = relation.localBasePath
             )
 
-            if (allOk) {
-                syncRelationRepository.updateLastSync(
-                    relationId,
-                    context.getString(R.string.sync_delete_success, completedActions)
-                )
+            // F02: 结构化终态入库——部分失败与成功可区分，失败数为展示所需最小计数。
+            val outcome = if (allOk) {
+                SyncOutcome(SyncOutcome.Status.SUCCESS)
             } else {
-                syncRelationRepository.updateLastSync(
-                    relationId,
-                    context.getString(R.string.sync_delete_failed, completedActions, failedActions)
-                )
+                SyncOutcome(SyncOutcome.Status.PARTIAL_FAILED, failedCount = failedActions)
             }
+            syncRelationRepository.updateLastSync(relationId, outcome)
             syncLogRepository.clearOldLogs()
             return allOk
         } catch (e: CancellationException) {
+            // BUG-008: 终态必须 copy 当前进度（保留 DELETING 相位已发布的计数），
+            // 与 SyncDownloadPipeline 取消路径保持一致：置 CANCELLED 终态相位。
+            progressPublisher.value = progressPublisher.value.copy(
+                isRunning = false,
+                phase = SyncPhase.CANCELLED,
+                relationId = relationId,
+                relationName = relation.name,
+                localBasePath = relation.localBasePath
+            )
+            // F02: 取消收尾是**有限操作数**的 best-effort（单条 UPDATE；NonCancellable
+            // 只保证在已取消协程内仍能执行这一条写入）——它不承诺取消等待时间有上界。
+            // 无论记录成败，最终传播的都是原始 CancellationException e
+            // （绝不吞取消、绝不把取消当成功，收尾点也不得替换原始取消）。
+            try {
+                withContext(NonCancellable) {
+                    syncRelationRepository.updateLastSync(
+                        relationId,
+                        SyncOutcome(SyncOutcome.Status.CANCELLED)
+                    )
+                }
+            } catch (ce: CancellationException) {
+                // 原始异常优先：收尾写入自身再抛的 CE（ce）不得替换/遮蔽原始取消 e。
+                throw e
+            } catch (_: Exception) {
+                // best-effort：终态记录失败不改变取消语义
+            }
             throw e
         } catch (e: Exception) {
             // BUG-008: 终态必须 copy 当前进度，保留 DELETING 相位已发布的计数。
@@ -201,7 +226,14 @@ internal class SyncDeleteExecutor(
                 relationName = relation.name,
                 localBasePath = relation.localBasePath
             )
-            syncRelationRepository.updateLastSync(relationId, syncErrorMessage(e, context))
+            // F02: 结构化终态入库（FAILED + 错误码原样持久化），不再写 syncErrorMessage 文案。
+            syncRelationRepository.updateLastSync(
+                relationId,
+                SyncOutcome(
+                    SyncOutcome.Status.FAILED,
+                    errorCode = (e as? SyncException)?.code?.name ?: SyncErrorCode.UNKNOWN.name
+                )
+            )
             syncLogRepository.log(
                 action = "DELETE_BOTH",
                 relativePath = "",

@@ -41,8 +41,22 @@ interface SyncRelationDao {
     @Query("SELECT localBasePath FROM sync_relation")
     fun getAllBasePathsFlow(): Flow<List<String>>
 
-    @Query("UPDATE sync_relation SET lastSyncTime = :lastSyncTime, lastSyncResult = :lastSyncResult WHERE id = :id")
-    suspend fun updateLastSync(id: Long, lastSyncTime: Long, lastSyncResult: String)
+    /**
+     * F02: 时间 + 终态 + 错误码 + 失败数作为一个快照原子写入（单条 UPDATE）。
+     * status/errorCode 用稳定字符串标识（enum name），不存 ordinal、不存本地化文案。
+     */
+    @Query(
+        "UPDATE sync_relation SET lastSyncTime = :lastSyncTime, lastSyncStatus = :lastSyncStatus, " +
+            "lastSyncErrorCode = :lastSyncErrorCode, lastSyncFailedCount = :lastSyncFailedCount " +
+            "WHERE id = :id"
+    )
+    suspend fun updateLastSyncSnapshot(
+        id: Long,
+        lastSyncTime: Long,
+        lastSyncStatus: String,
+        lastSyncErrorCode: String?,
+        lastSyncFailedCount: Int?
+    )
 
     @Upsert
     suspend fun upsert(relation: SyncRelationEntity): Long

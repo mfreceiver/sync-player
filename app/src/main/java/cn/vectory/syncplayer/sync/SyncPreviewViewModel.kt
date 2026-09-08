@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.SyncRelation
 import cn.vectory.syncplayer.data.model.SyncAction
+import cn.vectory.syncplayer.data.model.SyncOutcome
 import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProgress
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
@@ -125,8 +126,10 @@ class SyncPreviewViewModel @Inject constructor(
                     }
                     _toDownload.value = emptyList()
                     _toDelete.value = actions
+                    // F02 预览语义：最近一次完成的同步检查或执行结果——
+                    // 成功扫描且确实无动作 → 更新 SUCCESS；有动作不覆盖上次终态；失败不写成功。
                     if (actions.isEmpty() && errMsg == null) {
-                        syncRelationRepository.updateLastSync(relationId, context.getString(R.string.sync_preview_up_to_date_msg))
+                        syncRelationRepository.updateLastSync(relationId, SyncOutcome(SyncOutcome.Status.SUCCESS))
                         _syncComplete.value = true
                     }
                 } else {
@@ -139,7 +142,8 @@ class SyncPreviewViewModel @Inject constructor(
                     if (result.error != null) {
                         _error.value = syncErrorMessage(result.error, context)
                     } else if (result.toDownload.isEmpty() && result.toDelete.isEmpty()) {
-                        syncRelationRepository.updateLastSync(relationId, context.getString(R.string.sync_preview_up_to_date_msg))
+                        // F02 预览语义：同上——无动作才写 SUCCESS，扫描失败绝不写成功。
+                        syncRelationRepository.updateLastSync(relationId, SyncOutcome(SyncOutcome.Status.SUCCESS))
                         _syncComplete.value = true
                     }
                 }

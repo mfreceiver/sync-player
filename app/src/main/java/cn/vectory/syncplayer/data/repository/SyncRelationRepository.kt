@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.data.repository
 import cn.vectory.syncplayer.data.local.dao.SyncRelationDao
 import cn.vectory.syncplayer.data.local.dao.SyncSourceDao
 import cn.vectory.syncplayer.data.local.entity.SyncRelationEntity
+import cn.vectory.syncplayer.data.model.SyncOutcome
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncRelation
 import cn.vectory.syncplayer.data.model.SyncRelationWithSource
@@ -85,14 +86,26 @@ class SyncRelationRepository @Inject constructor(
             remotePath = relation.remotePath,
             localBasePath = relation.localBasePath,
             lastSyncTime = relation.lastSyncTime,
-            lastSyncResult = relation.lastSyncResult,
+            lastSyncStatus = relation.lastSyncOutcome?.status?.name,
+            lastSyncErrorCode = relation.lastSyncOutcome?.errorCode,
+            lastSyncFailedCount = relation.lastSyncOutcome?.failedCount,
             createdAt = relation.createdAt
         )
         return syncRelationDao.upsert(entity)
     }
 
-    suspend fun updateLastSync(relationId: Long, result: String) {
-        syncRelationDao.updateLastSync(relationId, System.currentTimeMillis(), result)
+    /**
+     * F02: 接收类型化终态（不接收字符串），时间 + 终态 + 错误码 + 失败数由 DAO
+     * 以单条 UPDATE 原子写入。Repository 不生成任何展示文案。
+     */
+    suspend fun updateLastSync(relationId: Long, outcome: SyncOutcome) {
+        syncRelationDao.updateLastSyncSnapshot(
+            id = relationId,
+            lastSyncTime = System.currentTimeMillis(),
+            lastSyncStatus = outcome.status.name,
+            lastSyncErrorCode = outcome.errorCode,
+            lastSyncFailedCount = outcome.failedCount
+        )
     }
 
     suspend fun delete(id: Long) {
@@ -106,7 +119,7 @@ class SyncRelationRepository @Inject constructor(
         remotePath = remotePath,
         localBasePath = localBasePath,
         lastSyncTime = lastSyncTime,
-        lastSyncResult = lastSyncResult,
+        lastSyncOutcome = SyncOutcome.fromStored(lastSyncStatus, lastSyncErrorCode, lastSyncFailedCount),
         createdAt = createdAt
     )
 }

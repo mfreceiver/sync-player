@@ -129,6 +129,7 @@
     <string name="settings_volume_balance_desc">点击进行增益分析</string>
     <string name="settings_media_storage_internal">应用内部存储（默认）</string>
     <string name="settings_media_storage_external">外部目录：%1$s</string>
+    <string name="settings_media_storage_folder_generic">已选择的文件夹</string>
     <string name="volume_switch_cancel">取消</string>
     <string name="settings_app_lock">应用安全锁</string>
     <string name="settings_no_auth">设备未设置任何认证方式</string>
@@ -302,6 +303,14 @@
     <string name="sync_delete_success">成功：删除 %d 个文件</string>
     <string name="sync_delete_failed">删除失败：成功 %1$d 个，失败 %2$d 个</string>
 
+    <!-- Sync outcome status labels (F02: structured terminal state display) -->
+    <string name="sync_status_success">成功</string>
+    <string name="sync_status_partial_failed">部分失败</string>
+    <string name="sync_status_failed">失败</string>
+    <string name="sync_status_cancelled">已取消</string>
+    <string name="sync_status_unknown">历史状态未知</string>
+    <string name="sync_status_failed_count">失败 %1$d 项</string>
+
     <!-- Error Message Mapper -->
     <string name="error_unknown_host">无法解析主机地址: %s</string>
     <string name="error_connection_refused">连接被拒绝，请检查主机地址 %s 是否可达</string>
@@ -419,6 +428,7 @@
     <string name="storage_reset_failed">重置失败</string>
     <string name="storage_reset_partial">%1$d 个已删除，%2$d 个无法删除</string>
     <string name="storage_switch_blocked">数据库中仍有文件记录，请先重置存储才能切换存储方式</string>
+    <string name="storage_permission_denied">未能获得该文件夹的持久访问权限</string>
 
     <!-- Debug Log -->
     <string name="debug_log_title">调试日志</string>

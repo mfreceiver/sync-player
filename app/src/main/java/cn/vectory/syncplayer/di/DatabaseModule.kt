@@ -30,7 +30,10 @@ object DatabaseModule {
             AppDatabase::class.java,
             "sync-player.db"
         )
-            // v1 clean start: schema changes rebuild DB (user reinstalls on breaking upgrades).
+            // v3: 显式保留数据迁移（sync_relation 结构化终态三列 + 旧文案 → UNKNOWN）。
+            // 必须先于 destructive fallback 命中；fallbackToDestructiveMigration 仅作
+            // 无迁移可走的最后兜底（用户重装等破坏性场景）。
+            .addMigrations(AppDatabase.MIGRATION_2_3)
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
     }

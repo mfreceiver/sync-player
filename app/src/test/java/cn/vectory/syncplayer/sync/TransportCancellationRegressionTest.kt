@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.sync
 import cn.vectory.syncplayer.data.local.dao.PendingSyncActionDao
 import cn.vectory.syncplayer.data.model.SyncAction
 import cn.vectory.syncplayer.data.model.SyncActionType
+import cn.vectory.syncplayer.data.model.SyncOutcome
 import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncRelation
@@ -51,7 +52,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * cancelled while an SSHJ blocking call is in flight and that call then completes with
  * a NORMAL IOException, the transport must surface CancellationException — the engine
  * must NOT classify the run as FAILED: no PARTIAL_FAILED/FAILED terminal phase, no
- * failed-status sync log entry, no `updateLastSync` write.
+ * failed-status sync log entry, and the lastSync record (F02: structured outcome) is
+ * CANCELLED — never success, never failure.
  *
  * Asserts on exception types, phases, and call counts only — never on message text.
  */
@@ -228,7 +230,7 @@ class TransportCancellationRegressionTest {
     }
 
     @Test
-    fun `executeDelete cancelled mid-remote-delete never reports FAILED nor updates lastSync`() = runTest {
+    fun `executeDelete cancelled mid-remote-delete records CANCELLED and never reports FAILED`() = runTest {
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
         every { storagePaths.toPathUnderBase(any(), any()) } returns "b.mp4"
@@ -251,7 +253,11 @@ class TransportCancellationRegressionTest {
         assertCancelled(terminal)
         val phase = syncEngine.progress.value.phase
         assertTrue("unexpected terminal phase $phase", phase != SyncPhase.FAILED && phase != SyncPhase.PARTIAL_FAILED)
-        coVerify(exactly = 0) { syncRelationRepository.updateLastSync(any(), any()) }
+        // F02: 取消经 NonCancellable 有界收尾点记录 CANCELLED 终态（CE 仍原样传播）；
+        // 绝不写成功、绝不写失败。
+        coVerify(exactly = 1) {
+            syncRelationRepository.updateLastSync(1L, withArg { it.status == SyncOutcome.Status.CANCELLED })
+        }
         coVerify(exactly = 0) {
             syncLogRepository.log(action = any(), relativePath = any(), status = "FAILED", dryRun = any(), fileSize = any(), errorMessage = any())
         }

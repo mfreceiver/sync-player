@@ -7,6 +7,7 @@ data class SyncRelation(
     val remotePath: String,
     val localBasePath: String,
     val lastSyncTime: Long? = null,
-    val lastSyncResult: String? = null,
+    /** 结构化终态快照（F02/T6）；null = 无记录。取代旧的 lastSyncResult 文案列。 */
+    val lastSyncOutcome: SyncOutcome? = null,
     val createdAt: Long = System.currentTimeMillis()
 )

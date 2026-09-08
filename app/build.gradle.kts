@@ -114,6 +114,12 @@ android {
         unitTests.isIncludeAndroidResources = true
     }
 
+    sourceSets {
+        // Room exported schemas as androidTest assets — required by
+        // MigrationTestHelper (createDatabase/runMigrationsAndValidate).
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
+    }
+
     // Lint gate blocks on errors. Debt paid off in the CI scaffold round
     // (LocalContextGetResourceValueCall → stringResource, Range → getColumnIndexOrThrow,
     // UnsafeOptIn → @OptIn). warningsAsErrors=false keeps warnings informational

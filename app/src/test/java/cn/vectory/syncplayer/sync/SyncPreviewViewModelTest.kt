@@ -4,9 +4,11 @@ import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import cn.vectory.syncplayer.data.model.SyncAction
 import cn.vectory.syncplayer.data.model.SyncActionType
+import cn.vectory.syncplayer.data.model.SyncOutcome
 import cn.vectory.syncplayer.data.model.SyncProgress
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
@@ -95,5 +97,50 @@ class SyncPreviewViewModelTest {
         assertTrue("executeDelete should have observed cancellation", cancellationReached.isCompleted)
         assertFalse("isDeleting should be reset by finally", vm.isDeleting.value)
         assertNull("cancellation must not surface as error state", vm.error.value)
+    }
+
+    // =========================================================================
+    // F02 — 预览语义：最近一次完成的同步检查或执行结果
+    //  - 成功扫描且确实无动作 → 更新 SUCCESS；
+    //  - 预览发现待执行动作 → 不覆盖上次终态（不写任何 outcome）；
+    //  - 扫描失败 → 绝不写成功。
+    // =========================================================================
+
+    @Test
+    fun `preview scan with no actions records SUCCESS outcome`() = runTest {
+        coEvery { syncEngine.dryRunDelete(1L) } returns Pair(emptyList(), null)
+        val vm = createVm()
+
+        vm.loadPreview()
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            syncRelationRepository.updateLastSync(1L, withArg { it.status == SyncOutcome.Status.SUCCESS })
+        }
+    }
+
+    @Test
+    fun `preview with pending delete actions does not overwrite last outcome`() = runTest {
+        coEvery { syncEngine.dryRunDelete(1L) } returns Pair(
+            listOf(SyncAction(type = SyncActionType.DELETE_BOTH, relativePath = "a/video.enc", fileSize = 10L)),
+            null,
+        )
+        val vm = createVm()
+
+        vm.loadPreview()
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { syncRelationRepository.updateLastSync(any(), any()) }
+    }
+
+    @Test
+    fun `preview scan failure never records success outcome`() = runTest {
+        coEvery { syncEngine.dryRunDelete(1L) } returns Pair(emptyList(), "scan failed")
+        val vm = createVm()
+
+        vm.loadPreview()
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { syncRelationRepository.updateLastSync(any(), any()) }
     }
 }

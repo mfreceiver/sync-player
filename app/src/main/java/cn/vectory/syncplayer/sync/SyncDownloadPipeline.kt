@@ -6,6 +6,7 @@ import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.crypto.CryptoScheme
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.model.SyncAction
+import cn.vectory.syncplayer.data.model.SyncOutcome
 import cn.vectory.syncplayer.data.model.SyncProgress
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncPhase
@@ -166,12 +167,12 @@ internal class SyncDownloadPipeline(
         val spaceCheck = spaceChecker.checkSpace(toActuallyDownload, store)
         if (spaceCheck is SyncSpaceChecker.Result.Insufficient) {
             DebugLogger.e(TAG, "空间不足，中止同步")
+            // F02: 结构化终态入库（FAILED + 错误码），不再拼文案；文案由展示层映射。
             syncRelationRepository.updateLastSync(
                 relationId,
-                context.getString(
-                    R.string.sync_disk_space_insufficient,
-                    formatSize(spaceCheck.needed),
-                    formatSize(spaceCheck.available)
+                SyncOutcome(
+                    SyncOutcome.Status.FAILED,
+                    errorCode = SyncErrorCode.INSUFFICIENT_SPACE.name
                 )
             )
             progressPublisher.value = SyncProgress(isRunning = false, phase = SyncPhase.FAILED, relationId = relationId, relationName = name, localBasePath = basePath)
@@ -420,11 +421,15 @@ internal class SyncDownloadPipeline(
                                                     // 登记与判定之间无挂起点——登记簿不可能领先于磁盘确认。
                                                     attemptPhase = AttemptPhase.COMMITTED
                                                     uncleanFinalizedId = assignedId
-                                                    // 可读性探针（Bug 2 修复）：finalize 成功后立即验证文件能 seek + read + SPM2 magic。
-                                                    // SAF 不支持 seek / 任何读取失败 → 抛 STORAGE_ERROR，由 attempt 级 generic catch
-                                                    // 经 cleanUpAttempt(COMMITTED) 单点回滚（删 .enc + 删 DB 行，恰一次）。
+                                                    // 可读性探针（Bug 2 修复 + F14/T10 增强）：finalize 成功后立即做 O(1)
+                                                    // 三方一致性检查——完整 16B header 解析 + 实际密文大小
+                                                    // == cipherLengthFor(header 声明明文长) + header 声明明文长
+                                                    // == action.fileSize（远端源文件大小显式传入，不依赖 DB
+                                                    // 最终 metadata）。SAF 不支持 seek / 截断 / 内容错配 → 抛
+                                                    // STORAGE_ERROR，由 attempt 级 generic catch 经
+                                                    // cleanUpAttempt(COMMITTED) 单点回滚（删 .enc + 删 DB 行，恰一次）。
                                                     try {
-                                                        store.verifyReadable(assignedId)
+                                                        store.verifyReadable(assignedId, action.fileSize)
                                                     } catch (e: CancellationException) {
                                                         throw e
                                                     } catch (e: Exception) {
@@ -656,11 +661,14 @@ internal class SyncDownloadPipeline(
                 completedPaths = progressPublisher.completedPathsSnapshot()
             )
 
-            val successDownloadCount = toActuallyDownload.size - failedDownloadCount.get()
-            val reconcilePart = "" // RECONCILE 已移除
-            val failedPart = if (totalFailures > 0) context.getString(R.string.sync_result_failed, totalFailures) else ""
-            val msg = context.getString(R.string.sync_result_success, successDownloadCount, reconcilePart, failedPart, toDelete.size)
-            syncRelationRepository.updateLastSync(relationId, msg)
+            // F02: 结构化终态入库——部分失败必须与成功可区分（旧实现把 PARTIAL_FAILED
+            // 写成 sync_result_success 文案）；失败数是展示所需的最小计数。
+            val outcome = if (hadFailures) {
+                SyncOutcome(SyncOutcome.Status.PARTIAL_FAILED, failedCount = totalFailures)
+            } else {
+                SyncOutcome(SyncOutcome.Status.SUCCESS)
+            }
+            syncRelationRepository.updateLastSync(relationId, outcome)
             syncLogRepository.clearOldLogs()
             return !hadFailures
         } catch (e: CancellationException) {
@@ -673,6 +681,23 @@ internal class SyncDownloadPipeline(
                 relationName = name,
                 localBasePath = basePath
             )
+            // F02: 取消收尾是**有限操作数**的 best-effort（单条 UPDATE；NonCancellable
+            // 只保证在已取消协程内仍能执行这一条写入）——它不承诺取消等待时间有上界。
+            // 无论记录成败，最终传播的都是原始 CancellationException e
+            // （红线：绝不吞取消、绝不把取消当成功，收尾点也不得替换原始取消）。
+            try {
+                withContext(NonCancellable) {
+                    syncRelationRepository.updateLastSync(
+                        relationId,
+                        SyncOutcome(SyncOutcome.Status.CANCELLED)
+                    )
+                }
+            } catch (ce: CancellationException) {
+                // 原始异常优先：收尾写入自身再抛的 CE（ce）不得替换/遮蔽原始取消 e。
+                throw e
+            } catch (_: Exception) {
+                // best-effort：终态记录失败不改变取消语义
+            }
             throw e
         } catch (e: Exception) {
             // 复审红线：不传原始 Throwable（DebugLogger 会把 stack+message 写入调试环形缓冲）。
@@ -684,7 +709,14 @@ internal class SyncDownloadPipeline(
                 relationName = name,
                 localBasePath = basePath
             )
-            syncRelationRepository.updateLastSync(relationId, syncErrorMessage(e, context))
+            // F02: 结构化终态入库（FAILED + 错误码原样持久化），不再写 syncErrorMessage 文案。
+            syncRelationRepository.updateLastSync(
+                relationId,
+                SyncOutcome(
+                    SyncOutcome.Status.FAILED,
+                    errorCode = (e as? SyncException)?.code?.name ?: SyncErrorCode.UNKNOWN.name
+                )
+            )
             syncLogRepository.log(
                 action = "SYNC",
                 relativePath = "",

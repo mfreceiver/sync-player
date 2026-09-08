@@ -298,7 +298,7 @@ class SyncEngineTest {
         coEvery { encryptedMediaStore.finalize(300L) } returns true
         coEvery { encryptedMediaStore.cancel(300L) } returns Unit
         // finalize 成功，但可读性探针失败（模拟 SAF 不支持 seek / 密文不可读）
-        coEvery { encryptedMediaStore.verifyReadable(300L) } throws IOException("simulated unreadable")
+        coEvery { encryptedMediaStore.verifyReadable(300L, 1000L) } throws IOException("simulated unreadable")
         coEvery { encryptedMediaStore.delete(300L) } returns true
 
         val action = SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "video.mp4", fileSize = 1000L)
@@ -307,7 +307,7 @@ class SyncEngineTest {
         // 探针失败 → 回滚 → 整体失败
         assertEquals(false, result)
         // 探针回滚：删除已 finalize 的密文 + 删除占位 DB 行
-        coVerify(atLeast = 1) { encryptedMediaStore.verifyReadable(300L) }
+        coVerify(atLeast = 1) { encryptedMediaStore.verifyReadable(300L, 1000L) }
         coVerify(atLeast = 1) { encryptedMediaStore.delete(300L) }
         coVerify(atLeast = 1) { videoRepository.deleteById(300L) }
     }
@@ -341,7 +341,7 @@ class SyncEngineTest {
         val sink = mockk<OutputStream>(relaxed = true)
         coEvery { encryptedMediaStore.openEncryptSink(301L, any(), any()) } returns sink
         coEvery { encryptedMediaStore.finalize(301L) } returns true
-        coEvery { encryptedMediaStore.verifyReadable(any()) } coAnswers {
+        coEvery { encryptedMediaStore.verifyReadable(any(), any()) } coAnswers {
             throw CancellationException("cancel")
         }
 
@@ -352,7 +352,7 @@ class SyncEngineTest {
         } catch (e: Throwable) {
             e
         }
-        coVerify(exactly = 1) { encryptedMediaStore.verifyReadable(any()) }
+        coVerify(exactly = 1) { encryptedMediaStore.verifyReadable(any(), any()) }
 
         assertEquals(SyncPhase.CANCELLED, syncEngine.progress.value.phase)
         assertNotNull(thrown)
@@ -389,7 +389,7 @@ class SyncEngineTest {
         val sink = mockk<OutputStream>(relaxed = true)
         coEvery { encryptedMediaStore.openEncryptSink(302L, any(), any()) } returns sink
         coEvery { encryptedMediaStore.finalize(302L) } returns true
-        coEvery { encryptedMediaStore.verifyReadable(any()) } coAnswers {
+        coEvery { encryptedMediaStore.verifyReadable(any(), any()) } coAnswers {
             throw IOException("simulated unreadable")
         }
         coEvery { encryptedMediaStore.delete(any()) } coAnswers {
@@ -404,7 +404,7 @@ class SyncEngineTest {
         } catch (e: Throwable) {
             e
         }
-        coVerify(exactly = 1) { encryptedMediaStore.verifyReadable(any()) }
+        coVerify(exactly = 1) { encryptedMediaStore.verifyReadable(any(), any()) }
 
         // BUG-007 v3.1 语义（guarded「原异常优先」）：COMMITTED 回滚 delete 抛出的 CE 被吞并，
         // 原 STORAGE_ERROR 胜出——计为 per-action 失败（PARTIAL_FAILED），不传播取消。
@@ -445,7 +445,7 @@ class SyncEngineTest {
         val sink = mockk<OutputStream>(relaxed = true)
         coEvery { encryptedMediaStore.openEncryptSink(303L, any(), any()) } returns sink
         coEvery { encryptedMediaStore.finalize(303L) } returns true
-        coEvery { encryptedMediaStore.verifyReadable(any()) } coAnswers {
+        coEvery { encryptedMediaStore.verifyReadable(any(), any()) } coAnswers {
             throw IOException("simulated unreadable")
         }
         coEvery { encryptedMediaStore.delete(any()) } coAnswers {
@@ -470,7 +470,7 @@ class SyncEngineTest {
         assertEquals(false, returned)
         assertEquals(SyncPhase.PARTIAL_FAILED, syncEngine.progress.value.phase)
         assertEquals(1, syncEngine.progress.value.failedFiles)
-        coVerify(exactly = 1) { encryptedMediaStore.verifyReadable(any()) }
+        coVerify(exactly = 1) { encryptedMediaStore.verifyReadable(any(), any()) }
         coVerify(exactly = 1) { encryptedMediaStore.delete(303L) }
         coVerify(exactly = 0) { encryptedMediaStore.cancel(303L) }
         coVerify(exactly = 1) { videoRepository.deleteById(303L) }

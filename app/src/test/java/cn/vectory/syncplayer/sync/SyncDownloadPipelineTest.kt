@@ -154,7 +154,7 @@ class SyncDownloadPipelineTest {
     fun `cancellation after confirmed finalize rolls back final ciphertext and deletes existing row`() = runTest {
         stubDownloadRun()
         coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns existingRow(42L)
-        coEvery { store.verifyReadable(42L) } throws CancellationException("bug007-verify-cancel")
+        coEvery { store.verifyReadable(42L, 1000L) } throws CancellationException("bug007-verify-cancel")
 
         val thrown = catchExecute()
 
@@ -170,7 +170,7 @@ class SyncDownloadPipelineTest {
     fun `cancellation after confirmed finalize on new file removes ghost ciphertext and placeholder row`() = runTest {
         stubDownloadRun()
         coEvery { videoRepository.upsert(any()) } returns 4242L
-        coEvery { store.verifyReadable(4242L) } throws CancellationException("bug007-new-file-cancel")
+        coEvery { store.verifyReadable(4242L, 1000L) } throws CancellationException("bug007-new-file-cancel")
 
         val thrown = catchExecute()
 
@@ -201,16 +201,32 @@ class SyncDownloadPipelineTest {
     fun `verifyReadable IOException keeps single-point rollback and failure count`() = runTest {
         stubDownloadRun()
         coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns existingRow(42L)
-        coEvery { store.verifyReadable(42L) } throws IOException("verify io boom")
+        // F14/T10：探针签名演进为两参（id + 显式预期明文长 = action.fileSize）。
+        // stub 用精确值（42, 1000)：若管线未把 action.fileSize 传入探针，此 stub 不命中
+        // → 探针不抛 → 下方 assertFalse 失败，即参数流转被本用例锁定。
+        coEvery { store.verifyReadable(42L, 1000L) } throws IOException("verify io boom")
 
         assertFalse(sut.executeSyncLocked(1L, listOf(dlAction()), emptyList()))
 
+        coVerify(exactly = 1) { store.verifyReadable(42L, 1000L) }
         coVerify(exactly = 1) { store.delete(42L) }
         coVerify(exactly = 0) { store.cancel(any()) }
         coVerify(exactly = 1) { videoRepository.deleteById(42L) }
         val p = publisher.value
         assertEquals(SyncPhase.PARTIAL_FAILED, p.phase)
         assertEquals(1, p.failedFiles)
+    }
+
+    /** F14/T10（A-T10-3 集成锁）：成功路径探针恰执行一次且收到 action.fileSize 作为预期明文长。 */
+    @Test
+    fun `read probe receives action fileSize as expected plaintext length on success`() = runTest {
+        stubDownloadRun()
+        coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns existingRow(42L)
+
+        assertTrue(sut.executeSyncLocked(1L, listOf(dlAction()), emptyList()))
+
+        // dlAction() fileSize=1000L：探针必须收到 (42, 1000)——不依赖 DB 最终 metadata
+        coVerify(exactly = 1) { store.verifyReadable(42L, 1000L) }
     }
 
     /** 计划 #5（红）：元数据读取窗口（getById）取消——外层 CE 补偿经 cleanUpAttempt(COMMITTED) 回滚已提交产物。 */
@@ -291,7 +307,7 @@ class SyncDownloadPipelineTest {
         coVerify(exactly = 1) { videoRepository.deleteById(4242L) }
         // 元数据 upsert 绝不发生（withMeta 的 fileSize=action.fileSize=1000；占位行是 0）
         coVerify(exactly = 0) { videoRepository.upsert(match { it.fileSize == 1000L }) }
-        coVerify(exactly = 0) { store.verifyReadable(any()) }
+        coVerify(exactly = 0) { store.verifyReadable(any(), any()) }
     }
 
     /** 计划 #10（回归锁）：finalize false + 探测 PRESENT——rename 未发生，cancel 路径、不删 final、existing 行保留。 */
@@ -350,7 +366,7 @@ class SyncDownloadPipelineTest {
         stubDownloadRun()
         coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns existingRow(42L)
         val original = CancellationException("bug007-original-ce")
-        coEvery { store.verifyReadable(42L) } throws original
+        coEvery { store.verifyReadable(42L, 1000L) } throws original
         coEvery { store.delete(42L) } throws RuntimeException("cleanup boom")
 
         val thrown = catchExecute()
@@ -441,7 +457,7 @@ class SyncDownloadPipelineTest {
             storeCalls.add("cancel:${firstArg<Long>()}")
             true
         }
-        coEvery { store.verifyReadable(any()) } coAnswers {
+        coEvery { store.verifyReadable(any(), any()) } coAnswers {
             storeCalls.add("verify:${firstArg<Long>()}")
         }
 
@@ -538,7 +554,7 @@ class SyncDownloadPipelineTest {
         DebugLogger.clear()
         stubDownloadRun()
         coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns existingRow(42L)
-        coEvery { store.verifyReadable(42L) } throws IOException("verify-io-boom") // 稳定失败路径
+        coEvery { store.verifyReadable(42L, 1000L) } throws IOException("verify-io-boom") // 稳定失败路径
 
         assertFalse(sut.executeSyncLocked(1L, listOf(dlAction("secret-dir/f.mp4")), emptyList()))
 

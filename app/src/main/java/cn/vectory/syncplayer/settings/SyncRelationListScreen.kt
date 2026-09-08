@@ -13,16 +13,35 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.content.Context
+import cn.vectory.syncplayer.data.model.SyncOutcome
 import cn.vectory.syncplayer.data.model.SyncRelationWithSource
 import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.sync.SyncErrorCode
+import cn.vectory.syncplayer.sync.SyncException
+import cn.vectory.syncplayer.sync.SyncOperation
+import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import java.text.SimpleDateFormat
 import java.util.Locale
+
+/**
+ * F02: 持久化的错误码稳定标识 → 展示文案。
+ * 复用 [syncErrorMessage] 既有的码→资源映射（不重写 mapper）；
+ * 未知/外来码一律落到 sync_error_unknown，绝不当成功展示。
+ */
+private fun syncOutcomeErrorText(errorCodeName: String, context: Context): String {
+    val code = runCatching { SyncErrorCode.valueOf(errorCodeName) }
+        .getOrDefault(SyncErrorCode.UNKNOWN)
+    return syncErrorMessage(SyncException(code, SyncOperation.DOWNLOAD), context)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,16 +95,9 @@ fun SyncRelationListScreen(
                 ) {
                     items(relations, key = { it.relation.id }) { item ->
                         val extendedColors = LocalExtendedColors.current
+                        val context = LocalContext.current
                         val lastSync = item.relation.lastSyncTime
-                        val lastResult = item.relation.lastSyncResult
-                        val failKeyword = stringResource(R.string.sync_failed).substringBefore(":").substringBefore("：")
-                        val isSuccess = lastResult != null && !lastResult.contains(failKeyword)
-                        val resultColor = when {
-                            lastResult == null -> MaterialTheme.colorScheme.onSurfaceVariant
-                            isSuccess -> extendedColors.successGreen
-                            else -> MaterialTheme.colorScheme.error
-                        }
-
+                        val outcome = item.relation.lastSyncOutcome
                         ListItem(
                             headlineContent = { Text(item.relation.name) },
                             supportingContent = {
@@ -93,11 +105,63 @@ fun SyncRelationListScreen(
                                     stringResource(R.string.relation_last_sync, lastSync?.let {
                                         dateFormat.format(it)
                                     } ?: stringResource(R.string.relation_never_synced)),
-                                    color = resultColor
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall,
                                 )
-                                if (lastResult != null && !isSuccess) {
-                                    Text(lastResult, color = MaterialTheme.colorScheme.error, maxLines = 2)
-                                }
+                                if (outcome != null) {
+                                    when (outcome.status) {
+                                        SyncOutcome.Status.SUCCESS -> Text(
+                                            stringResource(R.string.sync_status_success),
+                                            color = extendedColors.successGreen,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                        SyncOutcome.Status.PARTIAL_FAILED -> {
+                                            Text(
+                                                stringResource(R.string.sync_status_partial_failed),
+                                                color = MaterialTheme.colorScheme.error,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                            outcome.failedCount?.let {
+                                                Text(
+                                                    stringResource(R.string.sync_status_failed_count, it),
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                )
+                                            }
+                                        }
+                                        SyncOutcome.Status.FAILED -> {
+                                            Text(
+                                                stringResource(R.string.sync_status_failed),
+                                                color = MaterialTheme.colorScheme.error,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                            outcome.errorCode?.let { codeName ->
+                                                Text(
+                                                    syncOutcomeErrorText(codeName, context),
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                            }
+                                        }
+                                        SyncOutcome.Status.CANCELLED -> Text(
+                                            stringResource(R.string.sync_status_cancelled),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                        SyncOutcome.Status.UNKNOWN -> Text(
+                                            stringResource(R.string.sync_status_unknown),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                    }
+                                } // outcome == null：无记录，不显示额外状态行
                             },
                             leadingContent = {
                                 Icon(

@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.sync
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.model.SyncAction
 import cn.vectory.syncplayer.data.model.SyncActionType
+import cn.vectory.syncplayer.data.model.SyncOutcome
 import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncRelation
@@ -20,9 +21,12 @@ import io.mockk.coVerify
 import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -123,6 +127,156 @@ class SyncDeleteExecutorTest {
         val p = publisher.value
         assertEquals(SyncPhase.FAILED, p.phase)
         assertEquals("terminal FAILED progress must keep totalFiles from DELETING phase", 1, p.totalFiles)
+    }
+
+    // -------------------------------------------------------------------------
+    // F02 — 结构化终态协议（SUCCESS / PARTIAL_FAILED / FAILED+码 / CANCELLED）
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `delete all ok persists SUCCESS outcome snapshot`() = runTest {
+        stubBasics()
+        coEvery { videoRepository.getByRelativePathAndRelationId("a.mp4", 1L) } returns null
+        coEvery { client.deleteFile(any()) } returns true
+        val outcomes = mutableListOf<SyncOutcome>()
+        coEvery { syncRelationRepository.updateLastSync(any(), any()) } coAnswers {
+            outcomes.add(arg(1)); Unit
+        }
+
+        assertTrue(sut.executeDeleteLocked(1L, listOf(action)))
+
+        coVerify(exactly = 1) { syncRelationRepository.updateLastSync(any(), any()) }
+        val outcome = outcomes.single()
+        assertEquals(SyncOutcome.Status.SUCCESS, outcome.status)
+        assertNull(outcome.errorCode)
+        assertNull(outcome.failedCount)
+    }
+
+    @Test
+    fun `delete partial failure persists PARTIAL_FAILED with failedCount`() = runTest {
+        stubBasics()
+        coEvery { videoRepository.getByRelativePathAndRelationId("a.mp4", 1L) } returns null
+        coEvery { client.deleteFile(any()) } throws SyncException(SyncErrorCode.REMOTE_DELETE_FAILED, SyncOperation.DELETE)
+        val outcomes = mutableListOf<SyncOutcome>()
+        coEvery { syncRelationRepository.updateLastSync(any(), any()) } coAnswers {
+            outcomes.add(arg(1)); Unit
+        }
+
+        assertFalse(sut.executeDeleteLocked(1L, listOf(action)))
+
+        val p = publisher.value
+        assertEquals(SyncPhase.PARTIAL_FAILED, p.phase)
+        val outcome = outcomes.single()
+        assertEquals(SyncOutcome.Status.PARTIAL_FAILED, outcome.status)
+        assertEquals(1, outcome.failedCount)
+    }
+
+    @Test
+    fun `delete catch-all persists FAILED with the sync error code`() = runTest {
+        stubBasics()
+        coEvery { client.connect(any(), any()) } throws SyncException(
+            SyncErrorCode.REMOTE_DELETE_FAILED, SyncOperation.DELETE
+        )
+        val outcomes = mutableListOf<SyncOutcome>()
+        coEvery { syncRelationRepository.updateLastSync(any(), any()) } coAnswers {
+            outcomes.add(arg(1)); Unit
+        }
+
+        assertFalse(sut.executeDeleteLocked(1L, listOf(action)))
+
+        val outcome = outcomes.single()
+        assertEquals(SyncOutcome.Status.FAILED, outcome.status)
+        assertEquals("REMOTE_DELETE_FAILED", outcome.errorCode)
+    }
+
+    @Test
+    fun `delete cancellation records CANCELLED and propagates CancellationException`() = runTest {
+        stubBasics()
+        coEvery { client.connect(any(), any()) } throws CancellationException("cancelled")
+        val outcomes = mutableListOf<SyncOutcome>()
+        coEvery { syncRelationRepository.updateLastSync(any(), any()) } coAnswers {
+            outcomes.add(arg(1)); Unit
+        }
+
+        var caught: Throwable? = null
+        try {
+            sut.executeDeleteLocked(1L, listOf(action))
+        } catch (t: Throwable) {
+            caught = t
+        }
+
+        assertTrue("cancellation must propagate", caught is CancellationException)
+        val outcome = outcomes.single()
+        assertEquals(SyncOutcome.Status.CANCELLED, outcome.status)
+        assertEquals(SyncPhase.CANCELLED, publisher.value.phase)
+    }
+
+    // -------------------------------------------------------------------------
+    // 取消收尾三态：CANCELLED 收尾写入（单条 UPDATE）自身的任何结果——成功 /
+    // 普通异常 / 再抛新 CE——都不得替换/遮蔽原始 CancellationException（红线 3）。
+    // -------------------------------------------------------------------------
+
+    /** 取消收尾三态测试的运行结果（含原始 CE 实例，用于同一性断言）。 */
+    private class CancelledRun(
+        val originalCe: CancellationException,
+        val caught: Throwable?,
+        val outcomes: List<SyncOutcome>,
+    )
+
+    /** connect 即抛原始 CE；CANCELLED 收尾写入（updateLastSync）行为由 [finalizationWrite] 注入。 */
+    private suspend fun runCancelledDelete(
+        finalizationWrite: suspend () -> Unit
+    ): CancelledRun {
+        stubBasics()
+        val originalCe = CancellationException("original-cancel")
+        coEvery { client.connect(any(), any()) } throws originalCe
+        val outcomes = mutableListOf<SyncOutcome>()
+        coEvery { syncRelationRepository.updateLastSync(any(), any()) } coAnswers {
+            outcomes.add(arg(1))
+            finalizationWrite()
+        }
+
+        var caught: Throwable? = null
+        try {
+            sut.executeDeleteLocked(1L, listOf(action))
+        } catch (t: Throwable) {
+            caught = t
+        }
+        return CancelledRun(originalCe, caught, outcomes)
+    }
+
+    @Test
+    fun `cancelled finalization write success propagates the original CancellationException`() = runTest {
+        val run = runCancelledDelete { }
+
+        assertTrue("cancellation must propagate", run.caught is CancellationException)
+        assertSame(
+            "must propagate the ORIGINAL cancellation instance",
+            run.originalCe, run.caught
+        )
+        assertEquals(SyncOutcome.Status.CANCELLED, run.outcomes.single().status)
+        assertEquals(SyncPhase.CANCELLED, publisher.value.phase)
+    }
+
+    @Test
+    fun `cancelled finalization write ordinary failure still propagates the original CancellationException`() = runTest {
+        val run = runCancelledDelete { throw RuntimeException("finalization write boom") }
+
+        assertTrue(run.caught is CancellationException)
+        assertSame("finalization write failure must not replace the original cancellation", run.originalCe, run.caught)
+        assertEquals(SyncOutcome.Status.CANCELLED, run.outcomes.single().status)
+    }
+
+    @Test
+    fun `cancelled finalization write new CancellationException cannot replace the original`() = runTest {
+        val run = runCancelledDelete { throw CancellationException("finalization write itself cancelled") }
+
+        assertTrue(run.caught is CancellationException)
+        assertSame(
+            "new CE thrown by the finalization write must NOT replace the original cancellation",
+            run.originalCe, run.caught
+        )
+        assertEquals(SyncOutcome.Status.CANCELLED, run.outcomes.single().status)
     }
 
     // -------------------------------------------------------------------------

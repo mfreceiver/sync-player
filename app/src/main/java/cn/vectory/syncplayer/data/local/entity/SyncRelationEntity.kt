@@ -27,6 +27,18 @@ data class SyncRelationEntity(
     val remotePath: String,
     val localBasePath: String,  // relative to userdata root
     val lastSyncTime: Long? = null,
+    /**
+     * @deprecated F02/T6 后代码不再读写此列：旧实现存本地化文案（sync_result_success 等），
+     * 已被结构化终态列取代。列仅为兼容 v2 库保留；v2→v3 迁移时旧行按
+     * lastSyncResult 非空 → lastSyncStatus='UNKNOWN' 处理（不默认成功/失败）。
+     */
+    @Deprecated(message = "Legacy localized-text column; replaced by structured outcome columns")
     val lastSyncResult: String? = null,
+    /** F02: 终态稳定标识（SyncOutcome.Status.name）；NULL = 无记录。 */
+    val lastSyncStatus: String? = null,
+    /** F02: 错误码稳定标识（SyncErrorCode.name）；仅 FAILED 携带。 */
+    val lastSyncErrorCode: String? = null,
+    /** F02: 失败动作数；未知为 NULL，不用 0 伪造。 */
+    val lastSyncFailedCount: Int? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
