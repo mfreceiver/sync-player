@@ -179,7 +179,11 @@ internal class SyncRemoteScanner(
         if (scanError == null) {
             DebugLogger.i(TAG, "dryRun 完成: ${toDownload.size} 个待下载, ${toDelete.size} 个待删除")
         } else {
-            DebugLogger.e(TAG, "dryRun 失败", scanError)
+            // F01 安全日志边界：不把原始 Throwable 交给 DebugLogger（它会把
+            // stackTraceToString 写入 logcat 与应用内环形缓冲，DebugLogScreen 可见，
+            // cause 可能含远端路径/主机名）。与 SyncDownloadPipeline 相同的安全摘要：
+            // 保留操作类别与错误分类（错误码 + 异常类别），不含底层 message/堆栈。
+            DebugLogger.e(TAG, SyncSafeLog.failure("SCAN", scanError))
         }
         return DryRunResult(toDownload, toDelete, scanError)
     }

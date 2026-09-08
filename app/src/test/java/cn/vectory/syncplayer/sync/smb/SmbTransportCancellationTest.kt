@@ -273,6 +273,44 @@ class SmbTransportCancellationTest {
         assertEquals("entry after the cancelled one must not be accessed", 0, child2Touched.get())
     }
 
+    /**
+     * R1: listFilesRecursive must carry a cancellation checkpoint at the recursion /
+     * entry boundary. jcifs blocking calls are NOT interruptible — the checkpoint only
+     * makes cancellation effective at the NEXT entry boundary, skipping the remaining
+     * traversal (less wasted work; the in-flight listing still runs to completion).
+     *
+     * Shape: root lists [child1(dir), child2(dir)]; cancel fires while child1's
+     * recursive listFiles blocks, which then completes NORMALLY. The next entry
+     * boundary must terminate with CancellationException — child2 must never be
+     * touched and no further directory listing may be issued.
+     */
+    @Test
+    fun `listFilesRecursive cancelled mid recursion does not issue the next directory listing`() {
+        val connectFile = newSmbFileMock()
+        connectToMedia(connectFile)
+        val child1 = newSmbFileMock()
+        val child2 = newSmbFileMock()
+        val child2Touched = AtomicInteger(0)
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        every { connectFile.isDirectory() } returns true
+        every { connectFile.listFiles() } returns arrayOf(child1, child2)
+        every { child1.isDirectory } returns true
+        every { child1.listFiles() } answers {
+            started.countDown()
+            release.await(10, TimeUnit.SECONDS)
+            arrayOf<jcifs.smb.SmbFile>()
+        }
+        every { child2.isDirectory } answers { child2Touched.incrementAndGet(); true }
+        every { child2.listFiles() } returns arrayOf<jcifs.smb.SmbFile>()
+
+        val terminal = awaitTerminalAfterCancel(started, release) { client.listFiles("media") }
+
+        assertCancelled(terminal)
+        assertEquals("directory after the cancelled one must not be accessed", 0, child2Touched.get())
+        verify(exactly = 0) { child2.listFiles() }
+    }
+
     // ------------------------------------- connect cancellation cleanup (rev-sgpt)
 
     /** Type A: the jcifs validation call throws CancellationException DIRECTLY. */

@@ -287,7 +287,14 @@ class SmbFileClient internal constructor(
         result
     }
 
-    private fun listFilesRecursive(
+    /**
+     * E8 递归枚举（不可恢复失败语义不变）+ R1 取消检查点。
+     *
+     * R1 注意：jcifs 底层阻塞调用本身不可中断——checkpoint 只能让取消在**下一个
+     * 条目/目录边界**生效（跳过剩余遍历、不再发起后续 listFiles，减少无用功）；
+     * 正在进行的网络调用仍会跑完。与 [SftpFileClient] 每目录入口检查点（CQ-001）对齐。
+     */
+    private suspend fun listFilesRecursive(
         ctx: jcifs.CIFSContext,
         dir: SmbFile,
         share: String,
@@ -295,6 +302,8 @@ class SmbFileClient internal constructor(
         result: MutableList<RemoteFile>,
         maxFiles: Int = MAX_REMOTE_FILES
     ) {
+        // R1: 递归入口检查点——已取消则立即以 CE 终结（CE 必须穿透，不得被吞）。
+        currentCoroutineContext().ensureActive()
         // E8: 达到上限必须失败（而非静默截断），否则 dryRun 会基于残缺快照生成误删。
         if (result.size >= maxFiles) {
             throw RemoteScanIncompleteException(maxFiles = maxFiles)
@@ -304,6 +313,8 @@ class SmbFileClient internal constructor(
         val children = dir.listFiles() ?: throw RemoteScanIncompleteException(remotePath = dir.path)
 
         for (child in children) {
+            // R1: 条目边界检查点——取消在下一个条目生效，不再处理/枚举后续条目。
+            currentCoroutineContext().ensureActive()
             if (result.size >= maxFiles) {
                 throw RemoteScanIncompleteException(maxFiles = maxFiles)
             }
