@@ -14,7 +14,7 @@
 |---|---|---|
 | 版本号 | git 派生（tag + short hash） | **git 派生**（`rev-list --count` + `describe`，CI 传 `-PreleaseVersion`，见 [`docs/release.md`](../release.md) §2） |
 | 覆盖率门控 | kover（koverVerify） | **无 kover** |
-| 产物 | APK + AAB + mapping | **仅 APK + mapping**（个人侧载，不入 Play Store） |
+| 产物 | APK + AAB + mapping | **APK + SHA256SUMS**（个人侧载，有意不上传 mapping，不入 Play Store） |
 | Release runner | android-release（专用，Phase 5） | **android**（单 runner，共用） |
 | lint 门控 | abortOnError=true（lint-clean） | **abortOnError=true**（lint-clean，lint 债务已偿清） |
 
@@ -28,7 +28,7 @@
 | 本机 | `./scripts/check.sh [--full]` | 同上 + 可选 lintDebug |
 | 远端分支 | `branch-check.yml` → `remote-check.sh`（`lintDebug + testDebugUnitTest + assembleDebug`） | 干净容器验证任务分支可构建 |
 | 远端整合 | `integration-check.yml`（`clean + lint + test + assembleDebug`） | 验证与主干组合（无覆盖率门控；**仅手动触发**） |
-| 远端 Release | `release.yml` → `release-check.sh`（`clean + lintRelease + testDebugUnitTest + assembleRelease`） | CI 签名出 APK + mapping + SHA256SUMS |
+| 远端 Release | `release.yml` → `release-check.sh`（`clean + lintRelease + testDebugUnitTest + assembleRelease`） | CI 签名出 APK + SHA256SUMS（有意不上传 mapping） |
 
 ---
 
@@ -38,7 +38,7 @@
 |---|---|---|
 | `branch-check.yml` | push `agent/**`、`feature/**`、`fix/**`、`ci/**` | 任务分支验证（lint + test + assembleDebug） |
 | `integration-check.yml` | **仅 `workflow_dispatch`**（手动） | 全量校验；发版时 `release.yml` 已含等价检查，故不再自动跑 |
-| `release.yml` | push tag `v*` | 出签名 APK，上传 Gitea Release |
+| `release.yml` | push tag `v*`；`workflow_dispatch`（必填 tag 输入，手动补发） | 出签名 APK，上传 Gitea Release（构建 checkout tag 解引用 commit） |
 
 无外部 action（Unraid 无法访问 github.com）；checkout 用内联 `git clone` 直连 Gitea。
 
@@ -81,7 +81,7 @@ git tag v12.0.0-ci-test && git push origin v12.0.0-ci-test
 - [ ] push `ci/**` → 触发 `branch-check`，被 runner 接单。
 - [ ] Debug APK artifact 可下载。
 - [ ] 故意引入编译错误 → CI 红，状态绑定该 commit。
-- [ ] `v*` tag → `release.yml` 出**签名** APK + mapping + SHA256SUMS，建 Gitea Release。
+- [ ] `v*` tag → `release.yml` 出**签名** APK + SHA256SUMS（有意不上传 mapping），建 Gitea Release。
 - [ ] 普通 runner 无法读 `RELEASE_*` Secrets。
 
 ---

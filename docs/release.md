@@ -13,7 +13,7 @@
 
 | 模式 | 触发 | 产出 | 适用 |
 |---|---|---|---|
-| **自动发版（推荐）** | `./scripts/release.sh <x.y.z>` 打并推送 `v*` tag | CI 出签名 APK + mapping.txt + SHA256SUMS，自动建 Gitea Release | 日常发版 |
+| **自动发版（推荐）** | `./scripts/release.sh <x.y.z>` 打并推送 `v*` tag | CI 出签名 APK + SHA256SUMS（有意不上传 mapping；本地保留可选），自动建 Gitea Release | 日常发版 |
 | **手动发版（fallback）** | 本地 `assembleRelease` + curl Gitea API | 仅 APK（无 mapping / SHA256SUMS） | CI / runner 宕机 |
 
 sync-player **不入 Play Store**，因此：
@@ -117,7 +117,7 @@ JAVA_HOME=/home/mar/android-studio/jbr   # Android Studio bundled JBR (OpenJDK 2
 
 1. **校验**：版本格式 `x.y.z`；tag 未被占用；当前分支（非 `main` 仅警告）；工作树干净。
    脏树**默认报错**（里程碑发版要求干净树），`--allow-dirty` 显式放行（此时 `versionName` 带 `-dirty`）。
-2. **本地门禁**：`JAVA_HOME=/home/mar/android-studio/jbr ./gradlew compileDebugKotlin testDebugUnitTest`
+2. **本地门禁**：`JAVA_HOME=/home/mar/android-studio/jbr ./gradlew compileDebugKotlin testDebugUnitTest lintDebug`
    ——破损代码**连 tag 都打不出去**，避免红 CI（`JAVA_HOME` 缺省 `/home/mar/android-studio/jbr`，不可用时报错退出）。
 3. **生成分类 changelog**：上次 tag..HEAD 的 conventional commits 按类型分节（见 §6）。
 4. **打 annotated tag** `v<x.y.z>`：把分类 changelog 写进 tag 注解（`git tag -a -F`）。
@@ -131,10 +131,10 @@ JAVA_HOME=/home/mar/android-studio/jbr   # Android Studio bundled JBR (OpenJDK 2
 
 | 步骤 | 动作 |
 |---|---|
-| Checkout | 内联 `git clone`（直连 Gitea）+ `fetch --tags` + checkout 触发 commit |
+| Checkout | 内联 `git clone`（直连 Gitea）+ `fetch --tags` + checkout **tag 解引用 commit**（`refs/tags/$TAG^{commit}`；dispatch 场景用必填 tag 输入，任意分支发起均可，只认 tag） |
 | 恢复 keystore | 解 `RELEASE_KEYSTORE` base64 → `$RUNNER_TEMP/release.keystore`，写 `local.properties`（含 4 个 `release.*`） |
 | release-check | `GRADLE_USER_HOME=/root/.gradle/release` 下跑 `clean + lintRelease + testDebugUnitTest + assembleRelease -PreleaseVersion=<v>` → 归档到 `artifacts/` |
-| 上传 | `publish-release.sh <tag>`：幂等（既有 release 先 DELETE 再 POST）→ **body 取自 annotated tag 注解的分类 changelog**（POSIX awk JSON-escape）→ 上传 3 个 asset（APK + mapping.txt + SHA256SUMS） |
+| 上传 | `publish-release.sh <tag>`：幂等（既有 release 先 DELETE 再 POST）→ **body 取自 annotated tag 注解的分类 changelog**（POSIX awk JSON-escape）→ 上传 APK + SHA256SUMS 两个 asset（有意不上传 mapping——个人侧载无线上崩溃符号化需求；本地保留可选） |
 | 清理 | `if: always()` 删临时 keystore / `local.properties` / `~/.git-credentials` |
 | 通知企业微信 | `if: always()` → `notify-wecom.sh`：成功发绿色（版本 + 下载/Changelog 链接），失败发红色（Actions 链接）。best-effort——`WECOM_WEBHOOK` 缺失或 qyapi 不可达只警告，不影响发版结果 |
 
@@ -145,7 +145,7 @@ JAVA_HOME=/home/mar/android-studio/jbr   # Android Studio bundled JBR (OpenJDK 2
 ./scripts/setup-signing.sh       # pass → local.properties（开发机签名）
 ./scripts/gitea/setup-secrets.sh # local.properties → Gitea Secrets（CI 签名；轮换签名时重跑）
 
-# 每次发版（release.sh 内含本地门禁 compileDebugKotlin + testDebugUnitTest）：
+# 每次发版（release.sh 内含本地门禁 compileDebugKotlin + testDebugUnitTest + lintDebug）：
 ./scripts/release.sh 12.1.0      # 校验 → 门禁 → 分类 changelog → annotated tag → push → 触发 release.yml
 
 # 可选独立预检：./scripts/check.sh --full（加 lintDebug）
@@ -154,7 +154,8 @@ JAVA_HOME=/home/mar/android-studio/jbr   # Android Studio bundled JBR (OpenJDK 2
 # 取产物：http://192.168.3.252:11330/mfreceiver/sync-player/releases/tag/v12.1.0
 ```
 
-CI 全绿即发版完成；产物（APK / mapping / SHA256SUMS）挂在 Gitea Release 下。
+CI 全绿即发版完成；产物（APK + SHA256SUMS）挂在 Gitea Release 下——有意不上传 mapping
+（个人侧载应用，无线上崩溃符号化需求；本地保留可选）。
 
 ---
 
@@ -270,7 +271,7 @@ keytool -list -keystore <storeFile> -storepass <storePassword> -alias <alias>  #
 
 | 项 | 值 |
 |---|---|
-| 触发 | `on.push.tags: v*` + `workflow_dispatch`（UI 手动重跑兜底） |
+| 触发 | `on.push.tags: v*` + `workflow_dispatch`（UI 手动补发，**必填 tag 输入**——构建 checkout 该 tag 所指 commit；缺失/非法/无法解引用即失败，绝不猜测） |
 | Runner | `runs-on: android`（单共享 runner，与 ocdroid 共用 `universal-ci-android:35-jdk21` 镜像） |
 | Checkout | 内联 `git clone` 直连 Gitea（无外部 action，Unraid 不通 github.com） |
 | Gradle 隔离 | `GRADLE_USER_HOME=/root/.gradle/release`——**按工作流隔离**，避免与 integration / branch 并发时 journal 锁冲突（详见下文） |
@@ -298,8 +299,10 @@ CI 镜像 / runner / `valid_volumes` / 缓存挂载等底层配置见
 | 文件 | 来源 | 大小（典型） | 用途 |
 |---|---|---|---|
 | `sync-player-<version>-<shorthash>.apk` | `assembleRelease` + R8 minify + 签名 | ~10–12 MB | 安装包（个人侧载） |
-| `mapping.txt` | R8 `app/build/outputs/mapping/release/mapping.txt` | ~77 MB | 反混淆崩溃栈 |
-| `SHA256SUMS` | `cd artifacts && sha256sum *` | 小 | 上述两文件的校验和 |
+| `SHA256SUMS` | `cd artifacts && sha256sum *` | 小 | 上述文件的校验和 |
+
+`mapping.txt` **有意不上传**（个人侧载应用，无线上崩溃符号化需求）：R8 产物留在本地
+`app/build/outputs/mapping/release/mapping.txt`，是否保留可选，需要时可用于本地符号化。
 
 命名规则：`release-check.sh` 用 `sync-player-$VERSION-$SHORT.apk`，其中 `VERSION` = tag 去 `v`
 （如 `12.1.0`），`SHORT` = `git rev-parse --short HEAD`。**无 AAB**（不入商店）。
@@ -321,7 +324,8 @@ CI 镜像 / runner / `valid_volumes` / 缓存挂载等底层配置见
 
 - **`release.yml` 失败要重跑**
   → `publish-release.sh` 幂等（DELETE + 重建）。最简：在 Gitea Actions UI 用 `workflow_dispatch`
-    「Run workflow」重跑；或删远端 tag 再推本地 annotated tag（保留注解）：
+    「Run workflow」**填入要重发的 `v*` tag**（构建会 checkout 该 tag 所指 commit）；或删远端 tag 再推本地
+    annotated tag（保留注解）：
     ```bash
     git push origin :refs/tags/v12.1.0   # 删远端 tag（本地 annotated tag 仍在）
     git push origin v12.1.0              # 重推 → 重新触发 release.yml
@@ -347,14 +351,14 @@ CI 镜像 / runner / `valid_volumes` / 缓存挂载等底层配置见
 | 版本来源 | git 派生（`rev-list --count` + `describe`，CI 传 `-PreleaseVersion`） | git 派生（同款，`-PreleaseVersion`） | **硬编码** build.gradle（手动 bump versionCode/versionName） |
 | 发版入口 | `release.sh <x.y.z>` | `release.sh patch\|minor\|major`（bump 上一 tag） | 手动改版本 + CHANGELOG |
 | **push 时机** | **自动 push tag**（一步触发 CI） | **不 push**（打印指令，人工核验 APK 后再 push） | 全手动（commit main → tag → push） |
-| 本地门禁 | ✓ `release.sh` 内建 compile + test | ✓ `release.sh` 内 `check.sh` | ✓ 手动 `check.sh --full` |
+| 本地门禁 | ✓ `release.sh` 内建 compile + test + lint | ✓ `release.sh` 内 `check.sh` | ✓ 手动 `check.sh --full` |
 | changelog | ✓ 自动分类 conventional commits → tag 注解 + release body | ✓ 自动分类（同款）→ tag 注解 + 手动上传 body | 手动 `CHANGELOG.md`（release body 不上传） |
 | 凭据源 | `pass` → `setup-signing.sh` → local.properties → Secrets | `pass`（`ocdroid/release/*`）+ `setup-signing.sh` | `pass`（`x-liker/release/*`）+ `secrets.sh` |
 | **Gradle 并发隔离** | ✓ **按工作流隔离** `GRADLE_USER_HOME`（branch/integration/release） | 无（单 runner capacity=1） | 无（文档警告 journal 锁，靠串行约定） |
 | Secrets 上传校验 | ✓ `setup-secrets.sh` keytool 预校验 | 无 `setup-secrets.sh`（手填 UI/API） | 无（手填） |
 | publish JSON 解析 | POSIX grep/cut + awk（**故意**，免疫镜像 python3 漂移） | python3（镜像现有则可用；但镜像漂移会复现 run #196 类故障） | grep -oP（POSIX-safe） |
 | 发布幂等 | **delete + recreate** | find-or-create | find-or-create |
-| 产物 | APK + mapping + SHA256SUMS（无 AAB） | APK + **AAB** + mapping + SHA256SUMS | APK + mapping + SHA256SUMS（无 AAB） |
+| 产物 | APK + SHA256SUMS（无 AAB；有意不上传 mapping） | APK + **AAB** + mapping + SHA256SUMS | APK + mapping + SHA256SUMS（无 AAB） |
 | lint 门控 | `abortOnError=true`（lint-clean） | `abortOnError=true` | （lint 状态未明确） |
 | 覆盖率门控 | 无 kover | ✓ kover（koverVerify） | 无 |
 

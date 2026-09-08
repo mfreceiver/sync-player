@@ -19,7 +19,7 @@
 - **ANDROID_HOME**: `/home/mar/android-sdk` (build-tools 35.0.x, platform android-35)
 - **Android Studio**: `/home/mar/android-studio`
 - **Project root**: `/home/mar/personal_projects/sync-player`
-- **Gradle**: 8.11.1
+- **Gradle**: 9.3.1
 - **Kotlin LSP disabled** (`opencode.json: lsp=false`). Reason: Hilt (KSP) + Room (KSP) + Compose Compiler 生成代码无 LSP 可解析；任何 LSP 会刷 stale/unresolved 误报。**Gradle compile 是类型/语法验证的唯一来源**——代码改动后始终运行 `compileDebugKotlin`；任何工具若重新启用 LSP，不要信其诊断。
 
 All Gradle commands require `JAVA_HOME=/home/mar/android-studio/jbr`. ANDROID_HOME is optional if already in env.
@@ -88,7 +88,7 @@ Always run a build after code changes to verify compilation — there is no LSP 
 
 # 每次发版（改动已在 main）：
 ./scripts/release.sh 12.0.5
-# → 校验 + 本地门禁（compileDebugKotlin + testDebugUnitTest）+ 分类 changelog
+# → 校验 + 本地门禁（compileDebugKotlin + testDebugUnitTest + lintDebug）+ 分类 changelog
 # → annotated tag + push → release.yml CI 出签名 APK
 ```
 

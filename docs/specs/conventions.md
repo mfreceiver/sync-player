@@ -4,7 +4,7 @@
 
 ## Testing
 
-- 单测位于 `app/src/main/test`；androidTest（真实 in-memory Room）位于 `app/src/androidTest`。
+- 单测位于 `app/src/test`；androidTest（真实 in-memory Room）位于 `app/src/androidTest`。
 - 框架：JUnit 4 + MockK + Coroutines Test + Turbine。
 - **断言枚举、集合大小、MockK 调用次数——绝不断言用户可见文案**（strings 进 `strings.xml`，文案断言在 i18n 变更时脆裂）。
 - 高覆盖目标：`SyncEngine`、`CryptoScheme`、`RangeDecryptor`、`ErrorMessageMapper`、`BrowseItemBuilder`、`UndoDeleteUseCase`、`FileOperationsUseCase`。
