@@ -79,9 +79,16 @@ fun PlayerScreen(
 
     val window = activity.window
     val exoPlayer = remember {
-        ExoPlayer.Builder(context.applicationContext).build().apply {
-            playWhenReady = true
-        }
+        val audioAttributes = androidx.media3.common.AudioAttributes.Builder()
+            .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+            .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MOVIE)
+            .build()
+        ExoPlayer.Builder(context.applicationContext)
+            .setAudioAttributes(audioAttributes, true)
+            .setHandleAudioBecomingNoisy(true)
+            .build().apply {
+                playWhenReady = true
+            }
     }
     val gestureView = remember {
         GesturePlayerView(context).apply {
