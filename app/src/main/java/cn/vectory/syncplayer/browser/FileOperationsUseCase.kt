@@ -356,7 +356,6 @@ class FileOperationsUseCase @Inject constructor(
                 is DeleteMediaResult.SkippedNotFound -> {
                     // Already cleaned ciphertext; DB removed as part of skip path.
                     skipped++
-                    success++
                 }
                 is DeleteMediaResult.Failed -> failures.add(item.id to r.error)
             }
