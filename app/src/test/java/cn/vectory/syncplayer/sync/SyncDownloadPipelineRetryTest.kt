@@ -162,4 +162,38 @@ class SyncDownloadPipelineRetryTest {
         assertEquals(1, rows.size)
         assertEquals(1000L, rows[3L]?.fileSize)
     }
+
+    @Test
+    fun `retry succeeds when reconnect encounters transient failure before succeeding`() = runTest {
+        stubBasics()
+        val client = mockk<RemoteFileClient>(relaxed = true)
+        every { clientFactory.create(SyncProtocol.SMB) } returns client
+
+        // First download fails with transient error, triggering retry attempt 2 with reconnect
+        coEvery { client.downloadTo(any(), any(), any()) } throws
+            SyncException(SyncErrorCode.DOWNLOAD_FAILED, SyncOperation.DOWNLOAD, path = "f.mp4") andThen true
+
+        // Reconnect behavior:
+        // 1st connect is initial (succeeds)
+        // 2nd connect is attempt 2 first try (throws transient NETWORK_UNAVAILABLE)
+        // 3rd connect is attempt 2 retry via connectWithRetry (succeeds)
+        val connectCalls = AtomicInteger(0)
+        coEvery { client.connect(any(), any()) } coAnswers {
+            val call = connectCalls.incrementAndGet()
+            if (call == 2) {
+                throw SyncException(SyncErrorCode.NETWORK_UNAVAILABLE, SyncOperation.DOWNLOAD)
+            }
+            Unit
+        }
+
+        val result = sut.executeSyncLocked(1L, listOf(dlAction()), emptyList())
+
+        assertTrue("sync must succeed when reconnect succeeds after transient failure", result)
+        assertEquals(0, publisher.value.failedFiles)
+        assertEquals(1, publisher.value.completedFiles)
+        coVerify(exactly = 0) { store.delete(any()) }
+        coVerify(exactly = 1) { store.finalize(2L) }
+        assertEquals(1, rows.size)
+        assertEquals(1000L, rows[2L]?.fileSize)
+    }
 }

@@ -326,11 +326,12 @@ internal class SyncDownloadPipeline(
                                                 var attemptPhase = AttemptPhase.NOT_FINALIZED
                                                 if (attempts > 1) {
                                                     // E5: 重试前重连——上次失败的下载可能已损坏底层传输（SMB session/SFTP channel），
-                                                    // 复用旧 client 会再次失败。先断开再建新连接。
+                                                    // 复用旧 client 会再次失败。先断开再建新连接。建连同样需走瞬态重试保护（F-002），
+                                                    // 避免抖动直接逃出剩余重试。
                                                     try { client.disconnect() } catch (e: CancellationException) {
                                                         throw e
                                                     } catch (_: Exception) {}
-                                                    client.connect(source, relation.remotePath)
+                                                    connectWithRetry(client, source, relation.remotePath)
                                                 }
                                                 // E9: 每个文件下载前复检可用空间（3 并发下载途中磁盘可能被耗尽）。
                                                 // 不足时直接抛出，由外层 catch 计 failedDownloadCount 并跳到下一个文件，
