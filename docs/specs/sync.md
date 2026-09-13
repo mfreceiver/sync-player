@@ -28,7 +28,7 @@ consumeAndExecute(relationId)
 
 - `SyncEngine`：编排（dryRun/executeSync/executeDelete/consumeAndExecute/setPendingTask/consumePendingTask），持有 `storageOperationMutex`。
 - `SyncProgressPublisher`：进度 `StateFlow<SyncProgress>` + 500ms 节流 + activeDownloadsMap/completedPaths。
-- `SyncSpaceChecker`：plain-size 空间预检 + 溢出/unknown-space 降级，返回 sealed Result（UnknownAvailableSpace / CipherSizeComputationFailed / Insufficient / Ok）。
+- `SyncSpaceChecker`：plain-size 空间预检，求和溢出饱和为 Long.MAX_VALUE，可用空间读取失败（`usableSpace() <= 0`）与空间不足均判定为 `Result.Insufficient`，返回 sealed `Result`（`Ok` / `Insufficient`）。
 
 ## SyncException（结构化错误）
 

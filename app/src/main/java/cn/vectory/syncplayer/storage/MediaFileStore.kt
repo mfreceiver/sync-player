@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.storage
 
+import androidx.annotation.VisibleForTesting
 import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.sync.SyncErrorCode
 import cn.vectory.syncplayer.sync.SyncException
@@ -8,7 +9,9 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.OutputStream
+import java.nio.file.Files
 import java.nio.file.NoSuchFileException
+import java.nio.file.attribute.BasicFileAttributes
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -125,40 +128,67 @@ class MediaFileStore @Inject constructor(
 
     // ---- 删除 / 存在性 ----
 
+    @VisibleForTesting
+    internal var attributeReader: (File) -> BasicFileAttributes = { file ->
+        Files.readAttributes(file.toPath(), BasicFileAttributes::class.java)
+    }
+
     suspend fun delete(id: Long): Boolean = withContext(ioDispatcher) { mediaFile(id).delete() }
 
+    @Deprecated("Use checkExistence for fail-closed 3-state detection", ReplaceWith("checkExistence(id)"))
     suspend fun exists(id: Long): Boolean = withContext(ioDispatcher) { mediaFile(id).exists() }
 
+    @Deprecated("Use checkThumbExistence for fail-closed 3-state detection", ReplaceWith("checkThumbExistence(id)"))
     suspend fun thumbExists(id: Long): Boolean = withContext(ioDispatcher) { thumbFile(id).exists() }
 
     suspend fun deleteThumb(id: Long): Boolean = withContext(ioDispatcher) { thumbFile(id).delete() }
 
     /**
-     * 三方存在性检查（孤儿扫描）。
-     * - [MediaExistence.EXISTS] / [MediaExistence.NOT_FOUND]: definitive
-     * - [MediaExistence.IO_ERROR]: 访问失败；调用方不得视为孤儿
-     */
-    suspend fun checkExistence(id: Long): MediaExistence = try {
-        if (exists(id)) MediaExistence.EXISTS else MediaExistence.NOT_FOUND
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        MediaExistence.IO_ERROR(e.javaClass.simpleName)
-    }
-
-    /**
      * 严格存在性：仅「全路径完整查询且确认未命中」返回 false；一切「查询不可信/
-     * 不完整」形态上抛 IOException，绝不与「不存在」合并——「误报缺失」在 tmp
+     * 不完整」形态上抛 IOException/Exception，绝不与「不存在」合并——「误报缺失」在 tmp
      * 探测语境 = 误授权删旧 final（数据丢失）。
      */
-    private suspend fun existsStrict(file: File): Boolean = withContext(ioDispatcher) {
+    suspend fun existsStrict(file: File): Boolean = withContext(ioDispatcher) {
         try {
-            java.nio.file.Files.readAttributes(file.toPath(), java.nio.file.attribute.BasicFileAttributes::class.java)
+            attributeReader(file)
             true
         } catch (e: NoSuchFileException) {
             false
         }
     }
+
+    suspend fun existsStrict(id: Long): Boolean = existsStrict(mediaFile(id))
+
+    suspend fun thumbExistsStrict(id: Long): Boolean = existsStrict(thumbFile(id))
+
+    /**
+     * 对指定文件进行三态严格存在性检查。
+     * - [MediaExistence.EXISTS]: 成功读取到文件属性（文件确实存在且可访问）
+     * - [MediaExistence.NOT_FOUND]: 仅且仅底层确凿抛出 [NoSuchFileException]（文件确实不存在）
+     * - [MediaExistence.IO_ERROR]: 权限、挂载、I/O 等其它任何异常（不可推断为不存在）
+     * [CancellationException] 始终先传播。
+     */
+    suspend fun checkFileExistence(file: File): MediaExistence = withContext(ioDispatcher) {
+        try {
+            attributeReader(file)
+            MediaExistence.EXISTS
+        } catch (e: NoSuchFileException) {
+            MediaExistence.NOT_FOUND
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            MediaExistence.IO_ERROR(e.javaClass.simpleName)
+        }
+    }
+
+    /**
+     * 三态严格存在性检查（孤儿扫描与删除后存在性确认）。
+     * - [MediaExistence.EXISTS] / [MediaExistence.NOT_FOUND]: definitive
+     * - [MediaExistence.IO_ERROR]: 访问失败；调用方不得视为孤儿或已删除
+     */
+    suspend fun checkExistence(id: Long): MediaExistence = checkFileExistence(mediaFile(id))
+
+    suspend fun checkThumbExistence(id: Long): MediaExistence = checkFileExistence(thumbFile(id))
 
     // ---- 空间 ----
 

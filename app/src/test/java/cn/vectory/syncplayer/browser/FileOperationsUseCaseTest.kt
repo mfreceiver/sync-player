@@ -7,10 +7,12 @@ import cn.vectory.syncplayer.data.model.SyncRelationWithSource
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.storage.MediaExistence
 import cn.vectory.syncplayer.storage.MediaFileStore
 import cn.vectory.syncplayer.sync.SyncEngine
 import dagger.Lazy
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
@@ -75,6 +77,8 @@ class FileOperationsUseCaseTest {
         cacheRoot = tmp.newFolder("cache")
         context = mockk(relaxed = true)
         every { context.cacheDir } returns cacheRoot
+        coEvery { mediaFileStore.deleteThumb(any()) } returns true
+        coEvery { mediaFileStore.checkThumbExistence(any()) } returns MediaExistence.NOT_FOUND
         useCase = FileOperationsUseCase(
             videoRepository = videoRepository,
             playbackRepository = playbackRepository,
@@ -198,18 +202,18 @@ class FileOperationsUseCaseTest {
     fun `deleteMediaById propagates CancellationException when fileMissing exists() throws`() {
         val id = 10L
         coEvery { videoRepository.getById(id) } returns videoEntity(id)
-        coEvery { mediaFileStore.exists(id) } throws CancellationException("cancel")
+        coEvery { mediaFileStore.checkExistence(id) } throws CancellationException("cancel")
 
         val propagated = propagatesCancellation { useCase.deleteMediaById(id) }
 
-        assertTrue("CancellationException from exists() must propagate", propagated)
+        assertTrue("CancellationException from checkExistence() must propagate", propagated)
     }
 
     @Test
     fun `deleteMediaById propagates CancellationException when delete() throws`() {
         val id = 11L
         coEvery { videoRepository.getById(id) } returns videoEntity(id)
-        coEvery { mediaFileStore.exists(id) } returns true
+        coEvery { mediaFileStore.checkExistence(id) } returns MediaExistence.EXISTS
         coEvery { mediaFileStore.delete(id) } throws CancellationException("cancel")
 
         val propagated = propagatesCancellation { useCase.deleteMediaById(id) }
@@ -218,29 +222,29 @@ class FileOperationsUseCaseTest {
     }
 
     @Test
-    fun `deleteMediaById propagates CancellationException when stillThere exists() throws`() {
+    fun `deleteMediaById propagates CancellationException when stillThere checkExistence() throws`() {
         val id = 12L
         coEvery { videoRepository.getById(id) } returns videoEntity(id)
         // delete returns false → falls into the stillThere re-check branch
         coEvery { mediaFileStore.delete(id) } returns false
-        // First exists() call (fileMissing check) returns true; second call (stillThere
+        // First checkExistence() call (fileMissing check) returns EXISTS; second call (stillThere
         // re-check) throws CancellationException.
         var existsCallCount = 0
-        coEvery { mediaFileStore.exists(id) } coAnswers {
+        coEvery { mediaFileStore.checkExistence(id) } coAnswers {
             existsCallCount++
-            if (existsCallCount == 1) true else throw CancellationException("cancel")
+            if (existsCallCount == 1) MediaExistence.EXISTS else throw CancellationException("cancel")
         }
 
         val propagated = propagatesCancellation { useCase.deleteMediaById(id) }
 
-        assertTrue("CancellationException from stillThere exists() must propagate", propagated)
+        assertTrue("CancellationException from stillThere checkExistence() must propagate", propagated)
     }
 
     @Test
     fun `deleteMediaById propagates CancellationException when deleteThumb() throws`() {
         val id = 13L
         coEvery { videoRepository.getById(id) } returns videoEntity(id)
-        coEvery { mediaFileStore.exists(id) } returns true
+        coEvery { mediaFileStore.checkExistence(id) } returns MediaExistence.EXISTS
         coEvery { mediaFileStore.delete(id) } returns true
         coEvery { mediaFileStore.deleteThumb(id) } throws CancellationException("cancel")
 
@@ -250,24 +254,24 @@ class FileOperationsUseCaseTest {
     }
 
     @Test
-    fun `deleteMediaById propagates CancellationException when thumbExists re-check throws`() {
+    fun `deleteMediaById propagates CancellationException when checkThumbExistence re-check throws`() {
         val id = 14L
         coEvery { videoRepository.getById(id) } returns videoEntity(id)
-        coEvery { mediaFileStore.exists(id) } returns true
+        coEvery { mediaFileStore.checkExistence(id) } returns MediaExistence.EXISTS
         coEvery { mediaFileStore.delete(id) } returns true
         coEvery { mediaFileStore.deleteThumb(id) } returns false
-        coEvery { mediaFileStore.thumbExists(id) } throws CancellationException("cancel")
+        coEvery { mediaFileStore.checkThumbExistence(id) } throws CancellationException("cancel")
 
         val propagated = propagatesCancellation { useCase.deleteMediaById(id) }
 
-        assertTrue("CancellationException from thumbExists re-check must propagate", propagated)
+        assertTrue("CancellationException from checkThumbExistence re-check must propagate", propagated)
     }
 
     @Test
     fun `deleteMediaById propagates CancellationException when deleteMediaRecord throws`() {
         val id = 15L
         coEvery { videoRepository.getById(id) } returns videoEntity(id)
-        coEvery { mediaFileStore.exists(id) } returns true
+        coEvery { mediaFileStore.checkExistence(id) } returns MediaExistence.EXISTS
         coEvery { mediaFileStore.delete(id) } returns true
         coEvery { mediaFileStore.deleteThumb(id) } returns true
         coEvery { videoRepository.deleteMediaRecord(id) } throws CancellationException("cancel")
@@ -282,10 +286,10 @@ class FileOperationsUseCaseTest {
     // ===================================================================================
 
     @Test
-    fun `deleteMediaById returns Failed for non-cancellation exception in exists`() = runBlocking {
+    fun `deleteMediaById returns Failed for non-cancellation exception in checkExistence`() = runBlocking {
         val id = 20L
         coEvery { videoRepository.getById(id) } returns videoEntity(id)
-        coEvery { mediaFileStore.exists(id) } throws java.io.IOException("real io error")
+        coEvery { mediaFileStore.checkExistence(id) } throws java.io.IOException("real io error")
 
         val result = useCase.deleteMediaById(id)
 
@@ -294,10 +298,39 @@ class FileOperationsUseCaseTest {
     }
 
     @Test
+    fun `deleteMediaById returns Failed and keeps DB row when checkExistence returns IO_ERROR`() = runBlocking {
+        val id = 25L
+        coEvery { videoRepository.getById(id) } returns videoEntity(id)
+        coEvery { mediaFileStore.checkExistence(id) } returns MediaExistence.IO_ERROR("AccessDeniedException")
+
+        val result = useCase.deleteMediaById(id)
+
+        assertTrue("IO_ERROR must surface as Failed", result is DeleteMediaResult.Failed)
+        coVerify(exactly = 0) { videoRepository.deleteMediaRecord(any()) }
+        coVerify(exactly = 0) { mediaFileStore.delete(any()) }
+        coVerify(exactly = 0) { mediaFileStore.deleteThumb(any()) }
+    }
+
+    @Test
+    fun `deleteMediaById returns Failed and keeps DB row when checkThumbExistence returns IO_ERROR`() = runBlocking {
+        val id = 26L
+        coEvery { videoRepository.getById(id) } returns videoEntity(id)
+        coEvery { mediaFileStore.checkExistence(id) } returns MediaExistence.EXISTS
+        coEvery { mediaFileStore.delete(id) } returns true
+        coEvery { mediaFileStore.deleteThumb(id) } returns false
+        coEvery { mediaFileStore.checkThumbExistence(id) } returns MediaExistence.IO_ERROR("FileSystemException")
+
+        val result = useCase.deleteMediaById(id)
+
+        assertTrue("IO_ERROR on thumb check must surface as Failed", result is DeleteMediaResult.Failed)
+        coVerify(exactly = 0) { videoRepository.deleteMediaRecord(any()) }
+    }
+
+    @Test
     fun `deleteMediaById returns Success on a clean delete`() = runBlocking {
         val id = 21L
         coEvery { videoRepository.getById(id) } returns videoEntity(id)
-        coEvery { mediaFileStore.exists(id) } returns true
+        coEvery { mediaFileStore.checkExistence(id) } returns MediaExistence.EXISTS
         coEvery { mediaFileStore.delete(id) } returns true
         coEvery { mediaFileStore.deleteThumb(id) } returns true
         coEvery { videoRepository.deleteMediaRecord(id) } returns Unit
@@ -311,7 +344,7 @@ class FileOperationsUseCaseTest {
     fun `deleteMediaById returns SkippedNotFound when file is already missing`() = runBlocking {
         val id = 22L
         coEvery { videoRepository.getById(id) } returns videoEntity(id)
-        coEvery { mediaFileStore.exists(id) } returns false
+        coEvery { mediaFileStore.checkExistence(id) } returns MediaExistence.NOT_FOUND
         coEvery { videoRepository.deleteMediaRecord(id) } returns Unit
 
         val result = useCase.deleteMediaById(id)

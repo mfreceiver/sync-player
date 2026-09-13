@@ -13,8 +13,9 @@ import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
-import cn.vectory.syncplayer.storage.StoragePaths
+import cn.vectory.syncplayer.storage.MediaExistence
 import cn.vectory.syncplayer.storage.MediaFileStore
+import cn.vectory.syncplayer.storage.StoragePaths
 import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -310,14 +311,61 @@ class SyncDeleteExecutorTest {
         stubBasics()
         coEvery { videoRepository.getByRelativePathAndRelationId("a.mp4", 1L) } returns ownedRow()
         coEvery { client.deleteFile(any()) } returns true
-        // 本地密文删不掉（delete false + exists true → mediaGone=false）
+        // 本地密文删不掉（delete false + checkExistence EXISTS → mediaGone=false）
         coEvery { store.delete(7L) } returns false
-        coEvery { store.exists(7L) } returns true
+        coEvery { store.checkExistence(7L) } returns MediaExistence.EXISTS
 
         assertFalse(sut.executeDeleteLocked(1L, listOf(action)))
 
         // 行必须保留：下次镜像 dryRun 会推导 DELETE_LOCAL 自愈；远端已删过恰一次
         coVerify(exactly = 1) { client.deleteFile(any()) }
         coVerify(exactly = 0) { videoRepository.deleteByRelativePathAndRelationId(any(), any()) }
+    }
+
+    @Test
+    fun `local delete probe returns IO_ERROR preserves row and playback record`() = runTest {
+        stubBasics()
+        coEvery { videoRepository.getByRelativePathAndRelationId("a.mp4", 1L) } returns ownedRow()
+        coEvery { client.deleteFile(any()) } returns true
+        coEvery { store.delete(7L) } returns false
+        coEvery { store.checkExistence(7L) } returns MediaExistence.IO_ERROR("AccessDeniedException")
+
+        assertFalse(sut.executeDeleteLocked(1L, listOf(action)))
+
+        // Fail-closed 红线：探测失败绝不可视为文件不存在，必须保留行与播放记录
+        coVerify(exactly = 0) { videoRepository.deleteByRelativePathAndRelationId(any(), any()) }
+        coVerify(exactly = 0) { playbackRepository.deleteByVideoId(any()) }
+    }
+
+    @Test
+    fun `local delete probe returns NOT_FOUND treats as deleted and cleans up row`() = runTest {
+        stubBasics()
+        coEvery { videoRepository.getByRelativePathAndRelationId("a.mp4", 1L) } returns ownedRow()
+        coEvery { client.deleteFile(any()) } returns true
+        coEvery { store.delete(7L) } returns false
+        coEvery { store.checkExistence(7L) } returns MediaExistence.NOT_FOUND
+        coEvery { store.deleteThumb(7L) } returns true
+
+        assertTrue(sut.executeDeleteLocked(1L, listOf(action)))
+
+        // 严格确认文件已不在（NOT_FOUND）时视为成功，清理行与播放记录
+        coVerify(exactly = 1) { videoRepository.deleteByRelativePathAndRelationId("a.mp4", 1L) }
+        coVerify(exactly = 1) { playbackRepository.deleteByVideoId(7L) }
+    }
+
+    @Test
+    fun `local thumb delete probe returns IO_ERROR preserves row and playback record`() = runTest {
+        stubBasics()
+        coEvery { videoRepository.getByRelativePathAndRelationId("a.mp4", 1L) } returns ownedRow()
+        coEvery { client.deleteFile(any()) } returns true
+        coEvery { store.delete(7L) } returns true
+        coEvery { store.deleteThumb(7L) } returns false
+        coEvery { store.checkThumbExistence(7L) } returns MediaExistence.IO_ERROR("FileSystemException")
+
+        assertFalse(sut.executeDeleteLocked(1L, listOf(action)))
+
+        // 缩略图探测失败同样保护：不得擦除行与播放记录
+        coVerify(exactly = 0) { videoRepository.deleteByRelativePathAndRelationId(any(), any()) }
+        coVerify(exactly = 0) { playbackRepository.deleteByVideoId(any()) }
     }
 }

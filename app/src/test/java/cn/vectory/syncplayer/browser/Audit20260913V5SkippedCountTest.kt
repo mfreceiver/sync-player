@@ -4,6 +4,7 @@ import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.storage.MediaExistence
 import cn.vectory.syncplayer.storage.MediaFileStore
 import cn.vectory.syncplayer.sync.SyncEngine
 import dagger.Lazy
@@ -82,8 +83,10 @@ class Audit20260913V5SkippedCountTest {
         coEvery { videoRepository.getByPathPrefix("base") } returns listOf(videoEntity(1), videoEntity(2))
         coEvery { videoRepository.getById(1L) } returns videoEntity(1)
         coEvery { videoRepository.getById(2L) } returns videoEntity(2)
-        coEvery { mediaFileStore.exists(1L) } returns false
-        coEvery { mediaFileStore.exists(2L) } throws IOException("io boom")
+        coEvery { mediaFileStore.deleteThumb(any()) } returns true
+        coEvery { mediaFileStore.checkThumbExistence(any()) } returns MediaExistence.NOT_FOUND
+        coEvery { mediaFileStore.checkExistence(1L) } returns MediaExistence.NOT_FOUND
+        coEvery { mediaFileStore.checkExistence(2L) } returns MediaExistence.IO_ERROR("io boom")
 
         val done = CompletableDeferred<Unit>()
         val handler = CoroutineExceptionHandler { _, e -> scopeEscapes.add(e); done.complete(Unit) }
