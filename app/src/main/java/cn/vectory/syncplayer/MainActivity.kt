@@ -42,6 +42,7 @@ class MainActivity : AppCompatActivity() {
 
     private val pendingIntent = MutableStateFlow<Intent?>(null)
     private var isIntentConsumed = false
+    private var consumedIntentIdentity: Int? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,7 +52,16 @@ class MainActivity : AppCompatActivity() {
         )
         enableEdgeToEdge()
         isIntentConsumed = savedInstanceState?.getBoolean(KEY_INTENT_CONSUMED, false) ?: false
-        if (!isIntentConsumed && isNotificationIntent(intent)) {
+        val savedConsumedIdentity = savedInstanceState
+            ?.getInt(KEY_CONSUMED_IDENTITY, CONSUMED_IDENTITY_ABSENT)
+            ?.takeIf { it != CONSUMED_IDENTITY_ABSENT }
+        if (shouldDeliverNotificationIntentOnCreate(
+                isNotification = isNotificationIntent(intent),
+                savedConsumed = isIntentConsumed,
+                savedConsumedIdentity = savedConsumedIdentity,
+                currentIdentity = notificationIdentityOf(intent)
+            )
+        ) {
             pendingIntent.value = intent
         }
         setContent {
@@ -87,6 +97,7 @@ class MainActivity : AppCompatActivity() {
                     LaunchedEffect(notificationIntent, isLocked) {
                         if (!isLocked && notificationIntent != null) {
                             handleNotificationNavigation(notificationIntent!!, navController)
+                            consumedIntentIdentity = notificationIdentityOf(notificationIntent)
                             notificationIntent?.removeExtra("navigateTo")
                             isIntentConsumed = true
                             pendingIntent.value = null
@@ -108,12 +119,14 @@ class MainActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean(KEY_INTENT_CONSUMED, isIntentConsumed)
+        outState.putInt(KEY_CONSUMED_IDENTITY, consumedIntentIdentity ?: CONSUMED_IDENTITY_ABSENT)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         isIntentConsumed = false
+        consumedIntentIdentity = null
         if (isNotificationIntent(intent)) {
             pendingIntent.value = intent
         }
@@ -121,6 +134,9 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         internal const val KEY_INTENT_CONSUMED = "cn.vectory.syncplayer.INTENT_CONSUMED"
+        internal const val KEY_CONSUMED_IDENTITY =
+            "cn.vectory.syncplayer.INTENT_CONSUMED_IDENTITY"
+        internal const val CONSUMED_IDENTITY_ABSENT = Int.MIN_VALUE
     }
 }
 
@@ -147,4 +163,52 @@ internal fun handleNotificationNavigation(intent: Intent?, navController: NavHos
             }
         }
     }
+}
+
+/**
+ * Content identity of a notification intent, computed from the navigation-relevant extras
+ * (`navigateTo`, `notification_relation_id`, `notification_local_base_path`).
+ *
+ * Returns null for null or non-notification intents. Identity is captured at consumption
+ * time, before `navigateTo` is stripped, so a rebuilt activity can distinguish
+ * "the same notification I already consumed" from "a genuinely new notification arriving
+ * with stale saved state".
+ */
+internal fun notificationIdentityOf(intent: Intent?): Int? {
+    val navigateTo = intent?.getStringExtra("navigateTo") ?: return null
+    var result = navigateTo.hashCode()
+    result = 31 * result + intent.getLongExtra("notification_relation_id", 0L).hashCode()
+    result = 31 * result + (intent.getStringExtra("notification_local_base_path") ?: "").hashCode()
+    return result
+}
+
+/**
+ * onCreate delivery decision for notification launch intents (pure state-machine core).
+ *
+ * Paths:
+ * 1. Fresh launch (no consumed flag): notification intent is delivered.
+ * 2. Rebuild replay: consumed flag and identity both restored and the current intent still
+ *    carries the same extras → suppressed (anti-replay on activity rebuild). An intent
+ *    whose `navigateTo` was already stripped is not a notification intent at all and is
+ *    suppressed by the first rule.
+ * 3. New notification with stale saved state: consumed flag says true but the current
+ *    intent's identity differs from the saved one → delivered.
+ * 4. Legacy saved state without identity: suppressed, matching the historical behavior.
+ *
+ * Delivery implies consumption even when [handleNotificationNavigation] no-ops (e.g.
+ * `navigateTo=syncPreview` with relationId <= 0): the malformed intent is static and can
+ * never navigate, and leaving it pending would re-fire the no-op navigation on every
+ * unlock; consuming it once is the safe terminal state.
+ */
+internal fun shouldDeliverNotificationIntentOnCreate(
+    isNotification: Boolean,
+    savedConsumed: Boolean,
+    savedConsumedIdentity: Int?,
+    currentIdentity: Int?
+): Boolean = when {
+    !isNotification -> false
+    !savedConsumed -> true
+    savedConsumedIdentity != null && currentIdentity != null &&
+        currentIdentity != savedConsumedIdentity -> true
+    else -> false
 }
