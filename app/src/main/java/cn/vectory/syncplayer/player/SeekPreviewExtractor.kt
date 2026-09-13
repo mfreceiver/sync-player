@@ -109,19 +109,26 @@ class SeekPreviewExtractor internal constructor(
         val job = prefetchJob
         prefetchJob = null
         job?.cancel()
+        var timedOut = false
         if (job != null) {
             try {
                 withTimeout(RELEASE_JOIN_TIMEOUT_MS) {
                     job.join()
                 }
             } catch (e: TimeoutCancellationException) {
+                timedOut = true
                 Log.w(TAG, "Timed out waiting for prefetch job during endSession")
             }
         }
         // release() can block on native teardown; keep it off the caller's
-        // (often main) thread and outside the lock.
-        withContext(dispatcher) {
-            toRelease?.release()
+        // (often main) thread and outside the lock. Skip release on timeout
+        // to avoid concurrent native teardown while the job is still running.
+        if (!timedOut) {
+            withContext(dispatcher) {
+                toRelease?.release()
+            }
+        } else {
+            Log.w(TAG, "Skipping retriever release in endSession due to join timeout to avoid concurrent access")
         }
     }
 
@@ -144,6 +151,7 @@ class SeekPreviewExtractor internal constructor(
         val job = prefetchJob
         prefetchJob = null
         job?.cancel()
+        var timedOut = false
         if (job != null) {
             try {
                 kotlinx.coroutines.runBlocking {
@@ -152,12 +160,17 @@ class SeekPreviewExtractor internal constructor(
                     }
                 }
             } catch (e: TimeoutCancellationException) {
+                timedOut = true
                 Log.w(TAG, "Timed out waiting for prefetch job during release")
             }
         }
         prefetchScope.cancel()
         cache.evictAll()
-        toRelease?.release()
+        if (!timedOut) {
+            toRelease?.release()
+        } else {
+            Log.w(TAG, "Skipping retriever release due to join timeout to avoid concurrent access")
+        }
     }
 
     fun getCachedFrame(uri: String, positionMs: Long): Bitmap? {
