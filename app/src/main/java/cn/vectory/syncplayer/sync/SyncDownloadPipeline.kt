@@ -23,6 +23,7 @@ import cn.vectory.syncplayer.ui.util.extractParentPath
 import cn.vectory.syncplayer.ui.util.isImageFile
 import dagger.Lazy
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
@@ -69,7 +70,8 @@ internal class SyncDownloadPipeline(
     private val mediaFileStoreLazy: Lazy<MediaFileStore>,
     private val context: Context,
     private val progressPublisher: SyncProgressPublisher,
-    private val deleteExecutor: SyncDeleteExecutor
+    private val deleteExecutor: SyncDeleteExecutor,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
 
     private val mediaFileStore: MediaFileStore
@@ -213,7 +215,7 @@ internal class SyncDownloadPipeline(
                             actionChannel.close()
                         }
                         repeat(maxConcurrency) {
-                            launch(Dispatchers.IO) {
+                            launch(ioDispatcher) {
                                 var laneClient: RemoteFileClient? = null
                                 try {
                                     for (action in actionChannel) {
