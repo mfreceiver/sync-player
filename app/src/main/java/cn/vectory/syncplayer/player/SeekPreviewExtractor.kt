@@ -101,8 +101,10 @@ class SeekPreviewExtractor internal constructor(
             activeUri = null
             prev
         }
-        prefetchJob?.cancel()
+        val job = prefetchJob
         prefetchJob = null
+        job?.cancel()
+        job?.join()
         // release() can block on native teardown; keep it off the caller's
         // (often main) thread and outside the lock.
         withContext(dispatcher) {
@@ -124,8 +126,12 @@ class SeekPreviewExtractor internal constructor(
             activeUri = null
             prev
         }
-        prefetchJob?.cancel()
+        val job = prefetchJob
         prefetchJob = null
+        job?.cancel()
+        kotlinx.coroutines.runBlocking {
+            job?.join()
+        }
         prefetchScope.cancel()
         cache.evictAll()
         toRelease?.release()
