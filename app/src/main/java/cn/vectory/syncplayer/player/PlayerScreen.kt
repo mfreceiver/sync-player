@@ -292,23 +292,9 @@ fun PlayerScreen(
         onExit()
     }
 
-    gestureView.setOnSingleTapCallback {
-        viewModel.toggleControls()
-    }
-
-    // Hold the latest uiState in a remembered State holder so the long-lived
-    // gestureListener below can read fresh values (playbackSpeed, quickRecycle,
-    // lastAutoSwitchTime, playbackRecord.isTrashed) without being rebuilt on
-    // every recomposition. Reading uiStateRef.value at callback time always
-    // returns the current snapshot (see AGENTS.md · Recomposition Isolation).
     val uiStateRef = rememberUpdatedState(uiState)
     var rippleEvent by remember { mutableStateOf<RippleEvent?>(null) }
 
-    // Build the listener ONCE. The previous code reallocated the whole object
-    // and re-assigned it to the View on every recomposition. Captures that are
-    // stable across the composition lifecycle (exoPlayer, viewModel, context,
-    // window, initialVolume's delegated State) are safe to close over here;
-    // uiState is read through uiStateRef above to avoid a stale snapshot.
     val gestureListener = remember {
         object : GesturePlayerView.GestureListener {
             override fun onSpeedUpChanged(speedUp: Boolean) {
@@ -417,10 +403,18 @@ fun PlayerScreen(
             }
         }
     }
-    gestureView.gestureListener = gestureListener
-    // The player UI is unconditionally immersive (system bars always hidden, video
-    // fills the container), so edge-back must be enabled regardless of uiState.
-    gestureView.edgeBackEnabled = true
+
+    DisposableEffect(gestureView, gestureListener) {
+        gestureView.setOnSingleTapCallback {
+            viewModel.toggleControls()
+        }
+        gestureView.gestureListener = gestureListener
+        gestureView.edgeBackEnabled = true
+        onDispose {
+            gestureView.setOnSingleTapCallback(null)
+            gestureView.gestureListener = null
+        }
+    }
 
     var showSettingsPopup by remember { mutableStateOf(false) }
     val previewExtractor = remember { SeekPreviewExtractor(context) }
