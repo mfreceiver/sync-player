@@ -228,6 +228,23 @@ class SyncRelationEditViewModelResultTest {
         coVerify(exactly = 1) { syncRelationRepository.delete(5L) }
     }
 
+    @Test
+    fun `delete failure emits DeleteFailed without crashing`() = runTest {
+        coEvery { syncRelationRepository.delete(5L) } throws RuntimeException("sqlite boom")
+        val editVm = SyncRelationEditViewModel(
+            syncRelationRepository = syncRelationRepository,
+            syncSourceRepository = syncSourceRepository,
+            remoteFileClientFactory = remoteFileClientFactory,
+            storagePaths = storagePaths,
+            context = context,
+            ioDispatcher = UnconfinedTestDispatcher(),
+            savedStateHandle = SavedStateHandle(mapOf("relationId" to 5L))
+        )
+        editVm.deleteRelation()
+
+        assertEquals(RelationSaveResult.DeleteFailed, editVm.saveResult.value)
+    }
+
     private fun fillForm() {
         vm.setName("rel")
         vm.selectSource(1L)

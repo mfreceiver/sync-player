@@ -199,7 +199,7 @@ class GainAnalysisDiscoverReentryTest {
         val entered = CountDownLatch(1)
         val gate = CountDownLatch(1)
         gateRef = gate
-        every { audioGainAnalyzer.analyze(any()) } answers {
+        coEvery { audioGainAnalyzer.analyze(any()) } answers {
             entered.countDown()
             check(gate.await(5, TimeUnit.SECONDS)) { "gate timeout" }
             gain

@@ -8,8 +8,11 @@ import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.log10
 import kotlin.math.sqrt
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 private const val TARGET_RMS_DB = -18f
 private const val MAX_GAIN_DB = 6f
@@ -29,9 +32,10 @@ class AudioGainAnalyzer @Inject constructor(
 
     private companion object { const val TAG = "AudioGainAnalyzer" }
 
-    fun analyze(uri: Uri): AudioGainResult? {
+    suspend fun analyze(uri: Uri): AudioGainResult? {
         val extractor = MediaExtractor()
         return try {
+            currentCoroutineContext().ensureActive()
             extractor.setDataSource(context, uri, null)
             val audioTrack = findAudioTrack(extractor) ?: return null
             extractor.selectTrack(audioTrack)
@@ -53,6 +57,8 @@ class AudioGainAnalyzer @Inject constructor(
             } else {
                 AudioGainResult(rmsDb, peakDb, gainDb)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Audio gain analysis failed for $uri", e)
             null
@@ -71,7 +77,7 @@ class AudioGainAnalyzer @Inject constructor(
 
     private data class PcmStats(val rms: Float, val peak: Float)
 
-    private fun decodePcmAndMeasure(
+    private suspend fun decodePcmAndMeasure(
         extractor: MediaExtractor,
         format: MediaFormat,
         sampleRate: Int,
@@ -91,6 +97,7 @@ class AudioGainAnalyzer @Inject constructor(
             var inputDone = false
 
             while (true) {
+                currentCoroutineContext().ensureActive()
                 if (!inputDone) {
                     val inputIndex = codec.dequeueInputBuffer(10000)
                     if (inputIndex >= 0) {
@@ -141,6 +148,8 @@ class AudioGainAnalyzer @Inject constructor(
 
             if (totalSamples == 0L) return null
             PcmStats(sqrt(sumSquared / totalSamples).toFloat(), peakSample.toFloat())
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "PCM decode and measure failed", e)
             null

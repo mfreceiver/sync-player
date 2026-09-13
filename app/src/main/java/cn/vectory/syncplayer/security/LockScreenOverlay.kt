@@ -15,6 +15,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.withResumed
 import cn.vectory.syncplayer.R
 import kotlinx.coroutines.delay
 
@@ -26,7 +27,7 @@ fun LockScreenOverlay(
     val context = LocalContext.current
     val activity = context as? FragmentActivity ?: return
 
-    var authFailed by remember { mutableStateOf(false) }
+    var authFailed by rememberSaveable { mutableStateOf(false) }
     var failCount by rememberSaveable { mutableIntStateOf(0) }
     var isCooldown by rememberSaveable { mutableStateOf(false) }
     var cooldownRemaining by rememberSaveable { mutableIntStateOf(0) }
@@ -44,7 +45,7 @@ fun LockScreenOverlay(
     // Cooldown countdown timer — runs only when isCooldown is true
     LaunchedEffect(isCooldown) {
         if (isCooldown) {
-            var remaining = 30
+            var remaining = if (cooldownRemaining > 0) cooldownRemaining else 30
             while (remaining > 0) {
                 cooldownRemaining = remaining
                 delay(1000L)
@@ -53,17 +54,29 @@ fun LockScreenOverlay(
             cooldownRemaining = 0
             failCount = 0
             isCooldown = false
+            authFailed = false
+            if (biometricAuthManager.canAuthenticate()) {
+                activity.lifecycle.withResumed {
+                    biometricAuthManager.authenticate(
+                        activity = activity,
+                        onSuccess = { appLockManager.unlock() },
+                        onError = onAuthError
+                    )
+                }
+            }
         }
     }
 
     // Auto-trigger authentication on first composition (skip during cooldown)
     LaunchedEffect(Unit) {
-        if (!isCooldown) {
-            biometricAuthManager.authenticate(
-                activity = activity,
-                onSuccess = { appLockManager.unlock() },
-                onError = onAuthError
-            )
+        if (!isCooldown && biometricAuthManager.canAuthenticate()) {
+            activity.lifecycle.withResumed {
+                biometricAuthManager.authenticate(
+                    activity = activity,
+                    onSuccess = { appLockManager.unlock() },
+                    onError = onAuthError
+                )
+            }
         }
     }
 
@@ -99,7 +112,7 @@ fun LockScreenOverlay(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
-            if (authFailed) {
+            if (authFailed || isCooldown) {
                 Spacer(Modifier.height(24.dp))
                 Button(
                     enabled = !isCooldown,

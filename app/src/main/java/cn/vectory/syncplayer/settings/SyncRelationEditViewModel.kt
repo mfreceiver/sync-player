@@ -60,6 +60,7 @@ sealed interface RelationTestResult {
 sealed interface RelationSaveResult {
     data object Saved : RelationSaveResult
     data object Deleted : RelationSaveResult
+    data object DeleteFailed : RelationSaveResult
 }
 
 /**
@@ -375,8 +376,18 @@ class SyncRelationEditViewModel @Inject constructor(
     fun deleteRelation() {
         viewModelScope.launch {
             if (relationId <= 0) return@launch
-            syncRelationRepository.delete(relationId)
-            _saveResult.value = RelationSaveResult.Deleted
+            _isSaving.value = true
+            _saveResult.value = null
+            try {
+                syncRelationRepository.delete(relationId)
+                _saveResult.value = RelationSaveResult.Deleted
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                _saveResult.value = RelationSaveResult.DeleteFailed
+            } finally {
+                _isSaving.value = false
+            }
         }
     }
 }

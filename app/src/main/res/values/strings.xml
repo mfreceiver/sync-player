@@ -459,4 +459,6 @@
     <!-- Player media navigation accessibility -->
     <string name="player_a11y_prev_video">上一个视频</string>
     <string name="player_a11y_next_video">下一个视频</string>
+    <string name="relation_delete_failed">删除失败</string>
+    <string name="media_write_not_supported">不支持写入访问</string>
 </resources>

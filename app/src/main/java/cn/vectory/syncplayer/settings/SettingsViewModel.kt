@@ -37,7 +37,12 @@ class SettingsViewModel @Inject constructor(
     private val _settingsState = MutableStateFlow<SettingsState?>(null)
     val settingsState: StateFlow<SettingsState?> = _settingsState.asStateFlow()
 
-    val authCapabilityInfo: AuthCapabilityInfo = biometricAuthManager.getAuthCapabilityInfo()
+    private val _authCapabilityInfo = MutableStateFlow(biometricAuthManager.getAuthCapabilityInfo())
+    val authCapabilityInfo: StateFlow<AuthCapabilityInfo> = _authCapabilityInfo.asStateFlow()
+
+    fun refreshAuthCapability() {
+        _authCapabilityInfo.value = biometricAuthManager.getAuthCapabilityInfo()
+    }
 
     val syncLogs: StateFlow<List<SyncLogEntity>> = syncLogRepository.getRecentFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
