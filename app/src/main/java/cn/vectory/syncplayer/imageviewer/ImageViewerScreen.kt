@@ -142,10 +142,13 @@ fun ImageViewerScreen(
     }
 
     // Surface toggle/delete failures (resolved message already localized by the ViewModel).
-    imageError?.let {
-        LaunchedEffect(it) {
-            snackbarHostState.showSnackbar(it)
-            viewModel.clearError()
+    imageError?.let { ev ->
+        LaunchedEffect(ev.seq) {
+            try {
+                snackbarHostState.showSnackbar(ev.message)
+            } finally {
+                viewModel.clearError()
+            }
         }
     }
 

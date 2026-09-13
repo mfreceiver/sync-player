@@ -4,23 +4,31 @@ import android.util.Log
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
-import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
+import cn.vectory.syncplayer.browser.ErrorEvent
 import cn.vectory.syncplayer.browser.UndoDeleteUseCase
 import cn.vectory.syncplayer.browser.UndoResult
+import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
+import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.navigation.ImageQueue
 import cn.vectory.syncplayer.navigation.SAVED_IMAGE_IDS_KEY
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 sealed class ImageOverlay {
@@ -44,7 +52,8 @@ class ImageViewerViewModel @Inject constructor(
     private val videoRepository: VideoRepository,
     private val playbackRepository: PlaybackRepository,
     private val imageQueue: ImageQueue,
-    private val undoDeleteUseCase: UndoDeleteUseCase
+    private val undoDeleteUseCase: UndoDeleteUseCase,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ImageViewerUiState())
@@ -56,15 +65,39 @@ class ImageViewerViewModel @Inject constructor(
     private val savedImageIdsFlow: StateFlow<String?> =
         savedStateHandle.getStateFlow(SAVED_IMAGE_IDS_KEY, null)
 
+    private val errorSeq = AtomicLong(0L)
+
     /** Error flow for undo/delete operations — surfaced via Snackbar in the UI. */
-    private val _imageErrorFlow = MutableStateFlow<String?>(null)
+    private val _imageErrorFlow = MutableStateFlow<ErrorEvent?>(null)
 
     /** Read-only view of [_imageErrorFlow] for the UI to collect. */
-    val imageError: StateFlow<String?> = _imageErrorFlow.asStateFlow()
+    val imageError: StateFlow<ErrorEvent?> = _imageErrorFlow.asStateFlow()
+
+    /** Surface an error event with an incremented sequence number (AND-030). */
+    fun showError(message: String) {
+        _imageErrorFlow.update { ErrorEvent(message, errorSeq.incrementAndGet()) }
+    }
 
     /** Clear the image error after the UI has shown it. */
     fun clearError() {
         _imageErrorFlow.value = null
+    }
+
+    /**
+     * Adapter required by [UndoDeleteUseCase]'s existing String-based error callback API.
+     * The use case assigns to [MutableStateFlow.value]; intercept that assignment so identical
+     * consecutive messages still become distinct [ErrorEvent]s rather than being conflated by
+     * the String state flow.
+     */
+    private val undoDeleteErrorState = MutableStateFlow<String?>(null)
+    @OptIn(ExperimentalForInheritanceCoroutinesApi::class)
+    private val undoDeleteErrorFlow = object : MutableStateFlow<String?> by undoDeleteErrorState {
+        override var value: String?
+            get() = undoDeleteErrorState.value
+            set(value) {
+                undoDeleteErrorState.value = value
+                value?.let(::showError)
+            }
     }
 
     private var overlayHideJob: Job? = null
@@ -93,12 +126,19 @@ class ImageViewerViewModel @Inject constructor(
         }
     }
 
+    // BUG-015 pattern: load request generation — a stale request resuming after ANY
+    // suspension point must never overwrite a newer request's committed state.
+    private val loadGeneration = AtomicLong(0L)
+
     fun loadImage(imageItemId: Long) {
+        val generation = loadGeneration.incrementAndGet()
         viewModelScope.launch {
             try {
+                if (generation != loadGeneration.get()) return@launch
                 val image = videoRepository.getById(imageItemId)
                 if (image != null) {
                     val record = playbackRepository.getByVideoId(image.id)
+                    if (generation != loadGeneration.get()) return@launch
                     _uiState.update { it.copy(
                         currentImage = image,
                         playbackRecord = record,
@@ -142,7 +182,7 @@ class ImageViewerViewModel @Inject constructor(
      */
     fun toggleTrashed(onSuccess: (Long) -> Unit = {}) {
         val imageId = _uiState.value.currentImage?.id ?: return
-        undoDeleteUseCase.performTrashToggleNoGuard(imageId, viewModelScope, _imageErrorFlow) {
+        undoDeleteUseCase.performTrashToggleNoGuard(imageId, viewModelScope, undoDeleteErrorFlow) {
             // Refresh the playback record only if the user is still on this image.
             viewModelScope.launch {
                 try {
@@ -192,8 +232,17 @@ class ImageViewerViewModel @Inject constructor(
         _uiState.update { it.copy(currentOverlay = null) }
     }
 
+    /**
+     * Dedicated independent scope for saving playback progress (AND-031).
+     * Mirrored from PlayerViewModel.progressSaveScope so recents-swipe teardown
+     * doesn't cancel in-flight saves when viewModelScope is cancelled.
+     * This scope is deliberately independent of the ViewModel lifecycle (and intentionally
+     * not cancelled in onCleared) so a just-launched save always completes.
+     */
+    private val progressSaveScope = CoroutineScope(SupervisorJob() + ioDispatcher)
+
     private fun markCompleted(imageId: Long) {
-        viewModelScope.launch {
+        progressSaveScope.launch {
             try {
                 playbackRepository.saveProgress(imageId, 1L, 1L)
             } catch (e: CancellationException) {

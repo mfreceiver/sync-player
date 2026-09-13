@@ -6,12 +6,14 @@ import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.SyncRelationWithSource
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.sync.SyncErrorCode
 import cn.vectory.syncplayer.sync.SyncException
 import cn.vectory.syncplayer.sync.SyncOperation
 import cn.vectory.syncplayer.sync.syncErrorMessage
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -85,7 +87,8 @@ class UndoDeleteUseCase @Inject constructor(
     private val fileOps: FileOperationsUseCase,
     private val playbackRepository: PlaybackRepository,
     private val videoRepository: VideoRepository,
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
     companion object {
         private const val TAG = "UndoDeleteUseCase"
@@ -104,7 +107,7 @@ class UndoDeleteUseCase @Inject constructor(
      * This is a controlled, named scope — explicitly NOT [kotlinx.coroutines.GlobalScope].
      * The Singleton owns its lifetime; on process death it is abandoned (no leak).
      */
-    private val safetyScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val safetyScope: CoroutineScope = CoroutineScope(SupervisorJob() + ioDispatcher)
 
     /**
      * Perform a trash-toggle operation with undo support (Browser context — with base-path guard).
@@ -280,7 +283,7 @@ class UndoDeleteUseCase @Inject constructor(
             undoState.set(UndoableDelete.CommittingHardDelete(pendingHardDelete.id))
         }
         return try {
-            val result = withContext(Dispatchers.IO) {
+            val result = withContext(ioDispatcher) {
                 fileOps.deleteMediaById(pendingHardDelete.id)
             }
             when (result) {
@@ -371,7 +374,7 @@ class UndoDeleteUseCase @Inject constructor(
             undoState.set(UndoableDelete.CommittingHardDelete(state.id))
         }
         return try {
-            val result = withContext(Dispatchers.IO) {
+            val result = withContext(ioDispatcher) {
                 fileOps.deleteMediaById(state.id)
             }
             when (result) {
