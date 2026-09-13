@@ -1,8 +1,6 @@
 package cn.vectory.syncplayer.settings
 
 import android.content.Context
-import android.provider.DocumentsContract
-import androidx.core.net.toUri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -13,7 +11,6 @@ import cn.vectory.syncplayer.data.model.SyncRelation
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
-import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.RemoteFileClientFactory
@@ -111,7 +108,6 @@ class SyncRelationEditViewModel @Inject constructor(
     private val syncSourceRepository: SyncSourceRepository,
     private val remoteFileClientFactory: RemoteFileClientFactory,
     private val storagePaths: StoragePaths,
-    private val userPreferencesRepository: UserPreferencesRepository,
     @ApplicationContext private val context: Context,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
     savedStateHandle: SavedStateHandle
@@ -177,45 +173,10 @@ class SyncRelationEditViewModel @Inject constructor(
     }
 
     private fun loadStorageInfo() {
-        viewModelScope.launch {
-            val treeUri = userPreferencesRepository.getMediaStorageTreeUri()
-            val info = if (treeUri != null) {
-                StorageInfo(
-                    typeLabel = context.getString(R.string.storage_method_external),
-                    pathLabel = extractDisplayName(treeUri)
-                )
-            } else {
-                StorageInfo(
-                    typeLabel = context.getString(R.string.storage_current_internal),
-                    pathLabel = context.filesDir.absolutePath + "/userdata"
-                )
-            }
-            _storageInfo.value = info
-        }
-    }
-
-    /** 尽量解析 SAF tree 目录显示名；失败则回退到 docId 末段或原 URI 字符串。 */
-    private fun extractDisplayName(treeUriStr: String): String {
-        return try {
-            val uri = treeUriStr.toUri()
-            val docId = DocumentsContract.getTreeDocumentId(uri)
-            val docUri = DocumentsContract.buildDocumentUriUsingTree(uri, docId)
-            context.contentResolver.query(
-                docUri,
-                arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
-                null,
-                null,
-                null,
-            )?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    cursor.getString(0)?.takeIf { it.isNotBlank() }
-                } else {
-                    null
-                }
-            } ?: docId.substringAfterLast(':').substringAfterLast('/').ifBlank { docId }
-        } catch (_: Exception) {
-            treeUriStr
-        }
+        _storageInfo.value = StorageInfo(
+            typeLabel = context.getString(R.string.storage_current_internal),
+            pathLabel = context.filesDir.absolutePath + "/userdata"
+        )
     }
 
     private fun loadRelation() {
@@ -235,7 +196,7 @@ class SyncRelationEditViewModel @Inject constructor(
     fun selectSource(id: Long) { _selectedSourceId.value = id }
 
     // Local base path is a pure logical path string (encrypted volume has no browsable plaintext dirs).
-    // Directory materializes on first sync under EncryptedMediaStore.
+    // Directory materializes on first sync under MediaFileStore.
 
     // --- Remote directory browsing ---
 

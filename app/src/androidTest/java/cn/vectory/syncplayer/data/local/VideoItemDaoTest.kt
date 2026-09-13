@@ -68,8 +68,7 @@ class VideoItemDaoTest {
                 fileName = fileName,
                 fileSize = fileSize,
                 star = star,
-                mediaType = mediaType,
-                volumeId = "vol"
+                mediaType = mediaType
             )
         )
     }
@@ -91,7 +90,7 @@ class VideoItemDaoTest {
     @Test
     fun `upsert with same id updates existing row`() {
         val rowId = insert(syncRelationId = 1L, relativePath = "a.mp4", fileSize = 100L)
-        runBlocking { dao.upsert(VideoItemEntity(id = rowId, syncRelationId = 1L, relativePath = "a.mp4", fileName = "a.mp4", fileSize = 999L, volumeId = "vol")) }
+        runBlocking { dao.upsert(VideoItemEntity(id = rowId, syncRelationId = 1L, relativePath = "a.mp4", fileName = "a.mp4", fileSize = 999L)) }
         val got = runBlocking { dao.getById(rowId) }
         assertEquals(999L, got!!.fileSize)
     }
@@ -312,9 +311,9 @@ class VideoItemDaoTest {
         runBlocking {
             dao.upsertAll(
                 listOf(
-                    VideoItemEntity(syncRelationId = 1L, relativePath = "a.mp4", fileName = "a.mp4", fileSize = 1L, volumeId = "vol"),
-                    VideoItemEntity(syncRelationId = 1L, relativePath = "b.mp4", fileName = "b.mp4", fileSize = 2L, volumeId = "vol"),
-                    VideoItemEntity(syncRelationId = 1L, relativePath = "c.mp4", fileName = "c.mp4", fileSize = 3L, volumeId = "vol")
+                    VideoItemEntity(syncRelationId = 1L, relativePath = "a.mp4", fileName = "a.mp4", fileSize = 1L),
+                    VideoItemEntity(syncRelationId = 1L, relativePath = "b.mp4", fileName = "b.mp4", fileSize = 2L),
+                    VideoItemEntity(syncRelationId = 1L, relativePath = "c.mp4", fileName = "c.mp4", fileSize = 3L)
                 )
             )
         }

@@ -66,7 +66,6 @@ class PlaybackRecordDaoFolderSemanticsTest {
                 parentPath = parentPath,
                 fileName = relativePath.substringAfterLast('/'),
                 fileSize = 1L,
-                volumeId = "vol"
             )
         )
     }

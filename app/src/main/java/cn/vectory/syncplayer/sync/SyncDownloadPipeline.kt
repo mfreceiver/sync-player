@@ -3,7 +3,6 @@ package cn.vectory.syncplayer.sync
 import android.content.Context
 import android.util.Log
 import cn.vectory.syncplayer.R
-import cn.vectory.syncplayer.crypto.CryptoScheme
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.model.SyncAction
 import cn.vectory.syncplayer.data.model.SyncOutcome
@@ -18,8 +17,8 @@ import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.debug.DebugLogger
 import cn.vectory.syncplayer.storage.StoragePaths
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
-import cn.vectory.syncplayer.storage.volume.TmpProbeState
+import cn.vectory.syncplayer.storage.MediaFileStore
+import cn.vectory.syncplayer.storage.TmpProbeState
 import cn.vectory.syncplayer.ui.util.extractParentPath
 import cn.vectory.syncplayer.ui.util.isImageFile
 import dagger.Lazy
@@ -41,7 +40,7 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * 职责：原 `SyncEngine.executeSyncLocked` 的完整执行体——空间预检副作用分支、
  * 并发下载（AND-010 通道级客户端复用：W = [MAX_CONCURRENCY] 个长驻 lane 各持一个 client
- * 从 Channel 消费 action；E5 重连重试 / E9 逐文件空间复检 / AEAD v2 加密 sink /
+ * 从 Channel 消费 action；E5 重连重试 / E9 逐文件空间复检 / 两阶段提交 sink /
  * 可读性探针回滚 / NonCancellable 取消清理）与 DELETING 阶段的 DELETE_LOCAL tail。
  *
  * **不持有任何锁**：双层互斥（`storageOperationMutex` + relation mutex）由 [SyncEngine]
@@ -50,11 +49,10 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * 迁移不变量（与原 [SyncEngine] 内联实现逐字符等价）：
  *  - 重试白名单 [RETRYABLE_CODES]（P1-2）与 E5 重试前重连；
- *  - 卷不匹配的 DELETE_LOCAL 计 failedDeleteCount（红线 2：不删不属于当前卷的密文）；
  *  - 无 DB 行的 DELETE_LOCAL 计成功（本地已不存在即已删除）；
  *  - CancellationException 先传播（worker 内 NonCancellable 清理 + workerScope.cancel）；
  *  - dry-run 语义不变（本类只执行，计划由 [SyncRemoteScanner] 产出）；
- *  - 空间检查（E10 AEAD 密文大小）走 [SyncSpaceChecker]；
+ *  - 空间检查走 [SyncSpaceChecker]；
  *  - 进度/计数上报走传入的 [progressPublisher]（Engine 构造一次并共享的同一实例）；
  *  - 存储删除原语复用 Task 5 的 [SyncDeleteExecutor]。
  */
@@ -68,14 +66,14 @@ internal class SyncDownloadPipeline(
     private val imageMetadataExtractor: ImageMetadataExtractor,
     private val remoteFileClientFactory: RemoteFileClientFactory,
     private val storagePaths: StoragePaths,
-    private val encryptedMediaStoreLazy: Lazy<EncryptedMediaStore>,
+    private val mediaFileStoreLazy: Lazy<MediaFileStore>,
     private val context: Context,
     private val progressPublisher: SyncProgressPublisher,
     private val deleteExecutor: SyncDeleteExecutor
 ) {
 
-    private val encryptedMediaStore: EncryptedMediaStore
-        get() = encryptedMediaStoreLazy.get()
+    private val mediaFileStore: MediaFileStore
+        get() = mediaFileStoreLazy.get()
 
     private val spaceChecker = SyncSpaceChecker()
 
@@ -104,7 +102,7 @@ internal class SyncDownloadPipeline(
      * BUG-007：单次下载尝试的三阶段提交状态。清理语义据此分派：
      *  - [NOT_FINALIZED]：本尝试未进入 finalize——磁盘提交面未被本尝试触碰，旧 final 必然完好，绝不删；
      *  - [FINALIZE_UNCERTAIN]：已进入 finalize、未取得 true 确认——由三态 tmp 探测收束；
-     *  - [COMMITTED]：finalize 返回 true（SafVolume.rename 含改名后双检）——final=新内容，可安全删。
+     *  - [COMMITTED]：finalize 返回 true——final=新内容，可安全删。
      */
     private enum class AttemptPhase { NOT_FINALIZED, FINALIZE_UNCERTAIN, COMMITTED }
 
@@ -155,15 +153,12 @@ internal class SyncDownloadPipeline(
         val maxConcurrency = MAX_CONCURRENCY
         val name = relationName.ifEmpty { relation.name }
         val basePath = localBasePath.ifEmpty { relation.localBasePath }
-        // E2: encryptedMediaStore 是 Hilt Lazy 的纯属性读取，无阻塞，无需 withContext(IO)。
-        val store = encryptedMediaStore
-        DebugLogger.i(TAG, "当前卷: <configured>")
+        // E2: mediaFileStore 是 Hilt Lazy 的纯属性读取，无阻塞，无需 withContext(IO)。
+        val store = mediaFileStore
 
         val toActuallyDownload = toDownload
-        // E10: 空间预检使用 AEAD 密文大小而非明文大小。预检逻辑（cipherLengthFor 调用、
-        // 溢出降级、unknown-space 跳过语义、诊断日志）已迁入 SyncSpaceChecker；此处只处理
-        // 「空间不足」这一需要 repository 副作用的判定分支，其余（Ok/Unknown/CipherFailed）
-        // 直接放行到逐文件下载降级处理——与原内联实现完全一致。
+        // 预检逻辑（溢出降级、诊断日志）已迁入 SyncSpaceChecker；此处只处理
+        // 「空间不足」这一需要 repository 副作用的判定分支，Ok 直接放行到逐文件下载。
         val spaceCheck = spaceChecker.checkSpace(toActuallyDownload, store)
         if (spaceCheck is SyncSpaceChecker.Result.Insufficient) {
             DebugLogger.e(TAG, "空间不足，中止同步")
@@ -272,14 +267,14 @@ internal class SyncDownloadPipeline(
                                                             guarded { videoRepository.deleteById(id) }
                                                         }
                                                         TmpProbeState.UNKNOWN -> {
-                                                            // 探测不可信：删行（行不得指向可能已换的密文），不删 final
+                                                            // 探测不可信：删行（行不得指向可能已换的文件），不删 final
                                                             guarded { videoRepository.deleteById(id) }
                                                         }
                                                     }
                                                 }
                                                 AttemptPhase.COMMITTED -> {
                                                     guarded { store.delete(id) }
-                                                    // 无条件：旧行 iv 指向已覆盖密文；占位行同理（幽灵密文防线）
+                                                    // 无条件：旧行指向已覆盖文件；占位行同理（幽灵文件防线）
                                                     guarded { videoRepository.deleteById(id) }
                                                 }
                                             }
@@ -314,7 +309,6 @@ internal class SyncDownloadPipeline(
                                             var downloadSuccess = false
                                             var attempts = 0
                                             assignedId = existing?.id ?: 0L
-                                            var lastIv = ByteArray(0)
 
                                             while (attempts < 3 && !downloadSuccess) {
                                                 attempts++
@@ -331,19 +325,7 @@ internal class SyncDownloadPipeline(
                                                 // E9: 每个文件下载前复检可用空间（3 并发下载途中磁盘可能被耗尽）。
                                                 // 不足时直接抛出，由外层 catch 计 failedDownloadCount 并跳到下一个文件，
                                                 // 不进入 3 次重试（空间不足不会在几秒内自愈，重试无意义）。
-                                                // spaceNow < 0 表示未知（见上方预检注释），不可当作不足。
-                                                // E10: 使用 AEAD 密文大小而非 action.fileSize。
-                                                val requiredBytes = try {
-                                                    CryptoScheme.cipherLengthFor(action.fileSize)
-                                                } catch (e: IllegalArgumentException) {
-                                                    // cipherLengthFor 抛异常 = fileSize 非法，无法计算密文大小，直接判失败
-                                                    throw SyncException(
-                                                        SyncErrorCode.INVALID_FILE_SIZE,
-                                                        SyncOperation.DOWNLOAD,
-                                                        path = action.relativePath,
-                                                        cause = e
-                                                    )
-                                                }
+                                                val requiredBytes = action.fileSize
                                                 val spaceNow = store.usableSpace()
                                                 if (spaceNow in 0 until requiredBytes) {
                                                     throw SyncException(
@@ -354,11 +336,9 @@ internal class SyncDownloadPipeline(
                                                         availableBytes = spaceNow
                                                     )
                                                 }
-                                                val iv = CryptoScheme.newIv()
-                                                lastIv = iv
                                                 // 占位行仅在 existing==null 首次创建（最小元数据：fileSize=0、remoteModifiedTime=null），
                                                 // 进程崩溃后 dryRun 必然重下（size/mtime 不匹配远端）。
-                                                // existing 复用 id，下载前不改动 DB，失败时旧记录与旧密文保持一致（避免数据损坏）。
+                                                // existing 复用 id，下载前不改动 DB，失败时旧记录与旧文件保持一致（避免数据损坏）。
                                                 if (assignedId == 0L) {
                                                     assignedId = videoRepository.upsert(VideoItemEntity(
                                                         syncRelationId = relationId,
@@ -367,16 +347,13 @@ internal class SyncDownloadPipeline(
                                                         fileName = fileName,
                                                         fileSize = 0,
                                                         remoteModifiedTime = null,
-                                                        dateSynced = System.currentTimeMillis(),
-                                                        volumeId = store.volumeId,
-                                                        iv = iv
+                                                        dateSynced = System.currentTimeMillis()
                                                     ))
                                                 }
-                                                // AEAD v2 契约（跨 lane）：明文长度 = 远端源文件大小 = action.fileSize，
-                                                // header 需要它来写 plaintextLength 字段。H2 在 EncryptedMediaStore 新增三参重载。
+                                                // 明文长度 = 远端源文件大小 = action.fileSize，sink close 时校验写入长度。
                                                 var sink: java.io.OutputStream? = null
                                                 try {
-                                                    sink = store.openEncryptSink(assignedId, iv, action.fileSize)
+                                                    sink = store.openWriteSink(assignedId, action.fileSize)
                                                     downloadSuccess = client.downloadTo(action.relativePath, sink) { transferred, total ->
                                                         // onProgress 是普通（非 suspend）lambda，沿用 publisher 内的 tryLock/unlock 节流写入。
                                                         progressPublisher.reportDownloadProgress(
@@ -417,24 +394,22 @@ internal class SyncDownloadPipeline(
                                                         SyncOperation.DOWNLOAD,
                                                         path = action.relativePath
                                                     )
-                                                    // 仅 finalize 返回 true 才确认 COMMITTED（SafVolume.rename 含改名后双检）；
-                                                    // 登记与判定之间无挂起点——登记簿不可能领先于磁盘确认。
-                                                    attemptPhase = AttemptPhase.COMMITTED
-                                                    uncleanFinalizedId = assignedId
-                                                    // 可读性探针（Bug 2 修复 + F14/T10 增强）：finalize 成功后立即做 O(1)
-                                                    // 三方一致性检查——完整 16B header 解析 + 实际密文大小
-                                                    // == cipherLengthFor(header 声明明文长) + header 声明明文长
-                                                    // == action.fileSize（远端源文件大小显式传入，不依赖 DB
-                                                    // 最终 metadata）。SAF 不支持 seek / 截断 / 内容错配 → 抛
-                                                    // STORAGE_ERROR，由 attempt 级 generic catch 经
-                                                    // cleanUpAttempt(COMMITTED) 单点回滚（删 .enc + 删 DB 行，恰一次）。
-                                                    try {
-                                                        store.verifyReadable(assignedId, action.fileSize)
-                                                    } catch (e: CancellationException) {
-                                                        throw e
-                                                    } catch (e: Exception) {
-                                                        throw SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DOWNLOAD, path = action.relativePath, cause = e)
-                                                    }
+                                                // 仅 finalize 返回 true 才确认 COMMITTED；
+                                                // 登记与判定之间无挂起点——登记簿不可能领先于磁盘确认。
+                                                attemptPhase = AttemptPhase.COMMITTED
+                                                uncleanFinalizedId = assignedId
+                                                // 可读性探针：finalize 成功后立即做 O(1) 一致性检查——
+                                                // final 文件存在且实际大小 == action.fileSize（远端源文件大小
+                                                // 显式传入，不依赖 DB 最终 metadata）。截断/内容错配 → 抛
+                                                // STORAGE_ERROR，由 attempt 级 generic catch 经
+                                                // cleanUpAttempt(COMMITTED) 单点回滚（删 final + 删 DB 行，恰一次）。
+                                                try {
+                                                    store.verifyReadable(assignedId, action.fileSize)
+                                                } catch (e: CancellationException) {
+                                                    throw e
+                                                } catch (e: Exception) {
+                                                    throw SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DOWNLOAD, path = action.relativePath, cause = e)
+                                                }
                                                 } catch (e: CancellationException) {
                                                     try { sink?.close() } catch (_: Exception) {}
                                                     withContext(NonCancellable) { cleanUpAttempt(attemptPhase, assignedId) }
@@ -455,10 +430,10 @@ internal class SyncDownloadPipeline(
                                             progressPublisher.removeActiveDownload(action.relativePath)
 
                                             totalBytesTransferred.addAndGet(action.fileSize)
-                                            // finalize 成功后才写入最终元数据（iv/fileSize/remoteModifiedTime），
-                                            // 保证 DB 与磁盘密文一致；此前 placeholder/existing 不持有误导性 final 值。
+                                            // finalize 成功后才写入最终元数据（fileSize/remoteModifiedTime），
+                                            // 保证 DB 与磁盘文件一致；此前 placeholder/existing 不持有误导性 final 值。
                                             // 复审阻断（BUG-007 后续）：行在 finalize 提交后
-                                            // 消失（并发删除等）＝孤儿密文——明确失败 + 同一
+                                            // 消失（并发删除等）＝孤儿文件——明确失败 + 同一
                                             // NonCancellable 清理入口收束，绝不 SUCCESS 计数。
                                             val finalized = videoRepository.getById(assignedId)
                                             if (finalized == null) {
@@ -471,14 +446,12 @@ internal class SyncDownloadPipeline(
                                                 )
                                             }
                                             val withMeta = finalized.copy(
-                                                iv = lastIv,
-                                                volumeId = store.volumeId,
                                                 fileSize = action.fileSize,
                                                 remoteModifiedTime = action.remoteModifiedTime,
                                                 dateSynced = System.currentTimeMillis()
                                             )
                                             videoRepository.upsert(withMeta)
-                                            // BUG-007 成功侧清零点：upsert 成功即行/密文一致，其后的取消是
+                                            // BUG-007 成功侧清零点：upsert 成功即行/文件一致，其后的取消是
                                             // 干净中断，不回滚。
                                             uncleanFinalizedId = 0L
                                             try {
@@ -517,8 +490,8 @@ internal class SyncDownloadPipeline(
                                             throw e
                                         } catch (e: Exception) {
                                             // 复审阻断（BUG-007 后续）：普通异常也可能落在元数据窗口
-                                            // （getById/upsert 抛普通异常）——登记簿非 0 ⇒ 密文已提交而行仍旧
-                                            // IV/缺失＝索引-密文不一致。与上方 CE 补偿同构：经同一
+                                            // （getById/upsert 抛普通异常）——登记簿非 0 ⇒ 文件已提交而行仍旧
+                                            // 缺失＝索引-文件不一致。与上方 CE 补偿同构：经同一
                                             // NonCancellable 清理入口回滚（cleanUpAttempt 末尾清零 ⇒ 恰一次；
                                             // attempt 级已清理则登记簿为 0 ⇒ 跳过）。清理自身异常被 guarded
                                             // 吞并——原异常优先，继续走下方失败计费；CE 不经此分支（先传播）。
@@ -580,27 +553,6 @@ internal class SyncDownloadPipeline(
                 )
 
                 val videoItem = videoRepository.getByRelativePathAndRelationId(action.relativePath, relationId)
-                // 卷一致性最小防护（用户决策）：删除前校验 entity.volumeId 与当前 store.volumeId 一致。
-                // 不一致说明该密文属于另一个存储卷（如旧的 SAF 卷未挂载），当前 store 既看不到也不应删它，
-                // 否则会误删属于其他卷的本地密文。跳过并记 log，不删。
-                if (videoItem != null && videoItem.volumeId != store.volumeId) {
-                    // 与 executeDelete 的 DELETE_BOTH 路径保持一致：卷不匹配计入失败，
-                    // 否则 completedFiles + failedFiles < totalFiles 且 executeSync 误报成功，
-                    // 关系会卡在"看似完成实则未完成"的状态。status 记 SKIPPED（动作未执行），
-                    // 但 failedDeleteCount++（关系未真正完成）。
-                    failedDeleteCount.incrementAndGet()
-                    // 复审红线：卷不匹配日志不拼 path/volumeId——只留操作种类与原因类别。
-                    Log.w(TAG, SyncSafeLog.skippedVolumeMismatch("DELETE_LOCAL"))
-                    syncLogRepository.log(
-                        action = "DELETE_LOCAL",
-                        relativePath = action.relativePath,
-                        status = "SKIPPED",
-                        dryRun = false,
-                        fileSize = action.fileSize,
-                        errorMessage = context.getString(R.string.sync_error_volume_mismatch)
-                    )
-                    continue
-                }
                 if (videoItem != null) {
                     val mediaGone = deleteExecutor.deleteStoreMedia(store, videoItem.id)
                     val thumbGone = deleteExecutor.deleteStoreThumb(store, videoItem.id)

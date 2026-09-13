@@ -8,7 +8,7 @@ import androidx.exifinterface.media.ExifInterface
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.provider.MediaUris
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.MediaFileStore
 import dagger.Lazy
 import dagger.Binds
 import dagger.Module
@@ -58,7 +58,7 @@ abstract class BitmapDecoderModule {
 @Singleton
 class ImageMetadataExtractor @Inject constructor(
     private val videoRepository: VideoRepository,
-    private val encryptedMediaStoreLazy: Lazy<EncryptedMediaStore>,
+    private val mediaFileStoreLazy: Lazy<MediaFileStore>,
     @ApplicationContext private val context: Context,
     private val bitmapDecoder: BitmapDecoder,
 ) {
@@ -69,9 +69,9 @@ class ImageMetadataExtractor @Inject constructor(
         val EXIF_DATE_FORMAT_ALT = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
     }
 
-    private val store: EncryptedMediaStore get() = encryptedMediaStoreLazy.get()
+    private val store: MediaFileStore get() = mediaFileStoreLazy.get()
 
-    /** 经 MediaContentProvider 解密读取，提取宽高/拍摄时间并生成加密缩略图。 */
+    /** 经 MediaContentProvider 读取，提取宽高/拍摄时间并生成缩略图。 */
     suspend fun extractAndSave(item: VideoItemEntity): VideoItemEntity {
         val uri = MediaUris.mediaUri(item.id)
         var width: Int? = null
@@ -80,7 +80,7 @@ class ImageMetadataExtractor @Inject constructor(
         try {
             // AND-011 两遍解码：pass1 仅读宽高（inJustDecodeBounds 不分配像素内存），
             // pass2 以 inSampleSize 直接解码出 ≤640px 缩略图，替代旧全尺寸解码+scale
-            // 的 ~192MB(48MP) 峰值内存。加密流不可 reset，每遍重开流是预期形态。
+            // 的 ~192MB(48MP) 峰值内存。每遍重开流是预期形态。
             val bounds = context.contentResolver.openInputStream(uri)?.use { input ->
                 bitmapDecoder.decodeBounds(input)
             } ?: IntArray(0)

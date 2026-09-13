@@ -14,7 +14,7 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.StoragePaths
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.MediaFileStore
 import dagger.Lazy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -23,7 +23,7 @@ import kotlinx.coroutines.withContext
 /**
  * DELETE_BOTH 执行域（从 [SyncEngine] 上帝类渐进拆分，plan 12.2.0 Task 5）。
  *
- * 职责：回收站清理流程中「本地密文 + 缩略图 + DB 行 + 远端文件」四位一体的删除执行，
+ * 职责：回收站清理流程中「本地媒体 + 缩略图 + DB 行 + 远端文件」四位一体的删除执行，
  * 以及可复用的存储删除原语（[deleteStoreMedia]/[deleteStoreThumb]，Task 7 的下载管线
  * DELETE_LOCAL tail 复用同一实现）。
  *
@@ -31,14 +31,12 @@ import kotlinx.coroutines.withContext
  * relation mutex）由 [SyncEngine] 门面持有后调用——一次同步的生命周期编排留在 Engine。
  *
  * 迁移不变量（与原 [SyncEngine] 内联实现逐条等价）：
- *  1. 卷不匹配（含空/未知 volumeId）→ 不删本地、不删远端、failedActions++、SKIPPED 日志
- *     （红线 2：volume ownership fail-closed）。
- *  2. remote-first（BUG-001）：远端 ack 前不动本地——远端失败保留全部本地状态
+ *  1. remote-first（BUG-001）：远端 ack 前不动本地——远端失败保留全部本地状态
  *     （行留在回收站标记下，下次清理重推 DELETE_BOTH，防复活循环）；远端成功后本地
- *     失败由下次镜像同步推导 DELETE_LOCAL 自愈。卷检查恒在循环体最前（先于远端）。
- *  3. 远端 `deleteFile` 幂等（返回 false 表示「本来就不存在」，按成功语义处理）。
- *  4. CancellationException rethrow 分支保留；finally `disconnect()` 保留。
- *  5. 进度上报走传入的 [progressPublisher]（Engine 构造一次并共享的同一实例）。
+ *     失败由下次镜像同步推导 DELETE_LOCAL 自愈。
+ *  2. 远端 `deleteFile` 幂等（返回 false 表示「本来就不存在」，按成功语义处理）。
+ *  3. CancellationException rethrow 分支保留；finally `disconnect()` 保留。
+ *  4. 进度上报走传入的 [progressPublisher]（Engine 构造一次并共享的同一实例）。
  */
 internal class SyncDeleteExecutor(
     private val syncRelationRepository: SyncRelationRepository,
@@ -48,13 +46,13 @@ internal class SyncDeleteExecutor(
     private val syncLogRepository: SyncLogRepository,
     private val remoteFileClientFactory: RemoteFileClientFactory,
     private val storagePaths: StoragePaths,
-    private val encryptedMediaStoreLazy: Lazy<EncryptedMediaStore>,
+    private val mediaFileStoreLazy: Lazy<MediaFileStore>,
     private val context: Context,
     private val progressPublisher: SyncProgressPublisher
 ) {
 
-    private val encryptedMediaStore: EncryptedMediaStore
-        get() = encryptedMediaStoreLazy.get()
+    private val mediaFileStore: MediaFileStore
+        get() = mediaFileStoreLazy.get()
 
     private fun getClient(protocol: SyncProtocol): RemoteFileClient =
         remoteFileClientFactory.create(protocol)
@@ -64,8 +62,8 @@ internal class SyncDeleteExecutor(
         val relation = syncRelationRepository.getById(relationId) ?: return false
         val source = syncSourceRepository.getById(relation.syncSourceId) ?: return false
         val client = getClient(source.protocol)
-        // E2: encryptedMediaStore 是 Hilt Lazy 纯属性读取，无阻塞，无需 withContext(IO)。
-        val store = encryptedMediaStore
+        // E2: mediaFileStore 是 Hilt Lazy 纯属性读取，无阻塞，无需 withContext(IO)。
+        val store = mediaFileStore
 
         val totalActions = actions.size
         var completedActions = 0
@@ -91,23 +89,6 @@ internal class SyncDeleteExecutor(
                 )
 
                 val videoItem = videoRepository.getByRelativePathAndRelationId(action.relativePath, relationId)
-                // 卷一致性防护（同 executeSync 删除路径）：entity 属于另一卷时跳过整个 DELETE_BOTH，
-                // 既不删本地（不属于当前 store 管辖）也不删远端，避免产生半完成状态。
-                // 【红线 2】卷检查必须保持在循环体最前（BUG-001 重排后依然不变）。
-                if (videoItem != null && videoItem.volumeId != store.volumeId) {
-                    failedActions++
-                    // 复审红线：卷不匹配日志不拼 path/volumeId——只留操作种类与原因类别。
-                    Log.w(TAG, SyncSafeLog.skippedVolumeMismatch("DELETE_BOTH"))
-                    syncLogRepository.log(
-                        action = "DELETE_BOTH",
-                        relativePath = action.relativePath,
-                        status = "SKIPPED",
-                        dryRun = false,
-                        fileSize = action.fileSize,
-                        errorMessage = context.getString(R.string.sync_error_volume_mismatch)
-                    )
-                    continue
-                }
 
                 // 1) Remote first (BUG-001) — 远端未 ack 前不动任何本地状态。
                 //    旧 local-first 在远端失败时已删 DB 行 → 下次 dryRun 见「远端仍在 +
@@ -248,10 +229,10 @@ internal class SyncDeleteExecutor(
     }
 
     /**
-     * Delete ciphertext; [Boolean] false is ambiguous (missing vs fail) — re-check [EncryptedMediaStore.exists].
+     * Delete media; [Boolean] false is ambiguous (missing vs fail) — re-check [MediaFileStore.exists].
      * @return true if media is gone (deleted or never present); false if still present after failed delete.
      */
-    suspend fun deleteStoreMedia(store: EncryptedMediaStore, id: Long): Boolean {
+    suspend fun deleteStoreMedia(store: MediaFileStore, id: Long): Boolean {
         return try {
             val deleted = store.delete(id)
             if (deleted) true
@@ -274,7 +255,7 @@ internal class SyncDeleteExecutor(
     /**
      * Delete thumb; missing thumb is success. Still-present after false → failure.
      */
-    suspend fun deleteStoreThumb(store: EncryptedMediaStore, id: Long): Boolean {
+    suspend fun deleteStoreThumb(store: MediaFileStore, id: Long): Boolean {
         return try {
             val deleted = store.deleteThumb(id)
             if (deleted) true

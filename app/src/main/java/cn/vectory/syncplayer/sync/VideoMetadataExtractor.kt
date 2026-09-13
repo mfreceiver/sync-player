@@ -7,7 +7,7 @@ import android.util.Log
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.provider.MediaUris
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.MediaFileStore
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.ByteArrayOutputStream
@@ -18,14 +18,14 @@ import kotlinx.coroutines.CancellationException
 @Singleton
 class VideoMetadataExtractor @Inject constructor(
     private val videoRepository: VideoRepository,
-    private val encryptedMediaStoreLazy: Lazy<EncryptedMediaStore>,
+    private val mediaFileStoreLazy: Lazy<MediaFileStore>,
     @ApplicationContext private val context: Context
 ) {
     private companion object { const val TAG = "VideoMetadataExtractor" }
 
-    private val store: EncryptedMediaStore get() = encryptedMediaStoreLazy.get()
+    private val store: MediaFileStore get() = mediaFileStoreLazy.get()
 
-    /** 经 MediaContentProvider 解密读取，提取时长/尺寸/码率/帧率并生成加密缩略图。 */
+    /** 经 MediaContentProvider 读取，提取时长/尺寸/码率/帧率并生成缩略图。 */
     suspend fun extractAndSave(videoItem: VideoItemEntity): VideoItemEntity {
         val uri = MediaUris.mediaUri(videoItem.id)
         var duration: Long? = null
@@ -57,7 +57,7 @@ class VideoMetadataExtractor @Inject constructor(
         return updated
     }
 
-    /** 仅重新生成加密缩略图（不重新提取尺寸等元数据）。 */
+    /** 仅重新生成缩略图（不重新提取尺寸等元数据）。 */
     suspend fun repairThumbnailIfNeeded(videoItem: VideoItemEntity): VideoItemEntity {
         val uri = MediaUris.mediaUri(videoItem.id)
         try {

@@ -43,11 +43,7 @@ class SyncSafeLogTest {
     }
 
     @Test
-    fun `volume mismatch and cleanup messages carry no path or volume identifiers`() {
-        val skip = SyncSafeLog.skippedVolumeMismatch("DELETE_BOTH")
-        assertEquals("DELETE_BOTH skipped (volume mismatch): stored volumeId differs from active volume", skip)
-        assertFalse(skip.contains("vol-"))
-
+    fun `cleanup messages carry no path or identifiers`() {
         val local = SyncSafeLog.localDeleteIncomplete("DELETE_BOTH", 42L, true, false)
         assertEquals("DELETE_BOTH local failed id=42: mediaGone=true thumbGone=false", local)
 

@@ -12,7 +12,7 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.StoragePaths
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.MediaFileStore
 import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -51,8 +51,8 @@ class SyncDownloadPipelineClientReuseTest {
     private val syncLogRepository = mockk<SyncLogRepository>(relaxed = true)
     private val clientFactory = mockk<RemoteFileClientFactory>()
     private val storagePaths = mockk<StoragePaths>()
-    private val store = mockk<EncryptedMediaStore>(relaxed = true)
-    private val storeLazy = mockk<Lazy<EncryptedMediaStore>> { every { get() } returns store }
+    private val store = mockk<MediaFileStore>(relaxed = true)
+    private val storeLazy = mockk<Lazy<MediaFileStore>> { every { get() } returns store }
     private val context = mockk<android.content.Context>(relaxed = true)
     private val publisher = SyncProgressPublisher()
     private val deleteExecutor = SyncDeleteExecutor(
@@ -73,7 +73,6 @@ class SyncDownloadPipelineClientReuseTest {
             id = 10L, name = "s", protocol = SyncProtocol.SMB, host = "h", port = 445,
             username = "u", password = "p"
         )
-        every { store.volumeId } returns "vol-active"
         every { storagePaths.toLocalRelativePath(any(), any()) } answers {
             val base = firstArg<String>()
             val rel = secondArg<String>()
@@ -94,11 +93,11 @@ class SyncDownloadPipelineClientReuseTest {
         coEvery { videoRepository.getById(any()) } answers {
             VideoItemEntity(
                 id = firstArg(), syncRelationId = 1L, relativePath = "rel",
-                fileName = "f.mp4", fileSize = 1L, volumeId = "vol-active", iv = ByteArray(12)
+                fileName = "f.mp4", fileSize = 1L
             )
         }
         every { store.usableSpace() } returns Long.MAX_VALUE
-        coEvery { store.openEncryptSink(any(), any(), any()) } returns mockk<OutputStream>(relaxed = true)
+        coEvery { store.openWriteSink(any(), any()) } returns mockk<OutputStream>(relaxed = true)
         coEvery { store.finalize(any()) } returns true
     }
 

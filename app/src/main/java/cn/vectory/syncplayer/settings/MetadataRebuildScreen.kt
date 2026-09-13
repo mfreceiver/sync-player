@@ -33,34 +33,6 @@ fun MetadataRebuildScreen(
     val currentFile by viewModel.currentFile.collectAsStateWithLifecycle()
     val cleanupSummary by viewModel.cleanupSummary.collectAsStateWithLifecycle()
     var isNavigatingBack by remember { mutableStateOf(false) }
-    var showOtherVolumeConfirm by remember { mutableStateOf(false) }
-
-    if (showOtherVolumeConfirm) {
-        val otherCount = discoveryResult?.otherVolumeRecords?.size ?: 0
-        AlertDialog(
-            onDismissRequest = { showOtherVolumeConfirm = false },
-            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-            title = { Text(stringResource(R.string.metadata_confirm_clean_title)) },
-            text = {
-                Text(stringResource(R.string.metadata_confirm_clean_body, otherCount))
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showOtherVolumeConfirm = false
-                        viewModel.cleanOtherVolumeIndexes()
-                    }
-                ) {
-                    Text(stringResource(R.string.metadata_confirm_clean_button), color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showOtherVolumeConfirm = false }) {
-                    Text(stringResource(R.string.common_cancel))
-                }
-            }
-        )
-    }
 
     Scaffold(
         topBar = {
@@ -237,36 +209,6 @@ fun MetadataRebuildScreen(
                                     stringResource(R.string.metadata_pending_count, r.orphanedRecords.size + r.incompleteRecords.size),
                                     fontWeight = FontWeight.Bold
                                 )
-                            }
-                        }
-
-                        if (r.otherVolumeRecords.isNotEmpty()) {
-                            Card(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.errorContainer
-                                )
-                            ) {
-                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text(
-                                        stringResource(R.string.metadata_other_volume_count, r.otherVolumeRecords.size),
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onErrorContainer
-                                    )
-                                    Text(
-                                        stringResource(R.string.metadata_other_volume_desc),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onErrorContainer
-                                    )
-                                    Button(
-                                        onClick = { showOtherVolumeConfirm = true },
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = MaterialTheme.colorScheme.error
-                                        )
-                                    ) {
-                                        Text(stringResource(R.string.metadata_clean_other_volume))
-                                    }
-                                }
                             }
                         }
                     }

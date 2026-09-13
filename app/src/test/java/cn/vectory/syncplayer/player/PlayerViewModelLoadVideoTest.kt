@@ -73,7 +73,6 @@ class PlayerViewModelLoadVideoTest {
         relativePath = "video$id.mp4",
         fileName = "video$id.mp4",
         fileSize = 1000L,
-        volumeId = "vol-active"
     )
 
     private fun createVm(): PlayerViewModel = PlayerViewModel(

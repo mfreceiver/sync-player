@@ -103,7 +103,6 @@ class GainAnalysisDiscoverReentryTest {
         relativePath = "ep1.mp4",
         parentPath = "",
         fileName = "ep1.mp4",
-        volumeId = "vol",
         fileSize = 1L,
         audioGainDb = null
     )

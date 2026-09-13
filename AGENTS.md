@@ -7,9 +7,8 @@
 | 文档 | 内容 |
 |---|---|
 | [`docs/specs/architecture.md`](docs/specs/architecture.md) | Tech Stack、分层、MVI/MVVM、State Splitting、Key Directories、OrientationPreference↔OrientationMode |
-| [`docs/specs/crypto.md`](docs/specs/crypto.md) | AEAD v2 格式、分块 GCM、RangeDecryptor、Master Key、v1→v2 破坏性迁移 |
-| [`docs/specs/sync.md`](docs/specs/sync.md) | 同步引擎、SyncException/SyncErrorCode、E8 守卫、卷所有权、重试白名单、SyncProgressPublisher/SyncSpaceChecker |
-| [`docs/specs/storage-security.md`](docs/specs/storage-security.md) | MediaVolume 抽象、EncryptedMediaStore、ContentProvider 异常边界、App Lock、TOFU、凭证 |
+| [`docs/specs/sync.md`](docs/specs/sync.md) | 同步引擎、SyncException/SyncErrorCode、E8 守卫、两阶段提交、重试白名单、SyncProgressPublisher/SyncSpaceChecker |
+| [`docs/specs/storage-security.md`](docs/specs/storage-security.md) | 存储布局、MediaFileStore、ContentProvider 异常边界、App Lock、TOFU、凭证 |
 | [`docs/specs/conventions.md`](docs/specs/conventions.md) | Testing、i18n、Database、Performance、Versioning、Player UX、错误处理、残余风险 |
 | [`docs/release.md`](docs/release.md) | 发版规范、签名凭据链、changelog、CI |
 
@@ -59,23 +58,21 @@ Always run a build after code changes to verify compilation — there is no LSP 
 - **架构**: MVVM + Repository（Player 用 MVI），Hilt DI，Single Activity + Compose。高频状态独立 StateFlow，重组隔离。→ [architecture.md](docs/specs/architecture.md)
 - **测试**: JUnit4 + MockK + Coroutines Test；断言枚举/数量/调用次数，**绝不**断言用户文案；suspend 用 `coEvery`；CancellationException 不吞。→ [conventions.md](docs/specs/conventions.md#testing)
 - **i18n**: 所有用户可见文本在 `strings.xml`；Repository 不依赖 Context 生成文案；日志诊断文本不本地化。→ [conventions.md](docs/specs/conventions.md#i18n--strings)
-- **加密**: AEAD v2 分块 GCM，`SPM2` magic，64KiB chunk，明文坐标随机读；空间预检用 `CryptoScheme.cipherLengthFor()`。→ [crypto.md](docs/specs/crypto.md)
-- **同步**: `SyncException(code,...)` 结构化错误（message=null）；E8 扫描失败清空 toDownload/toDelete；卷不匹配删除计 FAILED；重试仅瞬态码白名单；CancellationException 先传播。→ [sync.md](docs/specs/sync.md)
-- **存储/Provider**: `MediaVolume` 抽象，volumeId 每次访问解析；Provider 异常边界不泄漏 URI/id/path/volumeId。→ [storage-security.md](docs/specs/storage-security.md)
+- **同步**: `SyncException(code,...)` 结构化错误（message=null）；E8 扫描失败清空 toDownload/toDelete；重试仅瞬态码白名单；CancellationException 先传播。→ [sync.md](docs/specs/sync.md)
+- **存储/Provider**: 单一内部卷（`filesDir/userdata`），`MediaFileStore` 门面 + tmp→finalize 两阶段提交；Provider 异常边界不泄漏 URI/id/path。→ [storage-security.md](docs/specs/storage-security.md)
 - **安全**: 生物识别 App Lock，FLAG_SECURE，SSH TOFU，凭证 EncryptedSharedPreferences。→ [storage-security.md](docs/specs/storage-security.md)
-- **Database**: Room v2，破坏性迁移（`dropAllTables=true`），`parentPath` 索引。→ [conventions.md](docs/specs/conventions.md#database)
+- **Database**: Room v4，破坏性迁移（`dropAllTables=true`），`parentPath` 索引。→ [conventions.md](docs/specs/conventions.md#database)
 - **Performance**: ≥300ms debounce 重型 Flow；阻塞 I/O 在 `Dispatchers.IO`（`@IoDispatcher` 注入可测）。→ [conventions.md](docs/specs/conventions.md#performance)
 - **Versioning**: git 派生（versionCode/versionName），发版用 `./scripts/release.sh`。→ [conventions.md](docs/specs/conventions.md#versioninggit-派生)
 
 ## 安全红线（改代码时不可违背）
 
 1. **E8 扫描失败保护**：部分远端快照绝不推导 DELETE_LOCAL。
-2. **卷所有权 fail-closed**：volumeId 不匹配（含空/未知）不删密文。SyncEngine 同步流程中不匹配须计 FAILED；浏览器/手动删除路径的 index-only delete（仅删索引、密文不动）返回成功为合法语义（防误删产生不可恢复的孤儿密文）。
-3. **CancellationException 始终先传播**，不被 `catch(Exception)` 吞。
-4. **AEAD v2 格式不变**：header/AAD/nonce/chunk size/明文坐标是存储契约。
-5. **随机读失败必须抛异常**，不返回脏明文。
-6. **敏感信息不进日志/UI**：密码/密钥/凭据/卷标识/path/底层 message 不暴露给用户。
-7. **结构化错误不回退到 Throwable.message**：UI 用错误码→资源文案。
+2. **CancellationException 始终先传播**，不被 `catch(Exception)` 吞。
+3. **下载两阶段提交不可弱化**：先写 `.tmp`、close 校验长度、finalize 原子 rename；`probePendingTmp` UNKNOWN 时只删行、不删 final。
+4. **敏感信息不进日志/UI**：密码/密钥/凭据/path/底层 message 不暴露给用户。
+5. **结构化错误不回退到 Throwable.message**：UI 用错误码→资源文案。
+6. **删除 fail-closed**：文件存在性探测失败时保留 DB 行，绝不按"猜测不存在"删除。
 
 ## Release & Upload
 

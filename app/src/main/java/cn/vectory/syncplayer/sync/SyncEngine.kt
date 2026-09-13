@@ -10,7 +10,7 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.StoragePaths
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.MediaFileStore
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -53,7 +53,7 @@ class SyncEngine @Inject constructor(
     private val pendingSyncActionDao: PendingSyncActionDao,
     private val remoteFileClientFactory: RemoteFileClientFactory,
     private val storagePaths: StoragePaths,
-    private val encryptedMediaStoreLazy: Lazy<EncryptedMediaStore>,
+    private val mediaFileStoreLazy: Lazy<MediaFileStore>,
     @ApplicationContext private val context: Context
 ) {
 
@@ -76,7 +76,7 @@ class SyncEngine @Inject constructor(
     // DELETE_BOTH 执行域已迁入 SyncDeleteExecutor（Task 5）；进度走共享 progressPublisher。
     private val deleteExecutor = SyncDeleteExecutor(
         syncRelationRepository, syncSourceRepository, videoRepository, playbackRepository,
-        syncLogRepository, remoteFileClientFactory, storagePaths, encryptedMediaStoreLazy,
+        syncLogRepository, remoteFileClientFactory, storagePaths, mediaFileStoreLazy,
         context, progressPublisher
     )
 
@@ -90,7 +90,7 @@ class SyncEngine @Inject constructor(
     private val downloadPipeline = SyncDownloadPipeline(
         syncRelationRepository, syncSourceRepository, videoRepository, playbackRepository,
         syncLogRepository, videoMetadataExtractor, imageMetadataExtractor,
-        remoteFileClientFactory, storagePaths, encryptedMediaStoreLazy, context,
+        remoteFileClientFactory, storagePaths, mediaFileStoreLazy, context,
         progressPublisher, deleteExecutor
     )
 

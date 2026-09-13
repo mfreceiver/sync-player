@@ -72,7 +72,6 @@ class VideoItemDaoPathSemanticsTest {
                 star = star,
                 mediaType = mediaType,
                 audioGainDb = audioGainDb,
-                volumeId = "vol"
             )
         )
     }

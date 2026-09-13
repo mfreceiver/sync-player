@@ -61,7 +61,6 @@ class SyncRelationEditViewModelRemotePathTest {
     private val syncSourceRepository = mockk<SyncSourceRepository>(relaxed = true)
     private val remoteFileClientFactory = mockk<RemoteFileClientFactory>(relaxed = true)
     private val storagePaths = mockk<StoragePaths>(relaxed = true)
-    private val userPreferencesRepository = mockk<UserPreferencesRepository>(relaxed = true)
     private val context = mockk<Context>(relaxed = true)
 
     private val smbSource = SyncSource(
@@ -81,7 +80,6 @@ class SyncRelationEditViewModelRemotePathTest {
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         // init loadStorageInfo() must not suspend on the real repo (harness rule ①).
-        coEvery { userPreferencesRepository.getMediaStorageTreeUri() } returns null
         coEvery { syncSourceRepository.getAllWithCredentials() } returns listOf(smbSource, sftpSource)
         every { storagePaths.normalizeAndValidateRelativePath(any()) } returns "base"
         coEvery { syncRelationRepository.checkBasePathConflict(any(), any()) } returns emptyList()
@@ -95,7 +93,6 @@ class SyncRelationEditViewModelRemotePathTest {
             syncSourceRepository = syncSourceRepository,
             remoteFileClientFactory = remoteFileClientFactory,
             storagePaths = storagePaths,
-            userPreferencesRepository = userPreferencesRepository,
             context = context,
             ioDispatcher = UnconfinedTestDispatcher(),
             savedStateHandle = SavedStateHandle()

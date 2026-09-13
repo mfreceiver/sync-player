@@ -14,7 +14,7 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.StoragePaths
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.MediaFileStore
 import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -54,8 +54,8 @@ class SyncEngineDryRunTest {
     private val storagePaths = mockk<StoragePaths>()
     private val videoMetadataExtractor = mockk<VideoMetadataExtractor>()
     private val imageMetadataExtractor = mockk<ImageMetadataExtractor>()
-    private val encryptedMediaStore = mockk<EncryptedMediaStore>(relaxed = true)
-    private val encryptedMediaStoreLazy = mockk<Lazy<EncryptedMediaStore>>()
+    private val mediaFileStore = mockk<MediaFileStore>(relaxed = true)
+    private val mediaFileStoreLazy = mockk<Lazy<MediaFileStore>>()
 
     private lateinit var syncEngine: SyncEngine
     private val testDispatcher = StandardTestDispatcher()
@@ -81,7 +81,7 @@ class SyncEngineDryRunTest {
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
-        every { encryptedMediaStoreLazy.get() } returns encryptedMediaStore
+        every { mediaFileStoreLazy.get() } returns mediaFileStore
         syncEngine = SyncEngine(
             syncSourceRepository = syncSourceRepository,
             syncRelationRepository = syncRelationRepository,
@@ -93,7 +93,7 @@ class SyncEngineDryRunTest {
             pendingSyncActionDao = pendingSyncActionDao,
             remoteFileClientFactory = remoteFileClientFactory,
             storagePaths = storagePaths,
-            encryptedMediaStoreLazy = encryptedMediaStoreLazy,
+            mediaFileStoreLazy = mediaFileStoreLazy,
             context = context
         )
 
@@ -136,8 +136,6 @@ class SyncEngineDryRunTest {
         relativePath = relativePath,
         fileName = fileName,
         fileSize = fileSize,
-        volumeId = "vol",
-        iv = ByteArray(0),
         remoteModifiedTime = remoteModifiedTime
     )
 

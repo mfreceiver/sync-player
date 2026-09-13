@@ -60,7 +60,6 @@ class SyncRelationEditViewModelResultTest {
     private val syncSourceRepository = mockk<SyncSourceRepository>(relaxed = true)
     private val remoteFileClientFactory = mockk<RemoteFileClientFactory>(relaxed = true)
     private val storagePaths = mockk<StoragePaths>(relaxed = true)
-    private val userPreferencesRepository = mockk<UserPreferencesRepository>(relaxed = true)
     private val context = mockk<Context>(relaxed = true)
     private val client = mockk<RemoteFileClient>(relaxed = true)
 
@@ -69,7 +68,6 @@ class SyncRelationEditViewModelResultTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        coEvery { userPreferencesRepository.getMediaStorageTreeUri() } returns null
         coEvery { syncSourceRepository.getAllWithCredentials() } returns listOf(
             SyncSource(
                 id = 1L, name = "smb", protocol = SyncProtocol.SMB,
@@ -87,7 +85,6 @@ class SyncRelationEditViewModelResultTest {
             syncSourceRepository = syncSourceRepository,
             remoteFileClientFactory = remoteFileClientFactory,
             storagePaths = storagePaths,
-            userPreferencesRepository = userPreferencesRepository,
             context = context,
             ioDispatcher = UnconfinedTestDispatcher(),
             savedStateHandle = SavedStateHandle()
@@ -221,7 +218,6 @@ class SyncRelationEditViewModelResultTest {
             syncSourceRepository = syncSourceRepository,
             remoteFileClientFactory = remoteFileClientFactory,
             storagePaths = storagePaths,
-            userPreferencesRepository = userPreferencesRepository,
             context = context,
             ioDispatcher = UnconfinedTestDispatcher(),
             savedStateHandle = SavedStateHandle(mapOf("relationId" to 5L))

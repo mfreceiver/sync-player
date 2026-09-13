@@ -20,10 +20,6 @@ internal object SyncSafeLog {
     fun failure(operation: String, e: Throwable): String =
         "$operation failed: code=${(e as? SyncException)?.code}, error=${e.javaClass.simpleName}"
 
-    /** 卷归属 fail-closed 跳过消息：只留操作种类 + 跳过原因类别（无 path、无 volumeId）。 */
-    fun skippedVolumeMismatch(operation: String): String =
-        "$operation skipped (volume mismatch): stored volumeId differs from active volume"
-
     /** 本地删除未完全成功消息：行 id + 两个删除结果布尔（与既有安全格式一致）。 */
     fun localDeleteIncomplete(operation: String, id: Long, mediaGone: Boolean, thumbGone: Boolean): String =
         "$operation local failed id=$id: mediaGone=$mediaGone thumbGone=$thumbGone"

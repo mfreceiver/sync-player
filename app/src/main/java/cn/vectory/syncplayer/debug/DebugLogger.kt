@@ -8,7 +8,7 @@ import java.util.Locale
 /**
  * In-memory ring buffer for debug log entries (max 1000, no disk persistence).
  *
- * Key subsystems (SyncEngine, SmbFileClient, EncryptedMediaStore, etc.) call [d]/[i]/[w]/[e]
+ * Key subsystems (SyncEngine, SmbFileClient, MediaFileStore, etc.) call [d]/[i]/[w]/[e]
  * instead of (or in addition to) [android.util.Log]. The [DebugLogScreen] UI reads [snapshot]
  * to display a scrollable, level-filterable log view.
  *

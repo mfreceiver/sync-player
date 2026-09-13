@@ -15,7 +15,7 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.StoragePaths
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.MediaFileStore
 import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -52,7 +52,6 @@ import java.io.OutputStream
  *  2. Additional terminal codes (ACCESS_DENIED, INSUFFICIENT_SPACE) that must NOT retry.
  *  3. Retry-whitelist recovery: a whitelisted code (TIMEOUT / CONNECTION_REFUSED) retries
  *     and can SUCCEED on a later attempt, or fail all 3 attempts.
- *  4. executeDelete DELETE_BOTH volume mismatch → counted as FAILED, no local/remote delete.
  *
  * No SyncEngine source is modified. Asserts on SyncPhase, MockK call counts, and enum codes —
  * never on user-facing message text.
@@ -71,8 +70,8 @@ class SyncEngineBoundaryTest {
     private val storagePaths = mockk<StoragePaths>()
     private val videoMetadataExtractor = mockk<VideoMetadataExtractor>()
     private val imageMetadataExtractor = mockk<ImageMetadataExtractor>()
-    private val encryptedMediaStore = mockk<EncryptedMediaStore>(relaxed = true)
-    private val encryptedMediaStoreLazy = mockk<Lazy<EncryptedMediaStore>>()
+    private val mediaFileStore = mockk<MediaFileStore>(relaxed = true)
+    private val mediaFileStoreLazy = mockk<Lazy<MediaFileStore>>()
 
     private lateinit var syncEngine: SyncEngine
     private val testDispatcher = StandardTestDispatcher()
@@ -90,7 +89,7 @@ class SyncEngineBoundaryTest {
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
-        every { encryptedMediaStoreLazy.get() } returns encryptedMediaStore
+        every { mediaFileStoreLazy.get() } returns mediaFileStore
         syncEngine = SyncEngine(
             syncSourceRepository = syncSourceRepository,
             syncRelationRepository = syncRelationRepository,
@@ -102,14 +101,13 @@ class SyncEngineBoundaryTest {
             pendingSyncActionDao = pendingSyncActionDao,
             remoteFileClientFactory = remoteFileClientFactory,
             storagePaths = storagePaths,
-            encryptedMediaStoreLazy = encryptedMediaStoreLazy,
+            mediaFileStoreLazy = mediaFileStoreLazy,
             context = context
         )
 
         coEvery { syncRelationRepository.getById(relationId) } returns relation
         coEvery { syncSourceRepository.getById(10L) } returns source
-        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
-        every { encryptedMediaStore.volumeId } returns "test-vol"
+        every { mediaFileStore.usableSpace() } returns Long.MAX_VALUE
         every { storagePaths.toLocalRelativePath(any(), any()) } answers {
             val base = firstArg<String>()
             val rel = secondArg<String>()
@@ -144,15 +142,14 @@ class SyncEngineBoundaryTest {
         val saved = VideoItemEntity(
             id = assignedId, syncRelationId = relationId, relativePath = localRelPath,
             fileName = relativePath.substringAfterLast("/"), fileSize = 1000L,
-            volumeId = "test-vol", iv = ByteArray(12)
         )
         coEvery { videoRepository.getById(assignedId) } returns saved
         coEvery { videoMetadataExtractor.extractAndSave(any()) } returns saved
         val sink = mockk<OutputStream>(relaxed = true)
-        coEvery { encryptedMediaStore.openEncryptSink(assignedId, any(), any()) } returns sink
-        coEvery { encryptedMediaStore.finalize(assignedId) } returns true
+        coEvery { mediaFileStore.openWriteSink(assignedId, any()) } returns sink
+        coEvery { mediaFileStore.finalize(assignedId) } returns true
         // Retry cleanup (failed earlier attempt) cancels + deletes the placeholder row.
-        coEvery { encryptedMediaStore.cancel(assignedId) } returns Unit
+        coEvery { mediaFileStore.cancel(assignedId) } returns Unit
         coEvery { videoRepository.deleteById(assignedId) } returns Unit
     }
 
@@ -366,42 +363,6 @@ class SyncEngineBoundaryTest {
     // 4. VOLUME MISMATCH — executeDelete DELETE_BOTH path
     // ===========================================================================
 
-    @Test
-    fun `executeDelete DELETE_BOTH with mismatched volumeId is counted as FAILED and deletes nothing`() = runTest {
-        // Parallel regression to the executeSync DELETE_LOCAL volume-mismatch guard.
-        // An entity belonging to another volume must be skipped (not deleted locally or
-        // remotely) yet counted as a failed action so the relation shows PARTIAL_FAILED.
-        every { encryptedMediaStore.volumeId } returns "current-vol"
-
-        val action = SyncAction(type = SyncActionType.DELETE_BOTH, relativePath = "x.mp4", fileSize = 100L)
-        val mismatchedEntity = VideoItemEntity(
-            id = 600L, syncRelationId = relationId, relativePath = "x.mp4",
-            fileName = "x.mp4", fileSize = 100L, volumeId = "other-vol", iv = ByteArray(0)
-        )
-        coEvery { videoRepository.getByRelativePathAndRelationId("x.mp4", relationId) } returns mismatchedEntity
-
-        val client = mockk<RemoteFileClient>(relaxed = true)
-        every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns client
-
-        val result = syncEngine.executeDelete(relationId, listOf(action))
-
-        assertFalse("volume-mismatch-only delete must not report success", result)
-        val p = syncEngine.progress.value
-        assertEquals(SyncPhase.PARTIAL_FAILED, p.phase)
-        assertEquals(0, p.completedFiles)
-        assertEquals(1, p.failedFiles)
-        // No local media/thumb deletion.
-        coVerify(exactly = 0) { encryptedMediaStore.delete(600L) }
-        coVerify(exactly = 0) { encryptedMediaStore.deleteThumb(600L) }
-        // No remote deletion attempt.
-        coVerify(exactly = 0) { client.deleteFile(any()) }
-        // No DB row deletion.
-        coVerify(exactly = 0) { videoRepository.deleteByRelativePathAndRelationId("x.mp4", relationId) }
-        // SKIPPED log written but counted as failure.
-        coVerify(exactly = 1) {
-            syncLogRepository.log(action = "DELETE_BOTH", relativePath = "x.mp4", status = "SKIPPED", any(), any(), any())
-        }
-    }
 
     // -------------------------------------------------------------------------
     // Helpers
@@ -412,9 +373,9 @@ class SyncEngineBoundaryTest {
         coEvery { videoRepository.getByRelativePathAndRelationId(localRelPath, relationId) } returns null
         coEvery { videoRepository.upsert(match { it.relativePath == localRelPath }) } returns assignedId
         // On each failed attempt the catch block cancels the sink + deletes the placeholder row.
-        coEvery { encryptedMediaStore.cancel(assignedId) } returns Unit
+        coEvery { mediaFileStore.cancel(assignedId) } returns Unit
         coEvery { videoRepository.deleteById(assignedId) } returns Unit
         val sink = mockk<OutputStream>(relaxed = true)
-        coEvery { encryptedMediaStore.openEncryptSink(assignedId, any(), any()) } returns sink
+        coEvery { mediaFileStore.openWriteSink(assignedId, any()) } returns sink
     }
 }

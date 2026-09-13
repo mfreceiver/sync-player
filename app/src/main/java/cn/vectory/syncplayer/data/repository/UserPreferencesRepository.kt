@@ -40,7 +40,6 @@ class UserPreferencesRepository @Inject constructor(
         val DOUBLE_TAP_ACTION = stringPreferencesKey("double_tap_action")
         val QUICK_RECYCLE = booleanPreferencesKey("quick_recycle")
         val SECURE_LOCK_ENABLED = booleanPreferencesKey("secure_lock_enabled")
-        val MEDIA_STORAGE_TREE_URI = stringPreferencesKey("media_storage_tree_uri")
         val ONBOARDING_DISMISSED = booleanPreferencesKey("onboarding_dismissed")
     }
 
@@ -97,16 +96,8 @@ class UserPreferencesRepository @Inject constructor(
         it[Keys.SECURE_LOCK_ENABLED] ?: false
     }
 
-    val mediaStorageTreeUri: Flow<String?> = dataStore.data.map { it[Keys.MEDIA_STORAGE_TREE_URI] }
-
     val onboardingDismissed: Flow<Boolean> = dataStore.data.map {
         it[Keys.ONBOARDING_DISMISSED] ?: false
-    }
-
-    suspend fun getMediaStorageTreeUri(): String? = mediaStorageTreeUri.first()
-
-    suspend fun setMediaStorageTreeUri(uri: String?) {
-        dataStore.edit { if (uri != null) it[Keys.MEDIA_STORAGE_TREE_URI] = uri else it.remove(Keys.MEDIA_STORAGE_TREE_URI) }
     }
 
     suspend fun getLongPressSpeed(): Float = longPressSpeed.first()

@@ -5,11 +5,9 @@ import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.model.SyncRelationWithSource
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
 import cn.vectory.syncplayer.sync.SyncErrorCode
 import cn.vectory.syncplayer.sync.SyncException
 import cn.vectory.syncplayer.sync.SyncOperation
-import dagger.Lazy
 import io.mockk.Called
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -48,7 +46,7 @@ import org.junit.Test
  * Unit tests for [UndoDeleteUseCase].
  *
  * Covers: successful undo of trash toggle (via real performTrashToggle), successful undo of
- * deferred hard delete, volume-mismatch fail-closed, double-undo idempotency, commit of
+ * deferred hard delete, double-undo idempotency, commit of
  * deferred delete, expectedId protection, and the NothingToUndo cases.
  *
  * Per project testing convention: assert on enums, call counts, and result types —
@@ -60,8 +58,6 @@ class UndoDeleteUseCaseTest {
     private val fileOps = mockk<FileOperationsUseCase>(relaxed = true)
     private val playbackRepository = mockk<PlaybackRepository>(relaxed = true)
     private val videoRepository = mockk<VideoRepository>(relaxed = true)
-    private val encryptedMediaStore = mockk<EncryptedMediaStore>(relaxed = true)
-    private val encryptedMediaStoreLazy = mockk<Lazy<EncryptedMediaStore>>()
 
     private lateinit var useCase: UndoDeleteUseCase
     private val testDispatcher = StandardTestDispatcher()
@@ -69,13 +65,10 @@ class UndoDeleteUseCaseTest {
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
-        every { encryptedMediaStoreLazy.get() } returns encryptedMediaStore
-        every { encryptedMediaStore.volumeId } returns "vol-active"
         useCase = UndoDeleteUseCase(
             fileOps = fileOps,
             playbackRepository = playbackRepository,
             videoRepository = videoRepository,
-            encryptedMediaStoreLazy = encryptedMediaStoreLazy,
             context = mockk(relaxed = true)
         )
     }
@@ -84,13 +77,12 @@ class UndoDeleteUseCaseTest {
     // Helpers
     // ===================================================================================
 
-    private fun videoEntity(id: Long, volumeId: String = "vol-active", relativePath: String = "test.mp4") =
+    private fun videoEntity(id: Long, relativePath: String = "test.mp4") =
         VideoItemEntity(
             id = id,
             relativePath = relativePath,
             fileName = "test.mp4",
             fileSize = 1000L,
-            volumeId = volumeId
         )
 
     private fun playbackRecord(id: Long, isTrashed: Boolean) =
@@ -192,19 +184,6 @@ class UndoDeleteUseCaseTest {
         scope.cancel()
     }
 
-    @Test
-    fun `undo trash toggle fails closed when volume mismatches`() = runTest {
-        val id = 2L
-        coEvery { videoRepository.getById(id) } returns videoEntity(id, volumeId = "vol-other")
-
-        useCase.simulateSetUndoState(UndoableDelete.TrashToggle(id, false))
-
-        val result = useCase.undo()
-
-        assertTrue(result is UndoResult.Failed)
-        assertEquals(SyncErrorCode.STORAGE_ERROR, (result as UndoResult.Failed).error.code)
-        verify { playbackRepository wasNot Called }
-    }
 
     @Test
     fun `undo trash toggle succeeds when entity is gone`() = runTest {
@@ -732,8 +711,6 @@ class UndoDeleteUseCaseTest {
             currentTrashed = !currentTrashed
             ToggleTrashResult.Success
         }
-        // undoTrashToggle does a volume-ownership check via videoRepository.getById — return
-        // an entity on the active volume so undo is permitted.
         coEvery { videoRepository.getById(id) } returns videoEntity(id)
 
         useCase.performTrashToggle(id, basePaths, scope, errorFlow)

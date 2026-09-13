@@ -42,7 +42,6 @@ fun SettingsScreen(
     onNavigateToDebugLog: () -> Unit = {},
 ) {
     val settingsState by viewModel.settingsState.collectAsStateWithLifecycle()
-    val storageLocationLabel by viewModel.storageLocationLabel.collectAsStateWithLifecycle()
     val currentContext = LocalContext.current
     var isNavigatingBack by remember { mutableStateOf(false) }
 
@@ -77,19 +76,7 @@ fun SettingsScreen(
         }
 
         val state = settingsState!!
-        val hasExternalVolume = state.mediaStorageTreeUri != null
-        // F04：显示名来自 VM 的异步状态源，组合期零 ContentResolver 调用。
-        // null（解析中/失败）→ 固定资源通用文案，绝不回退 URI 派生文本。
-        val locationLabel = if (hasExternalVolume) {
-            val displayName = storageLocationLabel
-            if (displayName != null) {
-                stringResource(R.string.settings_media_storage_external, displayName)
-            } else {
-                stringResource(R.string.settings_media_storage_folder_generic)
-            }
-        } else {
-            stringResource(R.string.settings_media_storage_internal)
-        }
+        val locationLabel = stringResource(R.string.storage_current_internal)
 
         Column(
             modifier = Modifier

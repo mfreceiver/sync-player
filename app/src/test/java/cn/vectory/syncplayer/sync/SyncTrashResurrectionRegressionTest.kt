@@ -13,7 +13,7 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.StoragePaths
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.MediaFileStore
 import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -45,8 +45,8 @@ class SyncTrashResurrectionRegressionTest {
     private val clientFactory = mockk<RemoteFileClientFactory>()
     private val client = mockk<RemoteFileClient>(relaxed = true)
     private val storagePaths = mockk<StoragePaths>()
-    private val store = mockk<EncryptedMediaStore>(relaxed = true)
-    private val storeLazy = mockk<Lazy<EncryptedMediaStore>> { every { get() } returns store }
+    private val store = mockk<MediaFileStore>(relaxed = true)
+    private val storeLazy = mockk<Lazy<MediaFileStore>> { every { get() } returns store }
     private val context = mockk<android.content.Context>(relaxed = true)
     private val publisher = SyncProgressPublisher()
 
@@ -78,8 +78,6 @@ class SyncTrashResurrectionRegressionTest {
             fileName = "a.mp4",
             fileSize = 1000L,
             remoteModifiedTime = 5000L,
-            volumeId = "vol-active",
-            iv = ByteArray(0)
         )
     }
 
@@ -87,7 +85,6 @@ class SyncTrashResurrectionRegressionTest {
         coEvery { syncRelationRepository.getById(1L) } returns relation
         coEvery { syncSourceRepository.getById(10L) } returns source
         every { clientFactory.create(SyncProtocol.SMB) } returns client
-        every { store.volumeId } returns "vol-active"
         every { storagePaths.toPathUnderBase(any(), any()) } returns "videos/a.mp4"
         // 扫描侧本地映射：直接返回远端相对路径，使 localMap key == 行 key
         every { storagePaths.toLocalRelativePath(any(), any()) } answers { secondArg() }

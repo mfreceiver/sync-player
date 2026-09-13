@@ -6,12 +6,10 @@ import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.SyncRelationWithSource
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
 import cn.vectory.syncplayer.sync.SyncErrorCode
 import cn.vectory.syncplayer.sync.SyncException
 import cn.vectory.syncplayer.sync.SyncOperation
 import cn.vectory.syncplayer.sync.syncErrorMessage
-import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -40,7 +38,7 @@ sealed class UndoableDelete {
     data class TrashToggle(override val id: Long, val previousTrashed: Boolean) : UndoableDelete()
 
     /**
-     * Hard delete (cipher + thumb + DB).
+     * Hard delete (file + thumb + DB).
      * The deletion is NOT executed immediately — it is deferred until [UndoDeleteUseCase.commitDeferredDelete]
      * is called (when the Snackbar expires without undo). Undo simply cancels the pending deletion.
      */
@@ -81,23 +79,18 @@ sealed class UndoResult {
  *   lost.
  *
  * Only the most recent delete operation is retained (latest-first semantics per task requirement 6).
- * Volume ownership fail-closed: undo of [TrashToggle] checks that the entity belongs to the
- * active volume before restoring. If the volume no longer matches, undo returns [UndoResult.Failed]
- * rather than pretending success.
  */
 @Singleton
 class UndoDeleteUseCase @Inject constructor(
     private val fileOps: FileOperationsUseCase,
     private val playbackRepository: PlaybackRepository,
     private val videoRepository: VideoRepository,
-    private val encryptedMediaStoreLazy: Lazy<EncryptedMediaStore>,
     @ApplicationContext private val context: Context
 ) {
     companion object {
         private const val TAG = "UndoDeleteUseCase"
     }
 
-    private val mediaStore: EncryptedMediaStore get() = encryptedMediaStoreLazy.get()
     private val undoState = AtomicReference<UndoableDelete?>(null)
     private val mutex = Mutex()
 
@@ -472,13 +465,10 @@ class UndoDeleteUseCase @Inject constructor(
     }
 
     /**
-     * Undo a trash-toggle operation with volume ownership check.
-     * If the entity's volume no longer matches the active volume, undo fails safely
-     * (fail-closed: don't pretend success when we can't verify ownership).
+     * Undo a trash-toggle operation.
      */
     private suspend fun undoTrashToggle(state: UndoableDelete.TrashToggle): UndoResult {
         return try {
-            // Volume ownership check: only restore if the entity belongs to the active volume
             val video = videoRepository.getById(state.id)
             if (video == null) {
                 // Entity gone (e.g., already deleted by another operation) — nothing to restore.
@@ -486,16 +476,6 @@ class UndoDeleteUseCase @Inject constructor(
                 // the entity no longer exists. Report success to avoid confusing the user.
                 Log.i(TAG, "undo trash toggle: entity gone; nothing to restore")
                 return UndoResult.Success
-            }
-            val currentVolumeId = mediaStore.volumeId
-            if (video.volumeId != currentVolumeId) {
-                Log.w(TAG, "undo trash toggle: volume not confirmed " +
-                    "(stored volumeId differs from active); skip restore (fail-closed)")
-                return UndoResult.Failed(SyncException(
-                    SyncErrorCode.STORAGE_ERROR,
-                    SyncOperation.DELETE,
-                    path = video.relativePath
-                ))
             }
             playbackRepository.setTrashed(state.id, state.previousTrashed)
             UndoResult.Success

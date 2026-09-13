@@ -13,6 +13,21 @@ object MediaUris {
         return javaUri.toString().toUri()
     }
 
+    /**
+     * 带 [fileName] 段的媒体 URI（`.../media/<id>/<fileName>`），供分享等需要
+     * 「URI 末段即真实文件名（含扩展名）」的消费方使用——部分第三方应用不调
+     * `ContentResolver.query()` 取 DISPLAY_NAME，只看 URI 最后一段。
+     * [MediaUris.idOf] 对两段/三段 URI 都取第 2 段为 id，provider 路由不受影响。
+     */
+    fun mediaUri(id: Long, fileName: String): Uri =
+        Uri.Builder()
+            .scheme("content")
+            .authority(AUTHORITY)
+            .appendPath(PATH_MEDIA)
+            .appendPath(id.toString())
+            .appendPath(fileName)
+            .build()
+
     fun thumbUri(id: Long): Uri {
         val javaUri = java.net.URI("content", AUTHORITY, "/$PATH_THUMB/$id", null, null)
         return javaUri.toString().toUri()
@@ -21,14 +36,14 @@ object MediaUris {
     fun isMedia(uri: Uri): Boolean =
         uri.scheme == "content" &&
         uri.authority == AUTHORITY &&
-        uri.pathSegments?.size == 2 &&
-        uri.pathSegments[0] == PATH_MEDIA
+        uri.pathSegments?.size in 2..3 &&
+        uri.pathSegments?.getOrNull(0) == PATH_MEDIA
 
     fun isThumb(uri: Uri): Boolean =
         uri.scheme == "content" &&
         uri.authority == AUTHORITY &&
         uri.pathSegments?.size == 2 &&
-        uri.pathSegments[0] == PATH_THUMB
+        uri.pathSegments?.getOrNull(0) == PATH_THUMB
 
     /** 断言 [uri] 是 media URI，否则抛出 [IllegalArgumentException]。 */
     fun requireMedia(uri: Uri) {

@@ -63,8 +63,7 @@ class SettingsViewModelTest {
         // on collection, cancelling the combine/collect in init.
         every { userPrefs.volumeBalance } returns MutableStateFlow(false)
         every { userPrefs.quickRecycle } returns MutableStateFlow(true)
-        every { userPrefs.secureLockEnabled } returns MutableStateFlow(false)
-        every { userPrefs.mediaStorageTreeUri } returns flow {
+        every { userPrefs.secureLockEnabled } returns flow {
             throw CancellationException("collect cancelled")
         }
 
@@ -74,7 +73,6 @@ class SettingsViewModelTest {
             syncLogRepository = syncLogRepository,
             userPrefs = userPrefs,
             biometricAuthManager = biometricAuthManager,
-            ioDispatcher = Dispatchers.Main,
         )
 
         // Assert: cancellation must NOT fall into the generic catch — no failure log,
@@ -103,7 +101,6 @@ class SettingsViewModelTest {
         every { userPrefs.volumeBalance } returns flakyVolumeBalance
         every { userPrefs.quickRecycle } returns MutableStateFlow(true)
         every { userPrefs.secureLockEnabled } returns MutableStateFlow(false)
-        every { userPrefs.mediaStorageTreeUri } returns MutableStateFlow(null)
 
         // Act: construct the VM (init starts eagerly on Unconfined Main) and let
         // the virtual clock digest the backoff delay before resubscription.
@@ -112,7 +109,6 @@ class SettingsViewModelTest {
             syncLogRepository = syncLogRepository,
             userPrefs = userPrefs,
             biometricAuthManager = biometricAuthManager,
-            ioDispatcher = Dispatchers.Main,
         )
         advanceUntilIdle()
 
@@ -134,9 +130,8 @@ class SettingsViewModelTest {
         val gate = CompletableDeferred<Unit>()
         every { userPrefs.volumeBalance } returns MutableStateFlow(false)
         every { userPrefs.quickRecycle } returns MutableStateFlow(true)
-        every { userPrefs.secureLockEnabled } returns MutableStateFlow(false)
-        every { userPrefs.mediaStorageTreeUri } returns flow {
-            emit(null)
+        every { userPrefs.secureLockEnabled } returns flow {
+            emit(false)
             gate.await()
             throw IllegalStateException("bug")
         }
@@ -148,7 +143,6 @@ class SettingsViewModelTest {
             syncLogRepository = syncLogRepository,
             userPrefs = userPrefs,
             biometricAuthManager = biometricAuthManager,
-            ioDispatcher = Dispatchers.Main,
         )
         advanceUntilIdle()
         assertNotNull("first snapshot must be delivered before the failure", vm.settingsState.value)

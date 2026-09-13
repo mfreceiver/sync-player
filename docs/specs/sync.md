@@ -21,7 +21,7 @@ dryRun(relationId)
 
 consumeAndExecute(relationId)
   executeSyncLocked():
-    空间预检(SyncSpaceChecker) → 并发下载/加密(Semaphore 3) → 元数据/缩略图 → 删除 → 结果记录
+    空间预检(SyncSpaceChecker) → 并发下载（通道级 lane 复用）→ 元数据/缩略图 → 删除 → 结果记录
 ```
 
 ## 组件拆分（SyncEngine 渐进拆分）
@@ -39,19 +39,20 @@ SyncException(code, operation, path?, host?, expectedBytes?/actualBytes?/availab
 ```
 
 - `message` **刻意为 null**（不携带显示文本）。
-- `SyncErrorCode`（18）: NETWORK_UNAVAILABLE, UNKNOWN_HOST, CONNECTION_REFUSED, TIMEOUT, AUTHENTICATION_FAILED, ACCESS_DENIED, PATH_NOT_FOUND, NOT_CONNECTED, SCAN_INCOMPLETE, DOWNLOAD_FAILED, REMOTE_DELETE_FAILED, INVALID_FILE_SIZE, INSUFFICIENT_SPACE, FINALIZE_FAILED, STORAGE_ERROR, THUMBNAIL_ERROR, DATABASE_ERROR, UNKNOWN。
+- `SyncErrorCode`（17）: NETWORK_UNAVAILABLE, UNKNOWN_HOST, CONNECTION_REFUSED, TIMEOUT, AUTHENTICATION_FAILED, ACCESS_DENIED, PATH_NOT_FOUND, NOT_CONNECTED, SCAN_INCOMPLETE, DOWNLOAD_FAILED, REMOTE_DELETE_FAILED, INSUFFICIENT_SPACE, FINALIZE_FAILED, STORAGE_ERROR, THUMBNAIL_ERROR, DATABASE_ERROR, UNKNOWN。
 - `ErrorMessageMapper.classifyRemoteError(e)` 读 **code**（非 message 子串）→ `RemoteBrowseError`。
 - `syncErrorMessage(e, context)` 解析 code → `R.string.*`（UNKNOWN 永不泄漏 `e.message`）。
 
 ## 不可违背的契约（均有测试锁定）
 
 ### E8 扫描失败保护
-`RemoteScanIncompleteException`（或任何扫描异常）→ `dryRun` 清空 `toDownload` **和** `toDelete`。部分远端快照**绝不**推导 `DELETE_LOCAL`（删除真实本地密文 + DB 行，不可恢复）。`SyncEngineDryRunTest` 锁定。
+`RemoteScanIncompleteException`（或任何扫描异常）→ `dryRun` 清空 `toDownload` **和** `toDelete`。部分远端快照**绝不**推导 `DELETE_LOCAL`（删除真实本地文件 + DB 行，不可恢复）。`SyncEngineDryRunTest` 锁定。
 
-### 卷所有权 fail-closed
-`entity.volumeId != store.volumeId` 时删除**跳过**（密文属于另一个卷——不删不属于自己的东西）；**空/未知 volumeId 同样视为不匹配**，绝不按"猜测属于活跃卷"删密文。计为 **FAILED** 仅限 **SyncEngine 同步流程**（保证 `completedFiles+failedFiles == totalFiles`，relation 显示 PARTIAL_FAILED 而非假 SUCCESS），状态日志 = `SKIPPED`。
-
-**浏览器/手动删除路径**（`FileOperationsUseCase.deleteMediaById`，非 SyncEngine 流程）对不匹配卷使用 **index-only delete**（仅删索引、密文不动），返回成功为合法语义——防误删产生不可恢复的孤儿密文（真实密文可能位于非活跃卷）。设计依据：`FileOperationsUseCase.kt` 的 `deleteMediaById` KDoc 已记录该决策表。
+### 本地删除一致性
+本地只有单一存储卷（`filesDir/userdata`，`MediaFileStore`）。删除语义：
+- DELETE_LOCAL / DELETE_BOTH：本地文件 + 缩略图 + DB 行 + 远端（remote-first）。
+- 浏览器手动删除（`FileOperationsUseCase.deleteMediaById`）：文件缺失按成功处理（SkippedNotFound），真实 IO 错误保留 DB 行返回 FAILED——绝不误删不可恢复的数据。
+- **下载两阶段提交**：先写 `<id>.tmp`，close 校验长度，`finalize` 原子 rename；`probePendingTmp` 三态探测收束 finalize 不确定窗口（BUG-007 机制，与加密无关，保留）。
 
 ### 取消优先
 `CancellationException` **始终**先于普通 Exception 传播。清理在 `NonCancellable` 中完成（pending task markCancelled + deleteByRelationId）。
@@ -66,6 +67,6 @@ SyncException(code, operation, path?, host?, expectedBytes?/actualBytes?/availab
 ## Known Residual Risks（accepted, personal-use）
 
 1. `listDirectories()` 吞异常 → 返回空列表（浏览 UI 可能显示"空目录"而非访问错误）。镜像扫描 `listFiles()` 仍抛（E8 成立）。Defer：转为结构化错误返回。
-2. `isNotFound()` 仅按类型（`FileNotFoundException`）。SAF provider 用普通 `IOException` 文本信号 not-found 时会被当真实失败（DB 行保留）——保守，绝不误删。
+2. `isNotFound()` 仅按类型（`FileNotFoundException`）。provider 用普通 `IOException` 文本信号 not-found 时会被当真实失败（DB 行保留）——保守，绝不误删。
 3. `classifySmbException` 按 jcifs 英文状态短语。未知变体安全降级为 `UNKNOWN`→`DOWNLOAD_FAILED`。
 4. 无两阶段提交（Room + EncryptedSharedPreferences + 文件系统）；append-only 写不做崩溃后完整性检查（best-effort purge marker 幂等 → 无害）。

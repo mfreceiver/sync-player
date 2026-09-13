@@ -14,7 +14,7 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.StoragePaths
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.MediaFileStore
 import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -61,8 +61,8 @@ class SyncEngineProgressTest {
     private val storagePaths = mockk<StoragePaths>()
     private val videoMetadataExtractor = mockk<VideoMetadataExtractor>()
     private val imageMetadataExtractor = mockk<ImageMetadataExtractor>()
-    private val encryptedMediaStore = mockk<EncryptedMediaStore>(relaxed = true)
-    private val encryptedMediaStoreLazy = mockk<Lazy<EncryptedMediaStore>>()
+    private val mediaFileStore = mockk<MediaFileStore>(relaxed = true)
+    private val mediaFileStoreLazy = mockk<Lazy<MediaFileStore>>()
 
     private lateinit var syncEngine: SyncEngine
     private val testDispatcher = StandardTestDispatcher()
@@ -88,7 +88,7 @@ class SyncEngineProgressTest {
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
-        every { encryptedMediaStoreLazy.get() } returns encryptedMediaStore
+        every { mediaFileStoreLazy.get() } returns mediaFileStore
         syncEngine = SyncEngine(
             syncSourceRepository = syncSourceRepository,
             syncRelationRepository = syncRelationRepository,
@@ -100,14 +100,13 @@ class SyncEngineProgressTest {
             pendingSyncActionDao = pendingSyncActionDao,
             remoteFileClientFactory = remoteFileClientFactory,
             storagePaths = storagePaths,
-            encryptedMediaStoreLazy = encryptedMediaStoreLazy,
+            mediaFileStoreLazy = mediaFileStoreLazy,
             context = context
         )
 
         coEvery { syncRelationRepository.getById(relationId) } returns relation
         coEvery { syncSourceRepository.getById(10L) } returns source
-        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
-        every { encryptedMediaStore.volumeId } returns "test-vol"
+        every { mediaFileStore.usableSpace() } returns Long.MAX_VALUE
         every { storagePaths.toLocalRelativePath(any(), any()) } answers {
             val base = firstArg<String>()
             val rel = secondArg<String>()
@@ -144,13 +143,13 @@ class SyncEngineProgressTest {
         val savedEntity = VideoItemEntity(
             id = assignedId, syncRelationId = relationId, relativePath = localRelPath,
             fileName = relativePath.substringAfterLast("/"),
-            fileSize = 1000L, volumeId = "test-vol", iv = ByteArray(12)
+            fileSize = 1000L
         )
         coEvery { videoRepository.getById(assignedId) } returns savedEntity
         coEvery { videoMetadataExtractor.extractAndSave(any()) } returns savedEntity
         val sink = mockk<OutputStream>(relaxed = true)
-        coEvery { encryptedMediaStore.openEncryptSink(assignedId, any(), any()) } returns sink
-        coEvery { encryptedMediaStore.finalize(assignedId) } returns true
+        coEvery { mediaFileStore.openWriteSink(assignedId, any()) } returns sink
+        coEvery { mediaFileStore.finalize(assignedId) } returns true
     }
 
     private fun stubFailedDownload(relativePath: String, assignedId: Long) {
@@ -163,8 +162,8 @@ class SyncEngineProgressTest {
         } returns assignedId
         coEvery { videoRepository.deleteById(assignedId) } returns Unit
         val sink = mockk<OutputStream>(relaxed = true)
-        coEvery { encryptedMediaStore.openEncryptSink(assignedId, any(), any()) } returns sink
-        coEvery { encryptedMediaStore.cancel(assignedId) } returns Unit
+        coEvery { mediaFileStore.openWriteSink(assignedId, any()) } returns sink
+        coEvery { mediaFileStore.cancel(assignedId) } returns Unit
     }
 
     // =========================================================================
@@ -323,7 +322,7 @@ class SyncEngineProgressTest {
 
         stubSuccessfulDownload("a.mp4", assignedId = 101L)
 
-        // b.mp4 fails: stub its upsert + make openEncryptSink throw (avoids 3x retry delay).
+        // b.mp4 fails: stub its upsert + make openWriteSink throw (avoids 3x retry delay).
         val bLocalRelPath = storagePaths.toLocalRelativePath("/local", "b.mp4")
         coEvery {
             videoRepository.getByRelativePathAndRelationId(bLocalRelPath, relationId)
@@ -331,7 +330,7 @@ class SyncEngineProgressTest {
         coEvery {
             videoRepository.upsert(match { it.relativePath == bLocalRelPath })
         } returns 102L
-        coEvery { encryptedMediaStore.openEncryptSink(102L, any(), any()) } throws
+        coEvery { mediaFileStore.openWriteSink(102L, any()) } throws
             java.io.IOException("simulated encrypt failure")
 
         val actions = listOf(
@@ -347,57 +346,6 @@ class SyncEngineProgressTest {
         assertEquals("failedFiles must be 1 (only b.mp4)", 1, p.failedFiles)
     }
 
-    // =========================================================================
-    // DELETE_LOCAL — volume mismatch (real bug regression)
-    // =========================================================================
-
-    @Test
-    fun `DELETE_LOCAL with mismatched volumeId is counted as FAILED and does not delete media`() = runTest {
-        // Real bug regression: a DELETE_LOCAL whose entity.volumeId != store.volumeId
-        // must NOT increment completedCount (it must not count as success) AND must
-        // increment failedDeleteCount (consistency with executeDelete's DELETE_BOTH path).
-        // If it were neither completed nor failed, completedFiles+failedFiles < totalFiles
-        // and executeSync would misreport SUCCESS, leaving the relation stuck.
-        val store = encryptedMediaStore
-        every { store.volumeId } returns "current-vol"
-
-        val action = SyncAction(type = SyncActionType.DELETE_LOCAL, relativePath = "x.mp4", fileSize = 100L)
-        // Entity belongs to a DIFFERENT volume than the active store.
-        val mismatchedEntity = VideoItemEntity(
-            id = 500L,
-            syncRelationId = relationId,
-            relativePath = "x.mp4",
-            fileName = "x.mp4",
-            fileSize = 100L,
-            volumeId = "other-vol",
-            iv = ByteArray(0)
-        )
-        coEvery {
-            videoRepository.getByRelativePathAndRelationId("x.mp4", relationId)
-        } returns mismatchedEntity
-
-        val result = syncEngine.executeSync(relationId, emptyList(), listOf(action))
-
-        assertFalse("volume-mismatch-only sync must not report success", result)
-        val p = syncEngine.progress.value
-        assertEquals(SyncPhase.PARTIAL_FAILED, p.phase)
-        assertEquals("completedFiles must NOT include the volume-mismatched delete", 0, p.completedFiles)
-        assertEquals("failedFiles must be 1 (mismatch counts as failure to complete the relation)", 1, p.failedFiles)
-        // No media deletion must occur — the ciphertext belongs to another volume.
-        coVerify(exactly = 0) { store.delete(500L) }
-        coVerify(exactly = 0) { store.deleteThumb(500L) }
-        // No DB row deletion.
-        coVerify(exactly = 0) {
-            videoRepository.deleteByRelativePathAndRelationId("x.mp4", relationId)
-        }
-        // A SKIPPED log must be written (action not performed) but counted as failure.
-        coVerify(exactly = 1) {
-            syncLogRepository.log(
-                action = "DELETE_LOCAL", relativePath = "x.mp4",
-                status = "SKIPPED", any(), any(), any()
-            )
-        }
-    }
 
     // =========================================================================
     // DELETE_LOCAL — happy path (success counted)
@@ -405,7 +353,6 @@ class SyncEngineProgressTest {
 
     @Test
     fun `successful DELETE_LOCAL increments completed`() = runTest {
-        every { encryptedMediaStore.volumeId } returns "test-vol"
 
         val action = SyncAction(type = SyncActionType.DELETE_LOCAL, relativePath = "x.mp4", fileSize = 100L)
         val entity = VideoItemEntity(
@@ -414,14 +361,12 @@ class SyncEngineProgressTest {
             relativePath = "x.mp4",
             fileName = "x.mp4",
             fileSize = 100L,
-            volumeId = "test-vol",
-            iv = ByteArray(0)
         )
         coEvery {
             videoRepository.getByRelativePathAndRelationId("x.mp4", relationId)
         } returns entity
-        coEvery { encryptedMediaStore.delete(600L) } returns true
-        coEvery { encryptedMediaStore.deleteThumb(600L) } returns true
+        coEvery { mediaFileStore.delete(600L) } returns true
+        coEvery { mediaFileStore.deleteThumb(600L) } returns true
         coEvery { videoRepository.deleteByRelativePathAndRelationId("x.mp4", relationId) } returns Unit
 
         val result = syncEngine.executeSync(relationId, emptyList(), listOf(action))

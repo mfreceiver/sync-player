@@ -63,7 +63,6 @@ class ImageViewerViewModelToggleTest {
         relativePath = "image$id.jpg",
         fileName = "image$id.jpg",
         fileSize = 1000L,
-        volumeId = "vol-active"
     )
 
     private fun playbackRecord(id: Long, trashed: Boolean) =

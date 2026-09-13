@@ -15,7 +15,7 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.StoragePaths
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.MediaFileStore
 import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -70,8 +70,8 @@ class SyncOutcomePersistenceTest {
     private val storagePaths = mockk<StoragePaths>()
     private val videoMetadataExtractor = mockk<VideoMetadataExtractor>()
     private val imageMetadataExtractor = mockk<ImageMetadataExtractor>()
-    private val encryptedMediaStore = mockk<EncryptedMediaStore>(relaxed = true)
-    private val encryptedMediaStoreLazy = mockk<Lazy<EncryptedMediaStore>>()
+    private val mediaFileStore = mockk<MediaFileStore>(relaxed = true)
+    private val mediaFileStoreLazy = mockk<Lazy<MediaFileStore>>()
 
     private lateinit var syncEngine: SyncEngine
     private val testDispatcher = StandardTestDispatcher()
@@ -97,7 +97,7 @@ class SyncOutcomePersistenceTest {
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
-        every { encryptedMediaStoreLazy.get() } returns encryptedMediaStore
+        every { mediaFileStoreLazy.get() } returns mediaFileStore
         syncEngine = SyncEngine(
             syncSourceRepository = syncSourceRepository,
             syncRelationRepository = syncRelationRepository,
@@ -109,13 +109,12 @@ class SyncOutcomePersistenceTest {
             pendingSyncActionDao = pendingSyncActionDao,
             remoteFileClientFactory = remoteFileClientFactory,
             storagePaths = storagePaths,
-            encryptedMediaStoreLazy = encryptedMediaStoreLazy,
+            mediaFileStoreLazy = mediaFileStoreLazy,
             context = context
         )
         coEvery { syncRelationRepository.getById(relationId) } returns relation
         coEvery { syncSourceRepository.getById(10L) } returns source
-        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
-        every { encryptedMediaStore.volumeId } returns "test-vol"
+        every { mediaFileStore.usableSpace() } returns Long.MAX_VALUE
         every { storagePaths.toLocalRelativePath(any(), any()) } answers {
             val base = firstArg<String>()
             val rel = secondArg<String>()
@@ -150,13 +149,13 @@ class SyncOutcomePersistenceTest {
         val savedEntity = VideoItemEntity(
             id = assignedId, syncRelationId = relationId, relativePath = localRelPath,
             fileName = relativePath.substringAfterLast("/"),
-            fileSize = 1000L, volumeId = "test-vol", iv = ByteArray(12)
+            fileSize = 1000L
         )
         coEvery { videoRepository.getById(assignedId) } returns savedEntity
         coEvery { videoMetadataExtractor.extractAndSave(any()) } returns savedEntity
         val sink = mockk<OutputStream>(relaxed = true)
-        coEvery { encryptedMediaStore.openEncryptSink(assignedId, any(), any()) } returns sink
-        coEvery { encryptedMediaStore.finalize(assignedId) } returns true
+        coEvery { mediaFileStore.openWriteSink(assignedId, any()) } returns sink
+        coEvery { mediaFileStore.finalize(assignedId) } returns true
     }
 
     private fun stubFailedDownload(relativePath: String, assignedId: Long) {
@@ -169,8 +168,8 @@ class SyncOutcomePersistenceTest {
         } returns assignedId
         coEvery { videoRepository.deleteById(assignedId) } returns Unit
         val sink = mockk<OutputStream>(relaxed = true)
-        coEvery { encryptedMediaStore.openEncryptSink(assignedId, any(), any()) } returns sink
-        coEvery { encryptedMediaStore.cancel(assignedId) } returns Unit
+        coEvery { mediaFileStore.openWriteSink(assignedId, any()) } returns sink
+        coEvery { mediaFileStore.cancel(assignedId) } returns Unit
     }
 
     /** 捕获全部 updateLastSync 终态写入。 */
@@ -283,7 +282,7 @@ class SyncOutcomePersistenceTest {
 
     @Test
     fun `insufficient space abort persists FAILED with INSUFFICIENT_SPACE`() = runTest {
-        every { encryptedMediaStore.usableSpace() } returns 0L
+        every { mediaFileStore.usableSpace() } returns 0L
         val outcomes = captureOutcomes()
 
         val result = syncEngine.executeSync(relationId, listOf(

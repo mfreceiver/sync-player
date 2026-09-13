@@ -3,7 +3,7 @@ package cn.vectory.syncplayer
 import android.app.Application
 import android.util.Log
 import cn.vectory.syncplayer.security.AppLockManager
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.MediaFileStore
 import cn.vectory.syncplayer.sync.SyncEngine
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CancellationException
@@ -21,10 +21,10 @@ class SyncPlayerApp : Application() {
     @Inject lateinit var appLockManager: AppLockManager
 
     /**
-     * [Provider] 而非直接注入：让 [EncryptedMediaStore] 及其依赖（MediaCryptoMaster/Keystore）
-     * 在后台协程首次取用时才构造，不占用 Application.onCreate 的启动路径。
+     * [Provider] 而非直接注入：让 [MediaFileStore] 在后台协程首次取用时才构造，
+     * 不占用 Application.onCreate 的启动路径。
      */
-    @Inject lateinit var encryptedMediaStore: Provider<EncryptedMediaStore>
+    @Inject lateinit var mediaFileStore: Provider<MediaFileStore>
     @Inject lateinit var syncEngine: SyncEngine
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -33,28 +33,27 @@ class SyncPlayerApp : Application() {
         super.onCreate()
         registerX25519Aliases()
         appLockManager.register()
-        purgeLegacyCiphertext()
+        purgeUpgradeOrphans()
     }
 
     /**
-     * AEAD v2 断代收尾：清理升级前遗留的 v1（无认证 CTR）密文孤儿。
+     * v4 去加密断代收尾：清理升级前遗留的加密媒体孤儿。
      *
-     * DB 已由 destructive migration 清表，这些文件不再被任何 entity 引用，仅占用空间。
-     * [EncryptedMediaStore.purgeLegacyIfNeeded] 通过卷根 marker 保证每个卷只执行一次，
-     * 且会读 magic 保留 v2 文件，因此重复调用与已迁移库都是安全的。
+     * DB 已由破坏性迁移清空，这些文件不再被任何 entity 引用，仅占用空间。
+     * [MediaFileStore.purgeOrphansIfNeeded] 通过 marker 保证只执行一次。
      * 失败不影响启动 —— 下次启动会再试一次。
      */
-    private fun purgeLegacyCiphertext() {
+    private fun purgeUpgradeOrphans() {
         appScope.launch {
             try {
                 val removed = syncEngine.storageOperationMutex.withLock {
-                    encryptedMediaStore.get().purgeLegacyIfNeeded()
+                    mediaFileStore.get().purgeOrphansIfNeeded()
                 }
-                if (removed > 0) Log.i(TAG, "legacy v1 ciphertext purge: removed $removed file(s)")
+                if (removed > 0) Log.i(TAG, "upgrade orphan purge: removed $removed file(s)")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.w(TAG, "legacy v1 ciphertext purge skipped", e)
+                Log.w(TAG, "upgrade orphan purge skipped", e)
             }
         }
     }

@@ -5,7 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.MediaFileStore
 import dagger.Lazy
 import io.mockk.coVerify
 import io.mockk.every
@@ -24,8 +24,8 @@ import org.junit.Test
 class ImageMetadataExtractorTest {
 
     private val videoRepository = mockk<VideoRepository>(relaxed = true)
-    private val store = mockk<EncryptedMediaStore>(relaxed = true)
-    private val storeLazy = mockk<Lazy<EncryptedMediaStore>>()
+    private val store = mockk<MediaFileStore>(relaxed = true)
+    private val storeLazy = mockk<Lazy<MediaFileStore>>()
     private val context = mockk<Context>()
     private val contentResolver = mockk<ContentResolver>()
 

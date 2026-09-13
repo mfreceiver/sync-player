@@ -119,7 +119,6 @@ class PlayerViewModelProgressScrubTest {
             relativePath = "video42.mp4",
             fileName = "video42.mp4",
             fileSize = 1_000L,
-            volumeId = "vol-active",
         )
         coEvery { videoRepository.getById(42L) } returns item
         coEvery { playbackRepository.getByVideoId(42L) } returns null

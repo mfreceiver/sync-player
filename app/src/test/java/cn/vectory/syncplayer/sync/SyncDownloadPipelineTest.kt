@@ -14,8 +14,8 @@ import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.debug.DebugLogger
 import cn.vectory.syncplayer.storage.StoragePaths
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
-import cn.vectory.syncplayer.storage.volume.TmpProbeState
+import cn.vectory.syncplayer.storage.MediaFileStore
+import cn.vectory.syncplayer.storage.TmpProbeState
 import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -38,7 +38,6 @@ import java.util.concurrent.atomic.AtomicInteger
  * 迁出后的行为等价性。
  *
  * 覆盖 plan 12.2.0 remediation T7-C1：
- *  - toDelete 卷不匹配 → false + 密文零删除（红线 2：volume ownership fail-closed）；
  *  - toDelete 无 DB 行 → 计为成功（本地已不存在即视为已删除）。
  */
 class SyncDownloadPipelineTest {
@@ -50,8 +49,8 @@ class SyncDownloadPipelineTest {
     private val syncLogRepository = mockk<SyncLogRepository>(relaxed = true)
     private val clientFactory = mockk<RemoteFileClientFactory>()
     private val storagePaths = mockk<StoragePaths>()
-    private val store = mockk<EncryptedMediaStore>(relaxed = true)
-    private val storeLazy = mockk<Lazy<EncryptedMediaStore>> { every { get() } returns store }
+    private val store = mockk<MediaFileStore>(relaxed = true)
+    private val storeLazy = mockk<Lazy<MediaFileStore>> { every { get() } returns store }
     private val context = mockk<android.content.Context>(relaxed = true)
     private val publisher = SyncProgressPublisher()
     private val deleteExecutor = SyncDeleteExecutor(
@@ -76,7 +75,6 @@ class SyncDownloadPipelineTest {
             id = 10L, name = "s", protocol = SyncProtocol.SMB, host = "h", port = 445,
             username = "u", password = "p"
         )
-        every { store.volumeId } returns "vol-active"
     }
 
     // ------------------------------------------------------------------ BUG-007 管线组（计划 §BUG-007.3 #1-#14+13b）
@@ -86,16 +84,15 @@ class SyncDownloadPipelineTest {
 
     private fun dlAction(name: String = "f.mp4") = SyncAction(SyncActionType.DOWNLOAD, name, 1000L, 0L)
 
-    /** existing 行（volumeId 匹配当前卷）——只被读 id，metadata 窗口不触达。 */
+    /** existing 行——只被读 id，metadata 窗口不触达。 */
     private fun existingRow(rowId: Long = 42L): VideoItemEntity = mockk {
         every { id } returns rowId
-        every { volumeId } returns "vol-active"
     }
 
     /** 元数据窗口 getById 返回的完整行（真实 data class，供 copy）。 */
     private fun finalizedEntity(id: Long) = VideoItemEntity(
         id = id, syncRelationId = 1L, relativePath = "videos/f.mp4", fileName = "f.mp4",
-        fileSize = 1L, volumeId = "vol-active", iv = ByteArray(12)
+        fileSize = 1L
     )
 
     /**
@@ -112,7 +109,7 @@ class SyncDownloadPipelineTest {
         }
         every { store.usableSpace() } returns Long.MAX_VALUE
         coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns null
-        coEvery { store.openEncryptSink(any(), any(), any()) } returns mockk<OutputStream>(relaxed = true)
+        coEvery { store.openWriteSink(any(), any()) } returns mockk<OutputStream>(relaxed = true)
         coEvery { store.finalize(any()) } returns true
         val client = mockk<RemoteFileClient>(relaxed = true)
         every { clientFactory.create(SyncProtocol.SMB) } returns client
@@ -128,18 +125,6 @@ class SyncDownloadPipelineTest {
         e
     }
 
-    @Test
-    fun `toDelete with mismatched volumeId fails the run without deleting media`() = runTest {
-        stubBasics()
-        coEvery { videoRepository.getByRelativePathAndRelationId("a.mp4", 1L) } returns mockk<VideoItemEntity> {
-            every { id } returns 7L
-            every { volumeId } returns "vol-other"
-        }
-
-        assertFalse(sut.executeSyncLocked(1L, emptyList(), listOf(delAction("a.mp4"))))
-
-        coVerify(exactly = 0) { store.delete(any()) }
-    }
 
     @Test
     fun `toDelete with no DB row counts as success`() = runTest {
@@ -149,9 +134,9 @@ class SyncDownloadPipelineTest {
         assertTrue(sut.executeSyncLocked(1L, emptyList(), listOf(delAction("gone.mp4"))))
     }
 
-    /** 计划 #1（红）：finalize 确认成功后取消（verifyReadable 处）——COMMITTED 回滚 final 密文并删 existing 行，恰一次。 */
+    /** 计划 #1（红）：finalize 确认成功后取消（verifyReadable 处）——COMMITTED 回滚 final 文件并删 existing 行，恰一次。 */
     @Test
-    fun `cancellation after confirmed finalize rolls back final ciphertext and deletes existing row`() = runTest {
+    fun `cancellation after confirmed finalize rolls back final file and deletes existing row`() = runTest {
         stubDownloadRun()
         coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns existingRow(42L)
         coEvery { store.verifyReadable(42L, 1000L) } throws CancellationException("bug007-verify-cancel")
@@ -325,12 +310,12 @@ class SyncDownloadPipelineTest {
         coVerify(exactly = 0) { videoRepository.deleteById(any()) }
     }
 
-    /** 计划 #11（回归锁）：NOT_FINALIZED 且 tmp 缺失（openEncryptSink 失败=包装失败已自删/openWrite 失败）——旧 final 完好、行保留、绝不探测。 */
+    /** 计划 #11（回归锁）：NOT_FINALIZED 且 tmp 缺失（openWriteSink 失败即打开失败）——旧 final 完好、行保留、绝不探测。 */
     @Test
     fun `NOT_FINALIZED with tmp absent never deletes old final`() = runTest {
         stubDownloadRun()
         coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns existingRow(42L)
-        coEvery { store.openEncryptSink(42L, any(), any()) } throws SyncException(
+        coEvery { store.openWriteSink(42L, any()) } throws SyncException(
             SyncErrorCode.STORAGE_ERROR, SyncOperation.DOWNLOAD, path = "f.mp4"
         )
 
@@ -435,7 +420,7 @@ class SyncDownloadPipelineTest {
         // fake store：有序调用记录
         val storeCalls = CopyOnWriteArrayList<String>()
         val round = AtomicInteger(1)
-        coEvery { store.openEncryptSink(any(), any(), any()) } coAnswers {
+        coEvery { store.openWriteSink(any(), any()) } coAnswers {
             storeCalls.add("openSink:${firstArg<Long>()}")
             mockk<OutputStream>(relaxed = true)
         }

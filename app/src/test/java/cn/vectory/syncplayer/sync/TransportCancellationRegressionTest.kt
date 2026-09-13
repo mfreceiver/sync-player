@@ -14,7 +14,7 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.StoragePaths
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.MediaFileStore
 import cn.vectory.syncplayer.sync.sftp.SftpFileClient
 import dagger.Lazy
 import io.mockk.coEvery
@@ -71,8 +71,8 @@ class TransportCancellationRegressionTest {
     private val storagePaths = mockk<StoragePaths>()
     private val videoMetadataExtractor = mockk<VideoMetadataExtractor>()
     private val imageMetadataExtractor = mockk<ImageMetadataExtractor>()
-    private val encryptedMediaStore = mockk<EncryptedMediaStore>(relaxed = true)
-    private val encryptedMediaStoreLazy = mockk<Lazy<EncryptedMediaStore>>()
+    private val mediaFileStore = mockk<MediaFileStore>(relaxed = true)
+    private val mediaFileStoreLazy = mockk<Lazy<MediaFileStore>>()
 
     private val sshClient = mockk<net.schmizz.sshj.SSHClient>(relaxed = true)
     private val sftpClient = mockk<net.schmizz.sshj.sftp.SFTPClient>(relaxed = true)
@@ -99,7 +99,7 @@ class TransportCancellationRegressionTest {
         tempDir = java.nio.file.Files.createTempDirectory("transport-cancel-test-").toFile()
         every { context.filesDir } returns tempDir
         stubNetworkOk()
-        every { encryptedMediaStoreLazy.get() } returns encryptedMediaStore
+        every { mediaFileStoreLazy.get() } returns mediaFileStore
         every { relation.id } returns 1L
         every { relation.syncSourceId } returns 10L
         every { relation.remotePath } returns "/remote"
@@ -120,7 +120,7 @@ class TransportCancellationRegressionTest {
             pendingSyncActionDao = pendingSyncActionDao,
             remoteFileClientFactory = remoteFileClientFactory,
             storagePaths = storagePaths,
-            encryptedMediaStoreLazy = encryptedMediaStoreLazy,
+            mediaFileStoreLazy = mediaFileStoreLazy,
             context = context
         )
     }

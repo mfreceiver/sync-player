@@ -15,7 +15,7 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.StoragePaths
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.MediaFileStore
 import dagger.Lazy
 import io.mockk.*
 import kotlinx.coroutines.CompletableDeferred
@@ -53,8 +53,8 @@ class SyncEngineTest {
     private val storagePaths = mockk<StoragePaths>()
     private val videoMetadataExtractor = mockk<VideoMetadataExtractor>()
     private val imageMetadataExtractor = mockk<ImageMetadataExtractor>()
-    private val encryptedMediaStore = mockk<EncryptedMediaStore>(relaxed = true)
-    private val encryptedMediaStoreLazy = mockk<Lazy<EncryptedMediaStore>>()
+    private val mediaFileStore = mockk<MediaFileStore>(relaxed = true)
+    private val mediaFileStoreLazy = mockk<Lazy<MediaFileStore>>()
 
     private lateinit var syncEngine: SyncEngine
     private val testDispatcher = StandardTestDispatcher()
@@ -62,7 +62,7 @@ class SyncEngineTest {
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
-        every { encryptedMediaStoreLazy.get() } returns encryptedMediaStore
+        every { mediaFileStoreLazy.get() } returns mediaFileStore
         syncEngine = SyncEngine(
             syncSourceRepository = syncSourceRepository,
             syncRelationRepository = syncRelationRepository,
@@ -74,7 +74,7 @@ class SyncEngineTest {
             pendingSyncActionDao = pendingSyncActionDao,
             remoteFileClientFactory = remoteFileClientFactory,
             storagePaths = storagePaths,
-            encryptedMediaStoreLazy = encryptedMediaStoreLazy,
+            mediaFileStoreLazy = mediaFileStoreLazy,
             context = context
         )
     }
@@ -158,8 +158,7 @@ class SyncEngineTest {
         coEvery { pendingSyncActionDao.deleteByRelationId(relationId) } returns Unit
         coEvery { syncRelationRepository.getById(relationId) } returns relation
         coEvery { syncSourceRepository.getById(10L) } returns source
-        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
-        every { encryptedMediaStore.volumeId } returns "test-vol"
+        every { mediaFileStore.usableSpace() } returns Long.MAX_VALUE
         coEvery {
             videoRepository.getByRelativePathAndRelationId(any(), relationId)
         } returns null
@@ -188,8 +187,7 @@ class SyncEngineTest {
 
         coEvery { syncRelationRepository.getById(relationId) } returns relation
         coEvery { syncSourceRepository.getById(10L) } returns source
-        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
-        every { encryptedMediaStore.volumeId } returns "test-vol"
+        every { mediaFileStore.usableSpace() } returns Long.MAX_VALUE
 
         val client = mockk<RemoteFileClient>(relaxed = true)
         every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns client
@@ -201,25 +199,25 @@ class SyncEngineTest {
         coEvery { videoRepository.upsert(any()) } returns 100L
         val savedEntity = VideoItemEntity(
             id = 100L, syncRelationId = relationId, relativePath = "video.mp4",
-            fileName = "video.mp4", fileSize = 1000L, volumeId = "test-vol", iv = ByteArray(8)
+            fileName = "video.mp4", fileSize = 1000L
         )
         coEvery { videoRepository.getById(100L) } returns savedEntity
         coEvery { videoMetadataExtractor.extractAndSave(any()) } returns savedEntity
 
         val sink = mockk<OutputStream>(relaxed = true)
         // AEAD v2: sink 需要明文长度以写入 header，故为三参重载。
-        coEvery { encryptedMediaStore.openEncryptSink(100L, any(), any()) } returns sink
-        coEvery { encryptedMediaStore.finalize(100L) } returns true
+        coEvery { mediaFileStore.openWriteSink(100L, any()) } returns sink
+        coEvery { mediaFileStore.finalize(100L) } returns true
 
         val action = SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "video.mp4", fileSize = 1000L)
         val result = syncEngine.executeSync(relationId, listOf(action), emptyList())
 
         assertEquals(true, result)
-        coVerify(atLeast = 1) { encryptedMediaStore.openEncryptSink(100L, any(), any()) }
+        coVerify(atLeast = 1) { mediaFileStore.openWriteSink(100L, any()) }
         coVerify(atLeast = 1) { client.downloadTo(any(), any(), any()) }
-        coVerify(atLeast = 1) { encryptedMediaStore.finalize(100L) }
+        coVerify(atLeast = 1) { mediaFileStore.finalize(100L) }
         // 成功路径不应 cancel
-        coVerify(exactly = 0) { encryptedMediaStore.cancel(100L) }
+        coVerify(exactly = 0) { mediaFileStore.cancel(100L) }
     }
 
     @Test
@@ -237,8 +235,7 @@ class SyncEngineTest {
 
         coEvery { syncRelationRepository.getById(relationId) } returns relation
         coEvery { syncSourceRepository.getById(10L) } returns source
-        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
-        every { encryptedMediaStore.volumeId } returns "test-vol"
+        every { mediaFileStore.usableSpace() } returns Long.MAX_VALUE
 
         val client = mockk<RemoteFileClient>(relaxed = true)
         every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns client
@@ -251,9 +248,9 @@ class SyncEngineTest {
         coEvery { videoRepository.deleteById(200L) } returns Unit
 
         val sink = mockk<OutputStream>(relaxed = true)
-        coEvery { encryptedMediaStore.openEncryptSink(200L, any(), any()) } returns sink
-        coEvery { encryptedMediaStore.finalize(200L) } returns true
-        coEvery { encryptedMediaStore.cancel(200L) } returns Unit
+        coEvery { mediaFileStore.openWriteSink(200L, any()) } returns sink
+        coEvery { mediaFileStore.finalize(200L) } returns true
+        coEvery { mediaFileStore.cancel(200L) } returns Unit
 
         val action = SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "video.mp4", fileSize = 1000L)
         val result = syncEngine.executeSync(relationId, listOf(action), emptyList())
@@ -261,7 +258,7 @@ class SyncEngineTest {
         // 全部失败 → return false
         assertEquals(false, result)
         // 失败应 cancel 并删除占位
-        coVerify(atLeast = 1) { encryptedMediaStore.cancel(200L) }
+        coVerify(atLeast = 1) { mediaFileStore.cancel(200L) }
         coVerify(atLeast = 1) { videoRepository.deleteById(200L) }
     }
 
@@ -280,8 +277,7 @@ class SyncEngineTest {
 
         coEvery { syncRelationRepository.getById(relationId) } returns relation
         coEvery { syncSourceRepository.getById(10L) } returns source
-        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
-        every { encryptedMediaStore.volumeId } returns "test-vol"
+        every { mediaFileStore.usableSpace() } returns Long.MAX_VALUE
 
         val client = mockk<RemoteFileClient>(relaxed = true)
         every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns client
@@ -294,12 +290,12 @@ class SyncEngineTest {
         coEvery { videoRepository.deleteById(300L) } returns Unit
 
         val sink = mockk<OutputStream>(relaxed = true)
-        coEvery { encryptedMediaStore.openEncryptSink(300L, any(), any()) } returns sink
-        coEvery { encryptedMediaStore.finalize(300L) } returns true
-        coEvery { encryptedMediaStore.cancel(300L) } returns Unit
+        coEvery { mediaFileStore.openWriteSink(300L, any()) } returns sink
+        coEvery { mediaFileStore.finalize(300L) } returns true
+        coEvery { mediaFileStore.cancel(300L) } returns Unit
         // finalize 成功，但可读性探针失败（模拟 SAF 不支持 seek / 密文不可读）
-        coEvery { encryptedMediaStore.verifyReadable(300L, 1000L) } throws IOException("simulated unreadable")
-        coEvery { encryptedMediaStore.delete(300L) } returns true
+        coEvery { mediaFileStore.verifyReadable(300L, 1000L) } throws IOException("simulated unreadable")
+        coEvery { mediaFileStore.delete(300L) } returns true
 
         val action = SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "video.mp4", fileSize = 1000L)
         val result = syncEngine.executeSync(relationId, listOf(action), emptyList())
@@ -307,8 +303,8 @@ class SyncEngineTest {
         // 探针失败 → 回滚 → 整体失败
         assertEquals(false, result)
         // 探针回滚：删除已 finalize 的密文 + 删除占位 DB 行
-        coVerify(atLeast = 1) { encryptedMediaStore.verifyReadable(300L, 1000L) }
-        coVerify(atLeast = 1) { encryptedMediaStore.delete(300L) }
+        coVerify(atLeast = 1) { mediaFileStore.verifyReadable(300L, 1000L) }
+        coVerify(atLeast = 1) { mediaFileStore.delete(300L) }
         coVerify(atLeast = 1) { videoRepository.deleteById(300L) }
     }
 
@@ -327,8 +323,7 @@ class SyncEngineTest {
 
         coEvery { syncRelationRepository.getById(relationId) } returns relation
         coEvery { syncSourceRepository.getById(10L) } returns source
-        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
-        every { encryptedMediaStore.volumeId } returns "test-vol"
+        every { mediaFileStore.usableSpace() } returns Long.MAX_VALUE
 
         val client = mockk<RemoteFileClient>(relaxed = true)
         every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns client
@@ -339,9 +334,9 @@ class SyncEngineTest {
         coEvery { videoRepository.deleteById(301L) } returns Unit
 
         val sink = mockk<OutputStream>(relaxed = true)
-        coEvery { encryptedMediaStore.openEncryptSink(301L, any(), any()) } returns sink
-        coEvery { encryptedMediaStore.finalize(301L) } returns true
-        coEvery { encryptedMediaStore.verifyReadable(any(), any()) } coAnswers {
+        coEvery { mediaFileStore.openWriteSink(301L, any()) } returns sink
+        coEvery { mediaFileStore.finalize(301L) } returns true
+        coEvery { mediaFileStore.verifyReadable(any(), any()) } coAnswers {
             throw CancellationException("cancel")
         }
 
@@ -352,7 +347,7 @@ class SyncEngineTest {
         } catch (e: Throwable) {
             e
         }
-        coVerify(exactly = 1) { encryptedMediaStore.verifyReadable(any(), any()) }
+        coVerify(exactly = 1) { mediaFileStore.verifyReadable(any(), any()) }
 
         assertEquals(SyncPhase.CANCELLED, syncEngine.progress.value.phase)
         assertNotNull(thrown)
@@ -375,8 +370,7 @@ class SyncEngineTest {
 
         coEvery { syncRelationRepository.getById(relationId) } returns relation
         coEvery { syncSourceRepository.getById(10L) } returns source
-        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
-        every { encryptedMediaStore.volumeId } returns "test-vol"
+        every { mediaFileStore.usableSpace() } returns Long.MAX_VALUE
 
         val client = mockk<RemoteFileClient>(relaxed = true)
         every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns client
@@ -387,12 +381,12 @@ class SyncEngineTest {
         coEvery { videoRepository.deleteById(302L) } returns Unit
 
         val sink = mockk<OutputStream>(relaxed = true)
-        coEvery { encryptedMediaStore.openEncryptSink(302L, any(), any()) } returns sink
-        coEvery { encryptedMediaStore.finalize(302L) } returns true
-        coEvery { encryptedMediaStore.verifyReadable(any(), any()) } coAnswers {
+        coEvery { mediaFileStore.openWriteSink(302L, any()) } returns sink
+        coEvery { mediaFileStore.finalize(302L) } returns true
+        coEvery { mediaFileStore.verifyReadable(any(), any()) } coAnswers {
             throw IOException("simulated unreadable")
         }
-        coEvery { encryptedMediaStore.delete(any()) } coAnswers {
+        coEvery { mediaFileStore.delete(any()) } coAnswers {
             throw CancellationException("cancel during rollback")
         }
 
@@ -404,7 +398,7 @@ class SyncEngineTest {
         } catch (e: Throwable) {
             e
         }
-        coVerify(exactly = 1) { encryptedMediaStore.verifyReadable(any(), any()) }
+        coVerify(exactly = 1) { mediaFileStore.verifyReadable(any(), any()) }
 
         // BUG-007 v3.1 语义（guarded「原异常优先」）：COMMITTED 回滚 delete 抛出的 CE 被吞并，
         // 原 STORAGE_ERROR 胜出——计为 per-action 失败（PARTIAL_FAILED），不传播取消。
@@ -412,7 +406,7 @@ class SyncEngineTest {
         assertEquals(false, returned)
         assertEquals(SyncPhase.PARTIAL_FAILED, syncEngine.progress.value.phase)
         assertEquals(1, syncEngine.progress.value.failedFiles)
-        coVerify(exactly = 1) { encryptedMediaStore.delete(302L) }
+        coVerify(exactly = 1) { mediaFileStore.delete(302L) }
         coVerify(exactly = 1) { videoRepository.deleteById(302L) }
     }
 
@@ -431,8 +425,7 @@ class SyncEngineTest {
 
         coEvery { syncRelationRepository.getById(relationId) } returns relation
         coEvery { syncSourceRepository.getById(10L) } returns source
-        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
-        every { encryptedMediaStore.volumeId } returns "test-vol"
+        every { mediaFileStore.usableSpace() } returns Long.MAX_VALUE
 
         val client = mockk<RemoteFileClient>(relaxed = true)
         every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns client
@@ -443,15 +436,15 @@ class SyncEngineTest {
         coEvery { videoRepository.deleteById(303L) } returns Unit
 
         val sink = mockk<OutputStream>(relaxed = true)
-        coEvery { encryptedMediaStore.openEncryptSink(303L, any(), any()) } returns sink
-        coEvery { encryptedMediaStore.finalize(303L) } returns true
-        coEvery { encryptedMediaStore.verifyReadable(any(), any()) } coAnswers {
+        coEvery { mediaFileStore.openWriteSink(303L, any()) } returns sink
+        coEvery { mediaFileStore.finalize(303L) } returns true
+        coEvery { mediaFileStore.verifyReadable(any(), any()) } coAnswers {
             throw IOException("simulated unreadable")
         }
-        coEvery { encryptedMediaStore.delete(any()) } coAnswers {
+        coEvery { mediaFileStore.delete(any()) } coAnswers {
             throw CancellationException("cancel during rollback")
         }
-        coEvery { encryptedMediaStore.cancel(303L) } coAnswers {
+        coEvery { mediaFileStore.cancel(303L) } coAnswers {
             throw IOException("cleanup failed")
         }
 
@@ -470,9 +463,9 @@ class SyncEngineTest {
         assertEquals(false, returned)
         assertEquals(SyncPhase.PARTIAL_FAILED, syncEngine.progress.value.phase)
         assertEquals(1, syncEngine.progress.value.failedFiles)
-        coVerify(exactly = 1) { encryptedMediaStore.verifyReadable(any(), any()) }
-        coVerify(exactly = 1) { encryptedMediaStore.delete(303L) }
-        coVerify(exactly = 0) { encryptedMediaStore.cancel(303L) }
+        coVerify(exactly = 1) { mediaFileStore.verifyReadable(any(), any()) }
+        coVerify(exactly = 1) { mediaFileStore.delete(303L) }
+        coVerify(exactly = 0) { mediaFileStore.cancel(303L) }
         coVerify(exactly = 1) { videoRepository.deleteById(303L) }
     }
 
@@ -535,8 +528,7 @@ class SyncEngineTest {
         every { source.id } returns 10L
         coEvery { syncRelationRepository.getById(relationId) } returns relation
         coEvery { syncSourceRepository.getById(10L) } returns source
-        every { encryptedMediaStore.usableSpace() } returns Long.MAX_VALUE
-        every { encryptedMediaStore.volumeId } returns "test-vol"
+        every { mediaFileStore.usableSpace() } returns Long.MAX_VALUE
         every { remoteFileClientFactory.create(SyncProtocol.SFTP) } returns mockk(relaxed = true)
         coEvery { videoRepository.getByRelativePathAndRelationId(any(), any()) } returns null
         return relation

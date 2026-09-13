@@ -11,7 +11,7 @@
 | Annotation Proc | KSP | 2.3.6 |
 | UI | Jetpack Compose + Material 3 | BOM 2025.12.00 |
 | Architecture | MVI (Player) / MVVM + Repository, Hilt DI | Hilt 2.59.2 |
-| Database | Room (schema **v2**, `exportSchema=true`) | 2.7.0 |
+| Database | Room (schema **v4**, `exportSchema=true`) | 2.7.0 |
 | Player | Media3 / ExoPlayer | 1.6.0 |
 | SMB | jcifs-ng | 2.1.10 |
 | SFTP | SSHJ (with custom TOFU Verifier) | 0.39.0 |
@@ -38,9 +38,9 @@ ViewModel (MVVM) / PlayerViewModel (MVI)
   ↓
 Use case / service (FileOperationsUseCase, UndoDeleteUseCase, SyncService, SeekPreviewExtractor)
   ↓
-Engine / Repository / Storage (SyncEngine, Repositories, EncryptedMediaStore, MediaVolume)
+Engine / Repository / Storage (SyncEngine, Repositories, MediaFileStore)
   ↓
-Room DAO / Crypto primitives / RemoteFileClient (SMB/SFTP)
+Room DAO / RemoteFileClient (SMB/SFTP)
 ```
 
 ### 通用规则
@@ -77,12 +77,8 @@ app/src/main/java/cn/vectory/syncplayer/
 │   ├── FirstRunOnboardingCard.kt   # Material 3 first-run guidance card (NEEDS_SOURCE/RELATION/SYNC)
 │   ├── UndoDeleteUseCase.kt        # Cross-page undo (trash toggle restore + deferred hard delete)
 │   ├── SearchViewModel.kt / SearchScreen.kt
-│   └── FileOperationsUseCase.kt    # Delete/trash media + thumbs, volume-ownership fail-closed;
+│   └── FileOperationsUseCase.kt    # Delete/trash media + thumbs, direct-share intents;
 │                                   #   toggleTrashedChecked (suspend, CancellationException-safe)
-│
-├── crypto/                      # At-rest media encryption — see crypto.md
-│   ├── CryptoScheme.kt / ChunkedEncryptSink.kt / RangeDecryptor.kt
-│   ├── DecryptingFdCallback.kt / MediaCryptoMaster.kt / LegacyCiphertextException.kt
 │
 ├── data/                        # Data layer
 │   ├── local/{AppDatabase.kt, dao/, entity/}
@@ -90,8 +86,7 @@ app/src/main/java/cn/vectory/syncplayer/
 │   └── repository/  # Video/Playback/SyncSource/SyncRelation/SyncLog/UserPreferences
 │
 ├── di/                          # Hilt DI modules
-│   ├── DatabaseModule.kt           # Room, DAOs, MasterKey, EncryptedSharedPreferences
-│   ├── SyncModule.kt               # SMB/SFTP client providers, EncryptedMediaStore
+│   ├── DatabaseModule.kt           # Room, DAOs, EncryptedSharedPreferences (credentials)
 │   └── DispatchersModule.kt        # @IoDispatcher qualifier → Dispatchers.IO (testable)
 │
 ├── imageviewer/                 # Image viewer (encrypted image playback)
@@ -108,7 +103,7 @@ app/src/main/java/cn/vectory/syncplayer/
 │   └── SeekPreviewExtractor.kt     # Seek frame extraction with LRU cache
 │
 ├── provider/                    # ContentProvider — see storage-security.md
-│   ├── MediaContentProvider.kt     # Non-leaking exception boundary; volumeId per-access
+│   ├── MediaContentProvider.kt     # Non-leaking exception boundary; plain-file passthrough
 │   └── MediaUris.kt
 │
 ├── security/                    # App lock & biometric — see storage-security.md
@@ -116,16 +111,18 @@ app/src/main/java/cn/vectory/syncplayer/
 │
 ├── settings/                    # Settings screens (sources, relations, metadata rebuild, gain, storage, about)
 │
-├── storage/                     # Path + volume management — see storage-security.md
-│   ├── StoragePaths.kt
-│   └── volume/{EncryptedMediaStore, SafVolume, FileVolume, MediaVolume, MediaVolumeProvider, MediaPaths}.kt
+├── storage/                     # Path + media file store — see storage-security.md
+│   ├── StoragePaths.kt / MediaPaths.kt
+│   └── MediaFileStore.kt
 │
 ├── sync/                        # Sync engine — see sync.md
+│   ├── SyncDownloadPipeline.kt    # Download lanes + DELETE_LOCAL tail (two-phase commit)
+│   ├── SyncDeleteExecutor.kt      # DELETE_BOTH + store delete primitives
 │   ├── SyncEngine.kt              # Orchestrator (dryRun/executeSync/executeDelete/consumeAndExecute)
 │   ├── SyncProgressPublisher.kt   # Progress StateFlow + throttle + active downloads map
-│   ├── SyncSpaceChecker.kt        # cipherLengthFor precheck + overflow/unknown-space handling
+│   ├── SyncSpaceChecker.kt        # plain-size precheck + overflow handling
 │   ├── SyncService.kt             # Foreground service (dataSync type)
-│   ├── SyncException.kt / RemoteScanIncompleteException.kt / ErrorMessageMapper.kt
+│   ├── SyncException.kt / RemoteScanIncompleteException.kt / ErrorMessageMapper.kt / SyncSafeLog.kt
 │   ├── RemoteFileClient.kt / smb/SmbFileClient.kt / sftp/SftpFileClient.kt
 │   ├── sftp/SyncPlayerHostKeyVerifier.kt
 │   ├── VideoMetadataExtractor.kt / ImageMetadataExtractor.kt
@@ -138,7 +135,7 @@ app/src/main/java/cn/vectory/syncplayer/
     ├── theme/{Theme.kt,Color.kt}     # Material 3, dynamic color, extended colors
     └── util/{FormatUtils.kt,VideoUtils.kt}
 
-app/schemas/cn.vectory.syncplayer.data.local.AppDatabase/2.json   # Exported Room schema
+app/schemas/cn.vectory.syncplayer.data.local.AppDatabase/4.json   # Exported Room schema
 app/src/main/res/values/strings.xml                                # All user-facing Chinese text
 ```
 

@@ -5,68 +5,37 @@ import android.content.ContentValues
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
-import android.os.Handler
-import android.os.HandlerThread
 import android.os.ParcelFileDescriptor
-import android.os.storage.StorageManager
 import android.provider.OpenableColumns
-import android.util.Log
 import cn.vectory.syncplayer.R
-import cn.vectory.syncplayer.crypto.DecryptingFdCallback
 import cn.vectory.syncplayer.data.local.AppDatabase
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
+import cn.vectory.syncplayer.storage.MediaFileStore
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
 import java.io.FileNotFoundException
-import java.io.FileOutputStream
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 
 @EntryPoint
 @InstallIn(SingletonComponent::class)
 interface MediaProviderEntryPoint {
     fun appDatabase(): AppDatabase
-    fun mediaStore(): EncryptedMediaStore
+    fun mediaFileStore(): MediaFileStore
 }
 
 /**
- * ContentProvider 暴露加密媒体文件与缩略图给 ExoPlayer 等外部消费者。
- *
- * ## HandlerThread 生命周期
- * [HandlerThread] 在 [onCreate] 中启动后常驻。ContentProvider 没有标准销毁回调
- *（[android.content.ContentProvider.onDestroy] 不存在），因此在 Provider 生命周期内
- * 永久保留一个 IO 线程是业界常见做法（参见 Android 官方示例的 ContentProvider 实现）。
- * [onLowMemory]/[onTrimMemory] 退出线程并惰性重启的方案会引入线程重启竞态，
- * 而本 Provider 供 ExoPlayer 高频调用，竞态风险高于常驻线程的资源开销，故保持简单。
- *
- * ## volumeId 不缓存
- * [EncryptedMediaStore.volumeId] 每次访问都经由 [runBlocking] 解析当前 SAF treeUri
- *（见 [EncryptedMediaStore] 的 volume() 实现），按需从 UserPreferences 读取。
- * 用户在设置页面可随时切换存储卷，但 ContentProvider 无法感知偏好变更事件。
- * 若在此处缓存 volumeId，切换卷后会导致错误的路由（读旧卷文件或报错）。
- * 正确方案需 [EncryptedMediaStore] 提供失效通知机制，本侧不做缓存。
+ * ContentProvider 暴露本地媒体文件与缩略图给 ExoPlayer 等外部消费者。
  *
  * ## 异常边界
- * openFile/getType/query 的内部异常（数据库、volume、store、open/read、requireMedia/requireThumb等）
- * 不会将 URI/id/path/volumeId/iv 长度/底层 message 暴露给调用方。
+ * openFile/getType/query 的内部异常（数据库、store、open/read、requireMedia/requireThumb等）
+ * 不会将 URI/id/path/底层 message 暴露给调用方。
  * 所有内部异常转换为统一的 FileNotFoundException（使用 stringResource）。
  * CancellationException 不吞，直接传播。
  */
 class MediaContentProvider : ContentProvider() {
-    private lateinit var storageManager: StorageManager
-    private lateinit var ioThread: HandlerThread
-    private lateinit var handler: Handler
 
-    override fun onCreate(): Boolean {
-        storageManager = context!!.getSystemService(StorageManager::class.java)
-        // IO 线程常驻（见类 KDoc 说明），ContentProvider 无 onDestroy。
-        ioThread = HandlerThread("media-provider-io").also { it.start() }
-        handler = Handler(ioThread.looper)
-        return true
-    }
+    override fun onCreate(): Boolean = true
 
     private fun ep(): MediaProviderEntryPoint =
         EntryPointAccessors.fromApplication(context!!, MediaProviderEntryPoint::class.java)
@@ -78,59 +47,31 @@ class MediaContentProvider : ContentProvider() {
             throw FileNotFoundException(context!!.getString(R.string.media_error_invalid))
         }
         return try {
-            safeOpenFile(uri, mode, id)
+            safeOpenFile(uri, id)
         } catch (e: CancellationException) {
             // 协程取消不得被转换成普通 Provider 错误。
             throw e
         } catch (_: Exception) {
-            // 包括底层 FileNotFoundException：不得把其 message、URI、路径、
-            // volumeId 或其他内部信息传播给 Provider 调用方。
+            // 包括底层 FileNotFoundException（其 message 含文件路径）——不得把 message、
+            // URI、路径或其他内部信息传播给 Provider 调用方，统一转换为安全文案。
             throw FileNotFoundException(context!!.getString(R.string.media_error_not_found))
         }
     }
 
     /**
      * 安全打开文件，所有内部异常在 openFile 的外层捕获并转换。
+     * 文件均为明文本地文件，直接以只读 PFD 暴露。
      */
-    private fun safeOpenFile(uri: Uri, mode: String, id: Long): ParcelFileDescriptor? {
-        val store = ep().mediaStore()
-        val entity = ep().appDatabase().videoItemDao().getByIdSync(id)
+    private fun safeOpenFile(uri: Uri, id: Long): ParcelFileDescriptor {
+        val store = ep().mediaFileStore()
+        ep().appDatabase().videoItemDao().getByIdSync(id)
             ?: throw FileNotFoundException(context!!.getString(R.string.media_error_not_found))
-        if (entity.volumeId != store.volumeId) {
-            // 对外使用统一不可区分的错误消息，不泄漏卷标识（Log 仅供调试，不展示给用户）
-            throw FileNotFoundException(context!!.getString(R.string.media_error_not_found))
-        }
         return if (MediaUris.isMedia(uri)) {
-            // 显式分支断言：此分支仅处理 media URI，不依赖 iv 长度等隐式条件来路由
             MediaUris.requireMedia(uri)
-            // iv 长度校验作为健壮性检查保留（H2 lane 保证 iv 为 8 字节）
-            if (entity.iv.size != 8) throw FileNotFoundException(context!!.getString(R.string.media_error_invalid))
-            // Handle ownership: openCiphertextRead allocates a resource that MUST be
-            // closed if anything between here and a successful openProxyFileDescriptor
-            // (which takes over ownership via the callback) throws. Wrap the whole
-            // construct-and-open sequence so contentKey()/DecryptingFdCallback ctor
-            // failures also release the handle.
-            val handle = runBlocking(Dispatchers.IO) { store.openCiphertextRead(id) }
-            try {
-                val key = store.contentKey()
-                val callback = DecryptingFdCallback(handle, key, entity.iv, entity.fileSize)
-                storageManager.openProxyFileDescriptor(ParcelFileDescriptor.MODE_READ_ONLY, callback, handler)
-            } catch (e: CancellationException) {
-                handle.close()
-                throw e
-            } catch (e: Exception) {
-                handle.close()
-                throw FileNotFoundException(context!!.getString(R.string.media_error_not_found))
-            }
-        } else if (MediaUris.isThumb(uri)) {
-            MediaUris.requireThumb(uri)
-            val bytes = runBlocking(Dispatchers.IO) { store.readThumb(id) }
-                ?: throw FileNotFoundException(context!!.getString(R.string.media_error_not_found))
-            openPipeHelper(uri, mode, null, bytes) { output, _, _, extras, data ->
-                FileOutputStream(output.fileDescriptor).use { it.write(data as ByteArray) }
-            }
+            ParcelFileDescriptor.open(store.mediaFile(id), ParcelFileDescriptor.MODE_READ_ONLY)
         } else {
-            throw FileNotFoundException(context!!.getString(R.string.media_error_invalid))
+            MediaUris.requireThumb(uri)
+            ParcelFileDescriptor.open(store.thumbFile(id), ParcelFileDescriptor.MODE_READ_ONLY)
         }
     }
 
@@ -141,10 +82,7 @@ class MediaContentProvider : ContentProvider() {
             return null
         }
         return try {
-            val store = ep().mediaStore()
             val entity = ep().appDatabase().videoItemDao().getByIdSync(id) ?: return null
-            // D2-a / M8: do not leak metadata for entities on inactive volumes.
-            if (entity.volumeId != store.volumeId) return null
             getMimeType(entity.fileName)
         } catch (e: CancellationException) {
             throw e
@@ -168,10 +106,7 @@ class MediaContentProvider : ContentProvider() {
             return empty
         }
         return try {
-            val store = ep().mediaStore()
             val entity = ep().appDatabase().videoItemDao().getByIdSync(id) ?: return empty
-            // D2-a / M8: volumeId mismatch → empty Cursor (same non-disclosure as getType=null).
-            if (entity.volumeId != store.volumeId) return empty
             val cols = projection ?: arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
             val cur = MatrixCursor(cols, 1)
             val row = cur.newRow()

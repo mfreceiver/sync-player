@@ -88,8 +88,6 @@ fun syncErrorMessage(e: Throwable, context: Context, host: String? = null): Stri
             context.getString(R.string.sync_error_download_failed)
         SyncErrorCode.REMOTE_DELETE_FAILED ->
             context.getString(R.string.sync_error_remote_delete_failed)
-        SyncErrorCode.INVALID_FILE_SIZE ->
-            context.getString(R.string.sync_error_invalid_file_size)
         SyncErrorCode.INSUFFICIENT_SPACE -> {
             val se = e as? SyncException
             val need = se?.expectedBytes?.let(::formatFileSize).orEmpty()

@@ -10,8 +10,8 @@ import cn.vectory.syncplayer.browser.FileOperationsUseCase
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.data.repository.VideoRepository
-import cn.vectory.syncplayer.storage.volume.EncryptedMediaStore
-import cn.vectory.syncplayer.storage.volume.MediaExistence
+import cn.vectory.syncplayer.storage.MediaExistence
+import cn.vectory.syncplayer.storage.MediaFileStore
 import cn.vectory.syncplayer.sync.ImageMetadataExtractor
 import cn.vectory.syncplayer.sync.VideoMetadataExtractor
 import cn.vectory.syncplayer.sync.SyncEngine
@@ -31,12 +31,10 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 data class DiscoveryResult(
-    /** 当前活跃卷上密文缺失的记录（真 orphan，可安全清理）。 */
+    /** 本地文件缺失的记录（真 orphan，可安全清理）。 */
     val orphanedRecords: List<VideoItemEntity>,
     /** 元数据缺失（duration/width 等），可经 content:// 重新提取。 */
     val incompleteRecords: List<VideoItemEntity>,
-    /** 非当前卷索引；需用户强确认后才可清理（D1-b）。 */
-    val otherVolumeRecords: List<VideoItemEntity>,
 )
 
 data class CleanupSummary(
@@ -50,14 +48,14 @@ class MetadataRebuildViewModel @Inject constructor(
     private val videoRepository: VideoRepository,
     private val videoMetadataExtractor: VideoMetadataExtractor,
     private val imageMetadataExtractor: ImageMetadataExtractor,
-    private val encryptedMediaStoreLazy: Lazy<EncryptedMediaStore>,
+    private val mediaFileStoreLazy: Lazy<MediaFileStore>,
     private val fileOps: FileOperationsUseCase,
     private val syncEngine: SyncEngine,
     @ApplicationContext private val context: Context,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
 
-    private val mediaStore: EncryptedMediaStore get() = encryptedMediaStoreLazy.get()
+    private val mediaStore: MediaFileStore get() = mediaFileStoreLazy.get()
 
     private val _discoveryResult = MutableStateFlow<DiscoveryResult?>(null)
     val discoveryResult = _discoveryResult.asStateFlow()
@@ -101,17 +99,10 @@ class MetadataRebuildViewModel @Inject constructor(
                 withContext(ioDispatcher) {
                     syncEngine.storageOperationMutex.withLock {
                         val dbRecords = videoRepository.getAll()
-                        val activeVolumeId = mediaStore.volumeId
                         val orphanedRecords = mutableListOf<VideoItemEntity>()
                         val incompleteRecords = mutableListOf<VideoItemEntity>()
-                        val otherVolumeRecords = mutableListOf<VideoItemEntity>()
 
                         for (record in dbRecords) {
-                        if (record.volumeId != activeVolumeId) {
-                            // D1-b: other-volume indexes are NEVER auto-orphaned.
-                            otherVolumeRecords.add(record)
-                            continue
-                        }
                         // M1: three-way existence — IO error aborts scan (do not fake orphan).
                         when (val existence = mediaStore.checkExistence(record.id)) {
                             is MediaExistence.EXISTS -> {
@@ -138,9 +129,8 @@ class MetadataRebuildViewModel @Inject constructor(
                         _discoveryResult.value = DiscoveryResult(
                         orphanedRecords = orphanedRecords,
                         incompleteRecords = incompleteRecords,
-                        otherVolumeRecords = otherVolumeRecords,
                     )
-                    // Rebuild total covers only safe orphan + incomplete (not other-volume).
+                    // Rebuild total covers orphan + incomplete.
                         _totalCount.value = orphanedRecords.size + incompleteRecords.size
                     }
                 }
@@ -155,7 +145,7 @@ class MetadataRebuildViewModel @Inject constructor(
         }
     }
 
-    /** Rebuild current-volume orphans + incomplete only. Other-volume requires explicit clean. */
+    /** Rebuild orphans + incomplete. */
     fun startRebuild() {
         val result = _discoveryResult.value ?: return
         rebuildJob = viewModelScope.launch {
@@ -207,62 +197,6 @@ class MetadataRebuildViewModel @Inject constructor(
                     }
                 }
 
-                // Keep otherVolumeRecords visible; only clear processed buckets by re-discovering
-                // or updating the snapshot in place.
-                val remainingOther = result.otherVolumeRecords
-                _discoveryResult.value = if (remainingOther.isEmpty()) null
-                else DiscoveryResult(
-                    orphanedRecords = emptyList(),
-                    incompleteRecords = emptyList(),
-                    otherVolumeRecords = remainingOther,
-                )
-                if (remainingOther.isEmpty()) {
-                    _isComplete.value = true
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _error.value = syncErrorMessage(e, context)
-            } finally {
-                _isRebuilding.value = false
-                _currentFile.value = null
-            }
-        }
-    }
-
-    /**
-     * D1-b: only after UI strong-confirm dialog. Permanently drops other-volume index rows.
-     */
-    fun cleanOtherVolumeIndexes() {
-        val result = _discoveryResult.value ?: return
-        val targets = result.otherVolumeRecords
-        if (targets.isEmpty()) return
-        rebuildJob = viewModelScope.launch {
-            _isRebuilding.value = true
-            _completedCount.value = 0
-            _totalCount.value = targets.size
-            _error.value = null
-            try {
-                withContext(ioDispatcher) {
-                    syncEngine.storageOperationMutex.withLock {
-                        var success = 0
-                        val failures = mutableListOf<Pair<Long, String>>()
-                        for (record in targets) {
-                        _currentFile.value = record.fileName
-                        // B1: index-only delete — never mediaStore.delete on active volume.
-                            when (val r = fileOps.deleteOtherVolumeIndexLocked(record.id)) {
-                            is DeleteMediaResult.Success, is DeleteMediaResult.SkippedNotFound -> success++
-                            is DeleteMediaResult.Failed -> failures.add(record.id to syncErrorMessage(r.error, context))
-                        }
-                        _completedCount.value++
-                    }
-                        _cleanupSummary.value = CleanupSummary(
-                        success = success,
-                        failed = failures.size,
-                        failures = failures,
-                        )
-                    }
-                }
                 _discoveryResult.value = null
                 _isComplete.value = true
             } catch (e: kotlinx.coroutines.CancellationException) {
