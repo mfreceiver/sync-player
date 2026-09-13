@@ -597,6 +597,7 @@ private fun AdvancedFilterDialog(
                     )
                     val modeContentDescription = stringResource(R.string.browser_a11y_star_filter_mode)
                     val colors = MaterialTheme.colorScheme
+                    // AND-035: Visual size set to 40dp (M3 clickable Surface enforces >=48dp interactive touch bounds)
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = if (starFilterMode != BrowserViewModel.StarFilterMode.OFF)
@@ -605,7 +606,7 @@ private fun AdvancedFilterDialog(
                             colors.onSecondaryContainer else colors.onSurfaceVariant,
                         onClick = { onStarFilterModeChange(nextMode) },
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(40.dp)
                             .semantics {
                                 contentDescription = modeContentDescription
                                 stateDescription = modeStateDescription
