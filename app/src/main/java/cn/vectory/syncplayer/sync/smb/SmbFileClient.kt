@@ -151,6 +151,11 @@ class SmbFileClient internal constructor(
     }
 
     override suspend fun disconnect() {
+        try {
+            cifsContext?.close()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error closing SMB connection", e)
+        }
         cifsContext = null
     }
 
