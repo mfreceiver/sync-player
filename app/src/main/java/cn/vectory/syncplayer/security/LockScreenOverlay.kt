@@ -15,6 +15,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.withResumed
 import cn.vectory.syncplayer.R
 import kotlinx.coroutines.delay
 
@@ -54,22 +55,28 @@ fun LockScreenOverlay(
             failCount = 0
             isCooldown = false
             authFailed = false
-            biometricAuthManager.authenticate(
-                activity = activity,
-                onSuccess = { appLockManager.unlock() },
-                onError = onAuthError
-            )
+            if (biometricAuthManager.canAuthenticate()) {
+                activity.lifecycle.withResumed {
+                    biometricAuthManager.authenticate(
+                        activity = activity,
+                        onSuccess = { appLockManager.unlock() },
+                        onError = onAuthError
+                    )
+                }
+            }
         }
     }
 
     // Auto-trigger authentication on first composition (skip during cooldown)
     LaunchedEffect(Unit) {
-        if (!isCooldown) {
-            biometricAuthManager.authenticate(
-                activity = activity,
-                onSuccess = { appLockManager.unlock() },
-                onError = onAuthError
-            )
+        if (!isCooldown && biometricAuthManager.canAuthenticate()) {
+            activity.lifecycle.withResumed {
+                biometricAuthManager.authenticate(
+                    activity = activity,
+                    onSuccess = { appLockManager.unlock() },
+                    onError = onAuthError
+                )
+            }
         }
     }
 

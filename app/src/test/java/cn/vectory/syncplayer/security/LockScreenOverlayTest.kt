@@ -196,4 +196,42 @@ class LockScreenOverlayTest {
             )
         }
     }
+
+    @Test
+    fun `does not auto-authenticate when biometric capability is unavailable`() {
+        val appLockManager = mockk<AppLockManager>(relaxed = true)
+        val appContext = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val biometricAuthManager = spyk(BiometricAuthManager(appContext))
+        every { biometricAuthManager.canAuthenticate() } returns false
+        every {
+            biometricAuthManager.authenticate(
+                activity = any(),
+                title = any(),
+                subtitle = any(),
+                onSuccess = any(),
+                onError = any()
+            )
+        } answers {}
+
+        val activity = Robolectric.buildActivity(FragmentActivity::class.java).setup().get()
+
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalContext provides activity) {
+                LockScreenOverlay(
+                    appLockManager = appLockManager,
+                    biometricAuthManager = biometricAuthManager
+                )
+            }
+        }
+
+        verify(exactly = 0) {
+            biometricAuthManager.authenticate(
+                activity = any(),
+                title = any(),
+                subtitle = any(),
+                onSuccess = any(),
+                onError = any()
+            )
+        }
+    }
 }
