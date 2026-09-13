@@ -74,12 +74,14 @@ fun Modifier.verticalScrollbar(
     }
     val isScrolling by remember { derivedStateOf { state.isScrollInProgress } }
 
+    var hasScrolled by remember { mutableStateOf(false) }
     var scrollbarAlpha by remember { mutableFloatStateOf(0f) }
 
     LaunchedEffect(isScrolling) {
         if (isScrolling && isScrollable) {
+            hasScrolled = true
             scrollbarAlpha = 1f
-        } else {
+        } else if (hasScrolled && scrollbarAlpha > 0f) {
             delay(800)
             if (!state.isScrollInProgress) {
                 repeat(10) { i ->
@@ -167,12 +169,14 @@ fun Modifier.gridVerticalScrollbar(
     }
     val isScrolling by remember { derivedStateOf { state.isScrollInProgress } }
 
+    var hasScrolled by remember { mutableStateOf(false) }
     var scrollbarAlpha by remember { mutableFloatStateOf(0f) }
 
     LaunchedEffect(isScrolling) {
         if (isScrolling && isScrollable) {
+            hasScrolled = true
             scrollbarAlpha = 1f
-        } else {
+        } else if (hasScrolled && scrollbarAlpha > 0f) {
             delay(800)
             if (!state.isScrollInProgress) {
                 repeat(10) { i ->
@@ -260,12 +264,14 @@ fun Modifier.staggeredGridVerticalScrollbar(
     }
     val isScrolling by remember { derivedStateOf { state.isScrollInProgress } }
 
+    var hasScrolled by remember { mutableStateOf(false) }
     var scrollbarAlpha by remember { mutableFloatStateOf(0f) }
 
     LaunchedEffect(isScrolling) {
         if (isScrolling && isScrollable) {
+            hasScrolled = true
             scrollbarAlpha = 1f
-        } else {
+        } else if (hasScrolled && scrollbarAlpha > 0f) {
             delay(800)
             if (!state.isScrollInProgress) {
                 repeat(10) { i ->
