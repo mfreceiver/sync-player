@@ -10,6 +10,7 @@ import cn.vectory.syncplayer.data.model.SyncRelationWithSource
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.provider.MediaUris
 import cn.vectory.syncplayer.storage.MediaFileStore
 import cn.vectory.syncplayer.sync.SyncErrorCode
@@ -21,6 +22,7 @@ import cn.vectory.syncplayer.ui.util.getMimeType
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -78,7 +80,8 @@ class FileOperationsUseCase @Inject constructor(
     private val syncRelationRepository: SyncRelationRepository,
     private val mediaFileStoreLazy: Lazy<MediaFileStore>,
     private val syncEngine: SyncEngine,
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
     companion object {
         private const val TAG = "FileOperations"
@@ -197,7 +200,7 @@ class FileOperationsUseCase @Inject constructor(
     ) {
         scope.launch {
             try {
-                val result = withContext(Dispatchers.IO) {
+                val result = withContext(ioDispatcher) {
                     syncEngine.storageOperationMutex.withLock { deleteMediaByIdLocked(videoItemId) }
                 }
                 when (result) {
@@ -232,7 +235,7 @@ class FileOperationsUseCase @Inject constructor(
      * `null`.
      */
     suspend fun buildShareIntent(videoItemId: Long): Intent? = try {
-        withContext(Dispatchers.IO) {
+        withContext(ioDispatcher) {
             val video = videoRepository.getById(videoItemId) ?: return@withContext null
             val uri = MediaUris.mediaUri(video.id, video.fileName)
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
@@ -312,7 +315,7 @@ class FileOperationsUseCase @Inject constructor(
                     onError(context.getString(R.string.error_cannot_delete_sync_dir))
                     return@launch
                 }
-                val summary = withContext(Dispatchers.IO) {
+                val summary = withContext(ioDispatcher) {
                     syncEngine.storageOperationMutex.withLock { deleteFolderContentsLocked(path) }
                 }
                 if (summary.failed > 0) {
