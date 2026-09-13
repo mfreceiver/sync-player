@@ -41,6 +41,9 @@ class MediaContentProvider : ContentProvider() {
         EntryPointAccessors.fromApplication(context!!, MediaProviderEntryPoint::class.java)
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor? {
+        if (mode != "r") {
+            throw FileNotFoundException(context!!.getString(R.string.media_error_invalid))
+        }
         val id = try {
             MediaUris.idOf(uri)
         } catch (e: IllegalArgumentException) {
