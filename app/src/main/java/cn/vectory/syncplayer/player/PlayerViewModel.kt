@@ -425,30 +425,26 @@ class PlayerViewModel @Inject constructor(
     suspend fun undoDelete(expectedId: Long? = null): UndoResult = undoDeleteUseCase.undo(expectedId)
 
     fun consumeRestorePosition(videoId: Long): Long {
+        // 1. Pending restore set on loadVideo commit (matches requested videoId)
         val pending = _pendingRestore.value
-        return if (pending != null && pending.videoId == videoId) {
-            _pendingRestore.value = null
-            pending.position
-        } else {
-            val record = _uiState.value.playbackRecord
-            if (record != null && record.videoItemId == videoId) {
-                record.position
-            } else {
-                _currentPosition.value
-            }
-        }
-    }
-
-    fun getSavedPosition(videoId: Long? = null): Long {
-        val targetId = videoId ?: _uiState.value.videoItem?.id
-        val pending = _pendingRestore.value
-        if (pending != null && (targetId == null || pending.videoId == targetId)) {
+        if (pending != null && pending.videoId == videoId) {
             _pendingRestore.value = null
             return pending.position
         }
+        // 2. Live position in memory (AND-039 recreation scenario: swap effect runs before load commit)
+        // Must be scoped to current video matching videoId and live position > 0
+        val currentVideo = _uiState.value.videoItem
         val live = _currentPosition.value
-        if (live > 0L) return live
-        return _uiState.value.playbackRecord?.position ?: 0L
+        if (currentVideo != null && currentVideo.id == videoId && live > 0L) {
+            return live
+        }
+        // 3. Fallback to DB record snapshot — strictly scoped to requested videoId
+        val record = _uiState.value.playbackRecord
+        if (record != null && record.videoItemId == videoId) {
+            return record.position
+        }
+        // 4. Default to 0 (no match / across-video switch in-flight)
+        return 0L
     }
 
     fun getVideoUri(): String? = _uiState.value.videoItem?.let { cn.vectory.syncplayer.provider.MediaUris.mediaUri(it.id).toString() }
