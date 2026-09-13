@@ -133,6 +133,10 @@ class SyncService : Service() {
         stopService(startId)
     }
 
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        onTimeout(startId)
+    }
+
     private fun stopService(startId: Int) {
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelfResult(startId)
