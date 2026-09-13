@@ -49,28 +49,65 @@ class PlayerScreenSwitchAutoplayTest {
     }
 
     @Test
-    fun `R5 - Manual switch preserves autoplay intention during rapid click burst`() {
-        // Initial state: playing, first switch click executes:
-        // pendingAutoplay = determineAutoplayAfterSwitch(MANUAL, playWhenReady=true) -> true
-        // exoPlayer.pause() sets playWhenReady = false
-        val playWhenReadyAfterPause = false
-        val pendingAutoplayFromFirstClick = true
+    fun `R5 - Sequence A playing to manual pause to manual switch burst retains paused state`() {
+        // 1. Initial state: playing, cold-start initialized pendingAutoplay = true
+        var isPlaying = true
+        var playWhenReady = true
+        var pendingAutoplay = true
 
-        // Second switch click in burst window before media loads:
-        // uses (exoPlayer.playWhenReady || pendingAutoplay) as effective play intention
-        val effectivePlayIntention = playWhenReadyAfterPause || pendingAutoplayFromFirstClick
-        val autoplayOnSecondClick = determineAutoplayAfterSwitch(
-            reason = MediaSwitchReason.MANUAL,
-            currentPlayWhenReady = effectivePlayIntention,
-        )
-        assertTrue(autoplayOnSecondClick)
+        // 2. User performs manual pause toggle
+        val willPlay = !isPlaying
+        pendingAutoplay = updateAutoplayIntent(willPlay)
+        isPlaying = false
+        playWhenReady = false
+        assertFalse("Manual pause must sync pendingAutoplay to false", pendingAutoplay)
 
-        // If player was paused before first switch click, both playWhenReady and pendingAutoplay are false:
-        val autoplayWhenOriginallyPaused = determineAutoplayAfterSwitch(
+        // 3. User performs MANUAL switch (Click 1)
+        val autoplayClick1 = determineAutoplayAfterSwitch(
             reason = MediaSwitchReason.MANUAL,
-            currentPlayWhenReady = false || false,
+            currentPlayWhenReady = playWhenReady || pendingAutoplay,
         )
-        assertFalse(autoplayWhenOriginallyPaused)
+        // Must evaluate to false: user explicitly paused earlier
+        assertFalse("Paused before switch must not autoplay", autoplayClick1)
+        pendingAutoplay = autoplayClick1
+        // Entry calls exoPlayer.pause(), setting playWhenReady = false
+        playWhenReady = false
+
+        // 4. Burst second click (Click 2) while load is in-flight
+        val autoplayClick2 = determineAutoplayAfterSwitch(
+            reason = MediaSwitchReason.MANUAL,
+            currentPlayWhenReady = playWhenReady || pendingAutoplay,
+        )
+        // Must still evaluate to false
+        assertFalse("Second burst click after pause must still not autoplay", autoplayClick2)
+        pendingAutoplay = autoplayClick2
+    }
+
+    @Test
+    fun `R5 - Sequence B playing to manual switch burst retains autoplay intention`() {
+        // 1. Initial state: playing, cold-start initialized pendingAutoplay = true
+        var isPlaying = true
+        var playWhenReady = true
+        var pendingAutoplay = true
+
+        // 2. User performs MANUAL switch (Click 1) while playing
+        val autoplayClick1 = determineAutoplayAfterSwitch(
+            reason = MediaSwitchReason.MANUAL,
+            currentPlayWhenReady = playWhenReady || pendingAutoplay,
+        )
+        assertTrue("Switch while playing must autoplay", autoplayClick1)
+        pendingAutoplay = autoplayClick1
+        // Entry calls exoPlayer.pause(), setting playWhenReady = false
+        playWhenReady = false
+
+        // 3. Burst second click (Click 2) while load is in-flight
+        val autoplayClick2 = determineAutoplayAfterSwitch(
+            reason = MediaSwitchReason.MANUAL,
+            currentPlayWhenReady = playWhenReady || pendingAutoplay,
+        )
+        // Must remain true because pendingAutoplay preserved previous intention
+        assertTrue("Burst click must preserve autoplay intention", autoplayClick2)
+        pendingAutoplay = autoplayClick2
     }
 
     @Test

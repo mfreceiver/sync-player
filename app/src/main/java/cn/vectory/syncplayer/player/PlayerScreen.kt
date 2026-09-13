@@ -57,6 +57,8 @@ internal fun determineAutoplayAfterSwitch(
     MediaSwitchReason.MANUAL -> currentPlayWhenReady
 }
 
+internal fun updateAutoplayIntent(toggleToPlaying: Boolean): Boolean = toggleToPlaying
+
 internal fun preparePlayerForMedia(
     player: Player,
     mediaUri: Uri,
@@ -383,6 +385,11 @@ fun PlayerScreen(
                     yFraction = yFraction,
                 )
                 val s = uiStateRef.value
+                val togglePlay = {
+                    val willPlay = !exoPlayer.isPlaying
+                    pendingAutoplay = updateAutoplayIntent(willPlay)
+                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                }
                 when (zone) {
                     DoubleTapZone.PREVIOUS -> {
                         val prevId = viewModel.getPrevVideoId()
@@ -411,7 +418,7 @@ fun PlayerScreen(
                         }
                     }
                     DoubleTapZone.CENTER_TOP -> {
-                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                        togglePlay()
                     }
                     DoubleTapZone.CENTER_BOTTOM -> {
                         if (s.quickRecycle) {
@@ -427,7 +434,7 @@ fun PlayerScreen(
                                 pendingUndoTrigger++
                             }
                         } else {
-                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            togglePlay()
                         }
                     }
                 }
