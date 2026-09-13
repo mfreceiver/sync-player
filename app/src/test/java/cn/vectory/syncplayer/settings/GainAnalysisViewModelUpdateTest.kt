@@ -124,7 +124,7 @@ class GainAnalysisViewModelUpdateTest {
     @Test
     fun `startAnalysis persists gain via single-column updateAudioGain`() = runTest {
         coEvery { videoRepository.getBySyncRelationId(1L) } returns listOf(seedEntity())
-        every { audioGainAnalyzer.analyze(any()) } returns gain
+        coEvery { audioGainAnalyzer.analyze(any()) } returns gain
 
         val vm = buildVm()
         vm.discover()
@@ -141,7 +141,7 @@ class GainAnalysisViewModelUpdateTest {
     fun `retryFailed entry also persists via single-column updateAudioGain`() = runTest {
         coEvery { videoRepository.getBySyncRelationId(1L) } returns listOf(seedEntity())
         // First analysis round fails (analyzer yields null → failedIds), the retry succeeds.
-        every { audioGainAnalyzer.analyze(any()) } returnsMany listOf(null, gain)
+        coEvery { audioGainAnalyzer.analyze(any()) } returnsMany listOf(null, gain)
 
         val vm = buildVm()
         vm.discover()

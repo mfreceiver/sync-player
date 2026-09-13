@@ -11,6 +11,7 @@ import cn.vectory.syncplayer.data.local.AppDatabase
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.provider.MediaUris
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
@@ -131,7 +132,7 @@ class GainAnalysisConcurrencyTest {
         val gate = CountDownLatch(1)
         val entered = CountDownLatch(1)
         gateRef = gate
-        every { audioGainAnalyzer.analyze(any()) } answers {
+        coEvery { audioGainAnalyzer.analyze(any()) } answers {
             entered.countDown() // proof the gate is actually held (before blocking)
             check(gate.await(5, TimeUnit.SECONDS)) { "gate timeout" }
             gain
@@ -218,7 +219,7 @@ class GainAnalysisConcurrencyTest {
         seedRow()
         val vm = buildVm()
         var calls = 0
-        every { audioGainAnalyzer.analyze(any()) } answers {
+        coEvery { audioGainAnalyzer.analyze(any()) } answers {
             if (calls++ == 0) null else gain
         }
         vm.discover()
@@ -234,5 +235,33 @@ class GainAnalysisConcurrencyTest {
         assertEquals(6f, videoRepository.getById(1L)?.audioGainDb)
         assertFalse(vm.failedIds.value.contains(1L))
         assertNull(vm.error.value)
+    }
+
+    @Test
+    fun `cancelAnalysis cancels in-flight analyzer call via CancellationException`() = runBlocking {
+        seedRow()
+        val vm = buildVm()
+        val entered = java.util.concurrent.CountDownLatch(1)
+        var cancelled = false
+        coEvery { audioGainAnalyzer.analyze(any()) } coAnswers {
+            entered.countDown()
+            try {
+                kotlinx.coroutines.awaitCancellation()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                cancelled = true
+                throw e
+            }
+        }
+        vm.discover()
+        awaitDiscovered(setOf(1L))
+
+        vm.startAnalysis()
+        check(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)) { "analyzer not entered" }
+
+        vm.cancelAnalysis()
+        awaitSettled(vm.completedIds, vm.isAnalyzing, emptySet())
+
+        org.junit.Assert.assertTrue("analyzer should have received CancellationException", cancelled)
+        assertFalse(vm.isAnalyzing.value)
     }
 }
