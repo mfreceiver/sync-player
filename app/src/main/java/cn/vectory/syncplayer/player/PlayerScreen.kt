@@ -389,7 +389,7 @@ fun PlayerScreen(
                         if (prevId != null) {
                             viewModel.showOverlay(PlayerOverlay.Previous)
                             viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
-                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady)
+                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady || pendingAutoplay)
                             exoPlayer.pause()
                             viewModel.loadVideo(prevId)
                         } else {
@@ -403,7 +403,7 @@ fun PlayerScreen(
                         if (nextId != null) {
                             viewModel.showOverlay(PlayerOverlay.Next)
                             viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
-                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady)
+                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady || pendingAutoplay)
                             exoPlayer.pause()
                             viewModel.loadVideo(nextId)
                         } else {
@@ -587,7 +587,7 @@ fun PlayerScreen(
                         if (prevId != null) {
                             viewModel.showOverlay(PlayerOverlay.Previous)
                             viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
-                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady)
+                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady || pendingAutoplay)
                             exoPlayer.pause()
                             viewModel.loadVideo(prevId)
                         } else {
@@ -599,7 +599,7 @@ fun PlayerScreen(
                         if (nextId != null) {
                             viewModel.showOverlay(PlayerOverlay.Next)
                             viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
-                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady)
+                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady || pendingAutoplay)
                             exoPlayer.pause()
                             viewModel.loadVideo(nextId)
                         } else {

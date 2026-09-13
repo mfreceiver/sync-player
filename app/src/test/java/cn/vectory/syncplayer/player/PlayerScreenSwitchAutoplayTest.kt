@@ -49,6 +49,31 @@ class PlayerScreenSwitchAutoplayTest {
     }
 
     @Test
+    fun `R5 - Manual switch preserves autoplay intention during rapid click burst`() {
+        // Initial state: playing, first switch click executes:
+        // pendingAutoplay = determineAutoplayAfterSwitch(MANUAL, playWhenReady=true) -> true
+        // exoPlayer.pause() sets playWhenReady = false
+        val playWhenReadyAfterPause = false
+        val pendingAutoplayFromFirstClick = true
+
+        // Second switch click in burst window before media loads:
+        // uses (exoPlayer.playWhenReady || pendingAutoplay) as effective play intention
+        val effectivePlayIntention = playWhenReadyAfterPause || pendingAutoplayFromFirstClick
+        val autoplayOnSecondClick = determineAutoplayAfterSwitch(
+            reason = MediaSwitchReason.MANUAL,
+            currentPlayWhenReady = effectivePlayIntention,
+        )
+        assertTrue(autoplayOnSecondClick)
+
+        // If player was paused before first switch click, both playWhenReady and pendingAutoplay are false:
+        val autoplayWhenOriginallyPaused = determineAutoplayAfterSwitch(
+            reason = MediaSwitchReason.MANUAL,
+            currentPlayWhenReady = false || false,
+        )
+        assertFalse(autoplayWhenOriginallyPaused)
+    }
+
+    @Test
     fun `R2 - preparePlayerForMedia calls play when shouldPlay is true`() {
         val mockPlayer = mockk<Player>(relaxed = true)
         val uri = "content://cn.vectory.syncplayer/media/42".toUri()
