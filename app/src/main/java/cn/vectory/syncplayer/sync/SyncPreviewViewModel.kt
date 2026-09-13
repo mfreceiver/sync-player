@@ -16,6 +16,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -159,8 +160,12 @@ class SyncPreviewViewModel @Inject constructor(
     }
 
     fun startSync() {
+        if (_isSyncing.value) return
         viewModelScope.launch {
             try {
+                if (!syncEngine.progress.value.isRunning) {
+                    syncEngine.resetProgress()
+                }
                 val relation = syncRelationRepository.getById(relationId) ?: return@launch
                 syncEngine.setPendingTask(PendingSyncTask(
                     relationId = relationId,
@@ -184,7 +189,14 @@ class SyncPreviewViewModel @Inject constructor(
     private fun observeSyncCompletion() {
         viewModelScope.launch {
             try {
-                val result = syncEngine.progress.first { p ->
+                val currentProgress = syncEngine.progress.value
+                val isStaleTerminal = (currentProgress.relationId == relationId || currentProgress.relationId == 0L) &&
+                    (currentProgress.phase == SyncPhase.COMPLETED ||
+                        currentProgress.phase == SyncPhase.PARTIAL_FAILED ||
+                        currentProgress.phase == SyncPhase.FAILED ||
+                        currentProgress.phase == SyncPhase.CANCELLED)
+                val flow = if (isStaleTerminal) syncEngine.progress.drop(1) else syncEngine.progress
+                val result = flow.first { p ->
                     (p.relationId == relationId || p.relationId == 0L) &&
                         (p.phase == SyncPhase.COMPLETED || p.phase == SyncPhase.PARTIAL_FAILED || p.phase == SyncPhase.FAILED || p.phase == SyncPhase.CANCELLED)
                 }
