@@ -195,6 +195,11 @@ class SyncPreviewViewModel @Inject constructor(
                         currentProgress.phase == SyncPhase.PARTIAL_FAILED ||
                         currentProgress.phase == SyncPhase.FAILED ||
                         currentProgress.phase == SyncPhase.CANCELLED)
+                // CQ-002: drop(1) 决策的前提保证：
+                // 1. observeSyncCompletion() 与 startSync() 中 resetProgress() 在同一主线程协程内顺序执行；
+                // 2. 当前行读 currentProgress 与下行 flow.first{} 订阅之间无任何挂起点；
+                // 3. setPendingTask -> SyncService IPC binder 往返并在后台拉起协程完成整轮同步不可能在该无挂起微秒级窗口内发生；
+                // 因此若此处观察到终态，必定为上一轮残留的陈旧终态（stale terminal），必须 drop(1) 忽略以等待本轮完成。
                 val flow = if (isStaleTerminal) syncEngine.progress.drop(1) else syncEngine.progress
                 val result = flow.first { p ->
                     (p.relationId == relationId || p.relationId == 0L) &&

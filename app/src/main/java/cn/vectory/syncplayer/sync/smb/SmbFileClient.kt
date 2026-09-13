@@ -17,6 +17,7 @@ import jcifs.smb.SmbException
 import jcifs.smb.SmbFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -151,12 +152,14 @@ class SmbFileClient internal constructor(
     }
 
     override suspend fun disconnect() {
-        try {
-            cifsContext?.close()
-        } catch (e: Exception) {
-            Log.w(TAG, "Error closing SMB connection", e)
+        withContext(Dispatchers.IO + NonCancellable) {
+            try {
+                cifsContext?.close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error closing SMB connection", e)
+            }
+            cifsContext = null
         }
-        cifsContext = null
     }
 
     override suspend fun close() {
