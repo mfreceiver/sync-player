@@ -9,11 +9,14 @@ import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.storage.MediaFileStore
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -54,7 +57,8 @@ class SyncEngine @Inject constructor(
     private val remoteFileClientFactory: RemoteFileClientFactory,
     private val storagePaths: StoragePaths,
     private val mediaFileStoreLazy: Lazy<MediaFileStore>,
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
 
     // 进度状态已迁入 SyncProgressPublisher（上帝类拆分第一轮）。
@@ -91,7 +95,7 @@ class SyncEngine @Inject constructor(
         syncRelationRepository, syncSourceRepository, videoRepository, playbackRepository,
         syncLogRepository, videoMetadataExtractor, imageMetadataExtractor,
         remoteFileClientFactory, storagePaths, mediaFileStoreLazy, context,
-        progressPublisher, deleteExecutor
+        progressPublisher, deleteExecutor, ioDispatcher
     )
 
     suspend fun setPendingTask(task: PendingSyncTask) {
@@ -167,11 +171,14 @@ class SyncEngine @Inject constructor(
     }
 
     fun resetProgress() {
+        if (isSyncRunning) return
         progressPublisher.reset()
     }
 
     suspend fun dryRunDelete(relationId: Long): Pair<List<SyncAction>, String?> =
-        getMutexForRelation(relationId).withLock { remoteScanner.dryRunDeleteLocked(relationId) }
+        storageOperationMutex.withLock {
+            getMutexForRelation(relationId).withLock { remoteScanner.dryRunDeleteLocked(relationId) }
+        }
 
     suspend fun executeDelete(relationId: Long, actions: List<SyncAction>): Boolean =
         storageOperationMutex.withLock { getMutexForRelation(relationId).withLock { deleteExecutor.executeDeleteLocked(relationId, actions) } }

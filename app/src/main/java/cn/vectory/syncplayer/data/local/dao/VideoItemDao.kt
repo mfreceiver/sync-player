@@ -228,6 +228,13 @@ interface VideoItemDao {
     @Query("SELECT * FROM video_item")
     fun getAllItemsFlow(): Flow<List<VideoItemEntity>>
 
+    /**
+     * Efficient boolean flow indicating if any video items exist in the library.
+     * Avoids loading and mapping all entities when only emptiness is needed.
+     */
+    @Query("SELECT EXISTS(SELECT 1 FROM video_item)")
+    fun hasAnyItemsFlow(): Flow<Boolean>
+
     // Flat mode: get total count for scrollbar estimation
     @Query("SELECT COUNT(*) FROM video_item")
     suspend fun getTotalItemCount(): Int

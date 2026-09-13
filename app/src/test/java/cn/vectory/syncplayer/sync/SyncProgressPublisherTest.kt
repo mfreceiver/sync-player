@@ -185,4 +185,26 @@ class SyncProgressPublisherTest {
         assertEquals(10_000L, sut.progress.value.totalBytes)
         assertEquals(setOf("f0"), sut.progress.value.completedPaths)
     }
+
+    @Test
+    fun `reset rejected when sync is running, accepted when idle or finished`() = runTest {
+        val sut = publisher { 1_000L }
+
+        sut.value = sut.value.copy(isRunning = true, phase = SyncPhase.DOWNLOADING)
+        assertTrue(sut.progress.value.isRunning)
+
+        // reset must be a no-op while running
+        sut.reset()
+        assertTrue("reset rejected while isRunning", sut.progress.value.isRunning)
+
+        // finish sync run
+        sut.value = sut.value.copy(isRunning = false, phase = SyncPhase.COMPLETED)
+        assertFalse(sut.progress.value.isRunning)
+        assertEquals(SyncPhase.COMPLETED, sut.progress.value.phase)
+
+        // reset succeeds when not running
+        sut.reset()
+        assertEquals(SyncPhase.IDLE, sut.progress.value.phase)
+        assertFalse(sut.progress.value.isRunning)
+    }
 }

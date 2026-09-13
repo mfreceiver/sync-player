@@ -123,6 +123,8 @@ class VideoRepository @Inject constructor(
 
     fun getAllItemsFlow(): Flow<List<VideoItemEntity>> = videoItemDao.getAllItemsFlow()
 
+    fun hasAnyItemsFlow(): Flow<Boolean> = videoItemDao.hasAnyItemsFlow()
+
     suspend fun getTotalItemCount(): Int = videoItemDao.getTotalItemCount()
 
     suspend fun getAllRelativePathsList(): List<String> = videoItemDao.getAllRelativePathsList()

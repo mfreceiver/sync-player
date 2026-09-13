@@ -11,6 +11,7 @@ import cn.vectory.syncplayer.sync.SyncException
 import cn.vectory.syncplayer.sync.SyncOperation
 import cn.vectory.syncplayer.sync.checkNetworkAvailable
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
@@ -125,14 +126,16 @@ class SftpFileClient internal constructor(
     }
 
     override suspend fun disconnect() {
-        try {
-            sftpClient?.close()
-            sshClient?.disconnect()
-        } catch (e: Exception) {
-            Log.w(TAG, "Error closing SFTP connection", e)
+        withContext(Dispatchers.IO + NonCancellable) {
+            try {
+                sftpClient?.close()
+                sshClient?.disconnect()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error closing SFTP connection", e)
+            }
+            sftpClient = null
+            sshClient = null
         }
-        sftpClient = null
-        sshClient = null
     }
 
     override suspend fun close() {

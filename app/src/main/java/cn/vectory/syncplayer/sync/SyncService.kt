@@ -7,6 +7,7 @@ import android.os.IBinder
 import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProgress
 import cn.vectory.syncplayer.debug.DebugLogger
+import cn.vectory.syncplayer.di.IoDispatcher
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,6 +18,7 @@ import javax.inject.Inject
 class SyncService : Service() {
 
     @Inject lateinit var syncEngine: SyncEngine
+    @Inject @IoDispatcher lateinit var ioDispatcher: CoroutineDispatcher
 
     // E2: 服务级协程改用 Dispatchers.Default——引擎内部大量 CPU/IO 工作，主线程只承担
     // 系统回调。需要主线程的地方（无，通知 API 本身线程安全）再显式切。
@@ -60,7 +62,7 @@ class SyncService : Service() {
         drainCoordinator = SyncServiceDrainCoordinator(
             scope = coordinatorScope,
             consumeAndExecute = { relId ->
-                withContext(Dispatchers.IO) { syncEngine.consumeAndExecute(relId) }
+                withContext(ioDispatcher) { syncEngine.consumeAndExecute(relId) }
             },
             cancelStop = { pendingStopJob?.cancel(); pendingStopJob = null },
             armStop = { delayMs, token ->
@@ -131,6 +133,10 @@ class SyncService : Service() {
         )
         drainCoordinator.cancelActiveDrain()
         stopService(startId)
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        onTimeout(startId)
     }
 
     private fun stopService(startId: Int) {

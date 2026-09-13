@@ -21,10 +21,10 @@
 
 ## Database
 
-- Room，schema **v2**，`exportSchema=true`（schema 导出到 `app/schemas/`）。KSP arg `room.schemaLocation=$projectDir/schemas`。
+- Room，schema **v4**，`exportSchema=true`（schema 导出到 `app/schemas/`）。KSP arg `room.schemaLocation=$projectDir/schemas`。
 - **破坏性迁移**：`fallbackToDestructiveMigration(dropAllTables=true)` —— v1 clean-start app；破坏性 schema 变更重建 DB（个人使用，用户重装/重同步）。不要无深思熟虑就加非破坏性迁移。
 - **优化**：用 `parentPath` 索引列做高速文件夹浏览，而非 `LIKE` 子串。
-- 6 实体：VideoItemEntity（15 列，parentPath/syncRelationId/relativePath+syncRelationId unique 索引）、PlaybackRecordEntity（FK CASCADE, videoItemId unique）、SyncSourceEntity、SyncRelationEntity（FK RESTRICT）、SyncLogEntity、PendingSyncActionEntity。
+- 6 实体：VideoItemEntity（17 列，parentPath/syncRelationId/relativePath+syncRelationId unique 索引）、PlaybackRecordEntity（FK CASCADE, videoItemId unique）、SyncSourceEntity、SyncRelationEntity（FK RESTRICT）、SyncLogEntity、PendingSyncActionEntity。
 
 ## Performance
 
@@ -56,7 +56,7 @@
 
 ## Error Handling（错误处理一致性）
 
-- `SyncException.code` 模式（18 SyncErrorCode + SyncOperation）：结构化、可测试、无文本泄漏。
+- `SyncException.code` 模式（17 SyncErrorCode + SyncOperation）：结构化、可测试、无文本泄漏。
 - `ErrorMessageMapper`：`classifyRemoteError`（code）→ `syncErrorMessage`（R.string）——无文本散布。
 - **播放器错误**：`PlayerUiState.hasPlayerError: Boolean`（不携带 `PlaybackException.message`）；UI 用固定 `R.string.player_error_generic`；日志保留底层异常供诊断。
 - **Provider 错误**：统一安全 `FileNotFoundException`（资源文案），不泄漏 URI/id/path。
@@ -64,9 +64,8 @@
 ## Known Residual Risks（accepted, personal-use）
 
 1. **Generic ViewModel catches show `sync_error_unknown`** for non-sync exceptions (by design — never leak `e.message`). Diagnostics via Log.
-2. **`EncryptedMediaStore` `MediaExistence.IO_ERROR.reason`** reads `.message`（存储层——consumer 用 resource prefix 包装）。`PlayerScreen` 此前读 `.message` 已修复为 `hasPlayerError` 布尔标志。
-3. **`security-crypto 1.1.0-alpha06`**：生产 app 用 alpha 依赖。功能正常，留意 API 破坏回归。
-4. **`SyncEngineBoundaryTest` 重试用例真实退避耗时**（~1-3s），因 `Dispatchers.IO` 上 `delay` 无法被虚拟时间控制。
-5. **`androidTest` DAO 测试未在真机执行**（编译验证通过，与 `SafVolumeTest` 同构）。
+2. **`security-crypto 1.1.0-alpha06`**：生产 app 用 alpha 依赖。功能正常，留意 API 破坏回归。
+3. **`SyncEngineBoundaryTest` 重试用例真实退避耗时**（~1-3s），因 `Dispatchers.IO` 上 `delay` 无法被虚拟时间控制。
+4. **`androidTest` DAO 测试未在真机执行**（编译验证通过，与 `SafVolumeTest` 同构）。
 
 其余风险见 [sync.md](sync.md)（listDirectories/isNotFound/classifySmb/two-phase-commit）。
