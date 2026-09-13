@@ -121,9 +121,15 @@ internal class SyncProgressPublisher(
         }
     }
 
-    /** 重置进度为初始空状态（原 [SyncEngine.resetProgress]）。 */
+    /** 重置进度为初始空状态（原 [SyncEngine.resetProgress]）。若同步正在运行则拒绝重置。 */
     fun reset() {
-        _progress.value = SyncProgress()
+        if (!stateLock.tryLock()) return
+        try {
+            if (_progress.value.isRunning) return
+            _progress.value = SyncProgress()
+        } finally {
+            stateLock.unlock()
+        }
     }
 
     /**

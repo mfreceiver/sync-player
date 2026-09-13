@@ -167,11 +167,14 @@ class SyncEngine @Inject constructor(
     }
 
     fun resetProgress() {
+        if (isSyncRunning) return
         progressPublisher.reset()
     }
 
     suspend fun dryRunDelete(relationId: Long): Pair<List<SyncAction>, String?> =
-        getMutexForRelation(relationId).withLock { remoteScanner.dryRunDeleteLocked(relationId) }
+        storageOperationMutex.withLock {
+            getMutexForRelation(relationId).withLock { remoteScanner.dryRunDeleteLocked(relationId) }
+        }
 
     suspend fun executeDelete(relationId: Long, actions: List<SyncAction>): Boolean =
         storageOperationMutex.withLock { getMutexForRelation(relationId).withLock { deleteExecutor.executeDeleteLocked(relationId, actions) } }
