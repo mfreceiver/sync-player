@@ -67,5 +67,6 @@
 2. **`security-crypto 1.1.0-alpha06`**：生产 app 用 alpha 依赖。功能正常，留意 API 破坏回归。
 3. **`SyncEngineBoundaryTest` 重试用例真实退避耗时**（~1-3s），因 `Dispatchers.IO` 上 `delay` 无法被虚拟时间控制。
 4. **`androidTest` DAO 测试未在真机执行**（编译验证通过，与 `SafVolumeTest` 同构）。
+5. **播放器进度保存 drain 无时间上界**：`onCleared()` 关闭 channel 后由消费者 drain 完再取消 scope；若底层 `saveProgress` 永久挂起，scope 会延长持有 ViewModel 引用。权衡：最后保存可靠性优先于严格有界退出。
 
 其余风险见 [sync.md](sync.md)（listDirectories/isNotFound/classifySmb/two-phase-commit）。

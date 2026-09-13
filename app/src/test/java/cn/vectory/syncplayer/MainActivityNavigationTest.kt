@@ -171,13 +171,28 @@ class MainActivityNavigationTest {
     }
 
     @Test
+    fun `notificationIdentityOf is unambiguous under length prefixing`() {
+        val first = mockk<Intent>()
+        every { first.getStringExtra("navigateTo") } returns "ab"
+        every { first.getLongExtra("notification_relation_id", 0L) } returns 0L
+        every { first.getStringExtra("notification_local_base_path") } returns "c"
+
+        val second = mockk<Intent>()
+        every { second.getStringExtra("navigateTo") } returns "a"
+        every { second.getLongExtra("notification_relation_id", 0L) } returns 0L
+        every { second.getStringExtra("notification_local_base_path") } returns "bc"
+
+        assertFalse(notificationIdentityOf(first) == notificationIdentityOf(second))
+    }
+
+    @Test
     fun `shouldDeliverNotificationIntentOnCreate fresh launch delivers notification intent`() {
         assertTrue(
             shouldDeliverNotificationIntentOnCreate(
                 isNotification = true,
                 savedConsumed = false,
                 savedConsumedIdentity = null,
-                currentIdentity = 100
+                currentIdentity = "syncPreview|42"
             )
         )
     }
@@ -188,8 +203,8 @@ class MainActivityNavigationTest {
             shouldDeliverNotificationIntentOnCreate(
                 isNotification = true,
                 savedConsumed = true,
-                savedConsumedIdentity = 100,
-                currentIdentity = 100
+                savedConsumedIdentity = "syncPreview|42",
+                currentIdentity = "syncPreview|42"
             )
         )
     }
@@ -200,8 +215,8 @@ class MainActivityNavigationTest {
             shouldDeliverNotificationIntentOnCreate(
                 isNotification = true,
                 savedConsumed = true,
-                savedConsumedIdentity = 100,
-                currentIdentity = 200
+                savedConsumedIdentity = "syncPreview|42",
+                currentIdentity = "syncPreview|43"
             )
         )
     }
@@ -213,7 +228,7 @@ class MainActivityNavigationTest {
                 isNotification = true,
                 savedConsumed = true,
                 savedConsumedIdentity = null,
-                currentIdentity = 200
+                currentIdentity = "syncPreview|43"
             )
         )
     }
@@ -236,6 +251,53 @@ class MainActivityNavigationTest {
             "cn.vectory.syncplayer.INTENT_CONSUMED_IDENTITY",
             MainActivity.KEY_CONSUMED_IDENTITY
         )
-        assertEquals(Int.MIN_VALUE, MainActivity.CONSUMED_IDENTITY_ABSENT)
+    }
+
+    @Test
+    fun `identity survives consecutive save restore cycles and admits a different notification`() {
+        // Activity A consumes notification X.
+        var state = NotifyIntentConsumptionState().afterDelivery("syncPreview|42")
+
+        // Rebuild 1: restore from A's saved state, suppress the replay of X, then save
+        // again — the restored identity must survive this second save (N-001 regression).
+        state = state.restoredFrom(
+            savedConsumed = state.consumed,
+            savedIdentity = state.consumedIdentity
+        )
+        assertFalse(
+            shouldDeliverNotificationIntentOnCreate(
+                isNotification = true,
+                savedConsumed = state.consumed,
+                savedConsumedIdentity = state.consumedIdentity,
+                currentIdentity = "syncPreview|42"
+            )
+        )
+        assertEquals("syncPreview|42", state.consumedIdentity)
+
+        // Rebuild 2: a different notification Y arriving with the stale consumed flag
+        // must still be delivered.
+        assertTrue(
+            shouldDeliverNotificationIntentOnCreate(
+                isNotification = true,
+                savedConsumed = state.consumed,
+                savedConsumedIdentity = state.consumedIdentity,
+                currentIdentity = "syncPreview|43"
+            )
+        )
+    }
+
+    @Test
+    fun `NotifyIntentConsumptionState restoredFrom keeps legacy absence and afterDelivery records identity`() {
+        val fresh = NotifyIntentConsumptionState()
+        assertFalse(fresh.consumed)
+        assertEquals(null, fresh.consumedIdentity)
+
+        val legacy = fresh.restoredFrom(savedConsumed = true, savedIdentity = null)
+        assertTrue(legacy.consumed)
+        assertEquals(null, legacy.consumedIdentity)
+
+        val delivered = legacy.afterDelivery("browser|Movies")
+        assertTrue(delivered.consumed)
+        assertEquals("browser|Movies", delivered.consumedIdentity)
     }
 }

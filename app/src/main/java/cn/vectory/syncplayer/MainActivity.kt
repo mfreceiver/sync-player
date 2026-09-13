@@ -41,8 +41,7 @@ class MainActivity : AppCompatActivity() {
     @Inject lateinit var biometricAuthManager: BiometricAuthManager
 
     private val pendingIntent = MutableStateFlow<Intent?>(null)
-    private var isIntentConsumed = false
-    private var consumedIntentIdentity: Int? = null
+    private var consumptionState = NotifyIntentConsumptionState()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,14 +50,14 @@ class MainActivity : AppCompatActivity() {
             WindowManager.LayoutParams.FLAG_SECURE
         )
         enableEdgeToEdge()
-        isIntentConsumed = savedInstanceState?.getBoolean(KEY_INTENT_CONSUMED, false) ?: false
-        val savedConsumedIdentity = savedInstanceState
-            ?.getInt(KEY_CONSUMED_IDENTITY, CONSUMED_IDENTITY_ABSENT)
-            ?.takeIf { it != CONSUMED_IDENTITY_ABSENT }
+        consumptionState = consumptionState.restoredFrom(
+            savedConsumed = savedInstanceState?.getBoolean(KEY_INTENT_CONSUMED, false) ?: false,
+            savedIdentity = savedInstanceState?.getString(KEY_CONSUMED_IDENTITY)
+        )
         if (shouldDeliverNotificationIntentOnCreate(
                 isNotification = isNotificationIntent(intent),
-                savedConsumed = isIntentConsumed,
-                savedConsumedIdentity = savedConsumedIdentity,
+                savedConsumed = consumptionState.consumed,
+                savedConsumedIdentity = consumptionState.consumedIdentity,
                 currentIdentity = notificationIdentityOf(intent)
             )
         ) {
@@ -97,9 +96,10 @@ class MainActivity : AppCompatActivity() {
                     LaunchedEffect(notificationIntent, isLocked) {
                         if (!isLocked && notificationIntent != null) {
                             handleNotificationNavigation(notificationIntent!!, navController)
-                            consumedIntentIdentity = notificationIdentityOf(notificationIntent)
+                            consumptionState = consumptionState.afterDelivery(
+                                notificationIdentityOf(notificationIntent)
+                            )
                             notificationIntent?.removeExtra("navigateTo")
-                            isIntentConsumed = true
                             pendingIntent.value = null
                         }
                     }
@@ -118,15 +118,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putBoolean(KEY_INTENT_CONSUMED, isIntentConsumed)
-        outState.putInt(KEY_CONSUMED_IDENTITY, consumedIntentIdentity ?: CONSUMED_IDENTITY_ABSENT)
+        outState.putBoolean(KEY_INTENT_CONSUMED, consumptionState.consumed)
+        outState.putString(KEY_CONSUMED_IDENTITY, consumptionState.consumedIdentity)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        isIntentConsumed = false
-        consumedIntentIdentity = null
+        consumptionState = NotifyIntentConsumptionState()
         if (isNotificationIntent(intent)) {
             pendingIntent.value = intent
         }
@@ -136,7 +135,6 @@ class MainActivity : AppCompatActivity() {
         internal const val KEY_INTENT_CONSUMED = "cn.vectory.syncplayer.INTENT_CONSUMED"
         internal const val KEY_CONSUMED_IDENTITY =
             "cn.vectory.syncplayer.INTENT_CONSUMED_IDENTITY"
-        internal const val CONSUMED_IDENTITY_ABSENT = Int.MIN_VALUE
     }
 }
 
@@ -169,17 +167,34 @@ internal fun handleNotificationNavigation(intent: Intent?, navController: NavHos
  * Content identity of a notification intent, computed from the navigation-relevant extras
  * (`navigateTo`, `notification_relation_id`, `notification_local_base_path`).
  *
- * Returns null for null or non-notification intents. Identity is captured at consumption
- * time, before `navigateTo` is stripped, so a rebuilt activity can distinguish
+ * Returns null for null or non-notification intents. Identity is a normalized
+ * length-prefixed string (collision-free, unlike a packed `Int` hash), captured at
+ * consumption time before `navigateTo` is stripped, so a rebuilt activity can distinguish
  * "the same notification I already consumed" from "a genuinely new notification arriving
  * with stale saved state".
  */
-internal fun notificationIdentityOf(intent: Intent?): Int? {
+internal fun notificationIdentityOf(intent: Intent?): String? {
     val navigateTo = intent?.getStringExtra("navigateTo") ?: return null
-    var result = navigateTo.hashCode()
-    result = 31 * result + intent.getLongExtra("notification_relation_id", 0L).hashCode()
-    result = 31 * result + (intent.getStringExtra("notification_local_base_path") ?: "").hashCode()
-    return result
+    val relationId = intent.getLongExtra("notification_relation_id", 0L)
+    val basePath = intent.getStringExtra("notification_local_base_path") ?: ""
+    return "${navigateTo.length}:$navigateTo|$relationId|${basePath.length}:$basePath"
+}
+
+/**
+ * Save/restore state for notification intent consumption. The identity must survive
+ * consecutive rebuild cycles: [restoredFrom] writes the saved identity back into the
+ * field-backed state so that a later [onSaveInstanceState] persists it again instead of
+ * degrading to the legacy no-identity form.
+ */
+internal data class NotifyIntentConsumptionState(
+    val consumed: Boolean = false,
+    val consumedIdentity: String? = null
+) {
+    fun restoredFrom(savedConsumed: Boolean, savedIdentity: String?): NotifyIntentConsumptionState =
+        copy(consumed = savedConsumed, consumedIdentity = savedIdentity)
+
+    fun afterDelivery(identity: String?): NotifyIntentConsumptionState =
+        copy(consumed = true, consumedIdentity = identity)
 }
 
 /**
@@ -203,8 +218,8 @@ internal fun notificationIdentityOf(intent: Intent?): Int? {
 internal fun shouldDeliverNotificationIntentOnCreate(
     isNotification: Boolean,
     savedConsumed: Boolean,
-    savedConsumedIdentity: Int?,
-    currentIdentity: Int?
+    savedConsumedIdentity: String?,
+    currentIdentity: String?
 ): Boolean = when {
     !isNotification -> false
     !savedConsumed -> true
