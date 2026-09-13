@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.util.Log
 import android.util.LruCache
 import androidx.core.graphics.scale
 import androidx.core.net.toUri
@@ -13,9 +14,11 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlin.math.roundToLong
 
 class SeekPreviewExtractor internal constructor(
@@ -25,6 +28,7 @@ class SeekPreviewExtractor internal constructor(
 ) {
 
     private companion object {
+        const val TAG = "SeekPreviewExtractor"
         // Cache budget in KB. Each scaled frame is up to MAX_WIDTH wide; a
         // 180x320 ARGB_8888 bitmap is ~225 KB. A 4 MB cap holds ~18 frames of
         // that size (more for smaller frames) — enough to cover a typical seek
@@ -32,6 +36,7 @@ class SeekPreviewExtractor internal constructor(
         const val CACHE_MAX_SIZE_KB = 4 * 1024
         const val MAX_WIDTH = 180
         const val POSITION_ROUNDING_MS = 500L
+        const val RELEASE_JOIN_TIMEOUT_MS = 500L
     }
 
     private data class CacheKey(
@@ -101,12 +106,29 @@ class SeekPreviewExtractor internal constructor(
             activeUri = null
             prev
         }
-        prefetchJob?.cancel()
+        val job = prefetchJob
         prefetchJob = null
+        job?.cancel()
+        var timedOut = false
+        if (job != null) {
+            try {
+                withTimeout(RELEASE_JOIN_TIMEOUT_MS) {
+                    job.join()
+                }
+            } catch (e: TimeoutCancellationException) {
+                timedOut = true
+                Log.w(TAG, "Timed out waiting for prefetch job during endSession")
+            }
+        }
         // release() can block on native teardown; keep it off the caller's
-        // (often main) thread and outside the lock.
-        withContext(dispatcher) {
-            toRelease?.release()
+        // (often main) thread and outside the lock. Skip release on timeout
+        // to avoid concurrent native teardown while the job is still running.
+        if (!timedOut) {
+            withContext(dispatcher) {
+                toRelease?.release()
+            }
+        } else {
+            Log.w(TAG, "Skipping retriever release in endSession due to join timeout to avoid concurrent access")
         }
     }
 
@@ -116,6 +138,8 @@ class SeekPreviewExtractor internal constructor(
      * binder/IO), so the dispose path's blocking risk is minimal; the
      * alternative (fire-and-forget on a cancelled scope) would leak the
      * retriever when [prefetchScope] is torn down below.
+     * The join on [prefetchJob] is bounded with a timeout to avoid stalling
+     * the main thread if background cancellation is slow.
      */
     fun release() {
         val toRelease: MediaMetadataRetriever? = synchronized(retrieverLock) {
@@ -124,11 +148,29 @@ class SeekPreviewExtractor internal constructor(
             activeUri = null
             prev
         }
-        prefetchJob?.cancel()
+        val job = prefetchJob
         prefetchJob = null
+        job?.cancel()
+        var timedOut = false
+        if (job != null) {
+            try {
+                kotlinx.coroutines.runBlocking {
+                    withTimeout(RELEASE_JOIN_TIMEOUT_MS) {
+                        job.join()
+                    }
+                }
+            } catch (e: TimeoutCancellationException) {
+                timedOut = true
+                Log.w(TAG, "Timed out waiting for prefetch job during release")
+            }
+        }
         prefetchScope.cancel()
         cache.evictAll()
-        toRelease?.release()
+        if (!timedOut) {
+            toRelease?.release()
+        } else {
+            Log.w(TAG, "Skipping retriever release due to join timeout to avoid concurrent access")
+        }
     }
 
     fun getCachedFrame(uri: String, positionMs: Long): Bitmap? {

@@ -285,4 +285,251 @@ class PlayerViewModelLoadVideoTest {
         assertEquals(1L, vm.uiState.value.videoItem?.id)      // final: not overwritten by the stale request
         assertFalse(vm.uiState.value.queueExhausted)          // final: stale request must NOT publish exhaustion
     }
+
+    @Test
+    fun `AND-039 consumeRestorePosition prioritizes live currentPosition over stale playbackRecord`() = runTest {
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        coEvery { playbackRepository.getByVideoId(1L) } returns PlaybackRecordEntity(videoItemId = 1L, position = 10_000L, duration = 60_000L)
+        val vm = createVm()
+
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+
+        // Initially restores DB position
+        assertEquals(10_000L, vm.consumeRestorePosition(1L))
+
+        // Simulated playback progress advances live currentPosition to 25s
+        vm.updatePlaybackProgress(25_000L, 60_000L, videoId = 1L)
+        assertEquals(25_000L, vm.currentPosition.value)
+
+        // Activity recreation scenario: loadVideo(1L) re-invoked on same VM instance
+        // must restore live 25s, not stale 10s from DB playbackRecord
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+        assertEquals(25_000L, vm.consumeRestorePosition(1L))
+    }
+
+    @Test
+    fun `R1 - Activity recreation swap effect runs before load commit and restores live position`() = runTest {
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        coEvery { playbackRepository.getByVideoId(1L) } returns PlaybackRecordEntity(videoItemId = 1L, position = 10_000L, duration = 60_000L)
+        val vm = createVm()
+
+        // 1. Initial load and playback
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+        assertEquals(10_000L, vm.consumeRestorePosition(1L))
+
+        // Progress advances to 45s during playback
+        vm.updatePlaybackProgress(45_000L, 60_000L, videoId = 1L)
+        assertEquals(45_000L, vm.currentPosition.value)
+
+        // 2. Activity recreation: loadVideo is triggered, DB query is in-flight and suspended
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { playbackRepository.getByVideoId(1L) } coAnswers {
+            gate.await()
+            PlaybackRecordEntity(videoItemId = 1L, position = 10_000L, duration = 60_000L)
+        }
+        vm.loadVideo(1L)
+        runCurrent() // Runs up to gate.await(), loadVideo has NOT committed yet
+
+        // 3. In the same composition frame, swap effect runs consumeRestorePosition(1L)
+        // Must return live 45_000L, NOT stale DB record 10_000L
+        val restoredPos = vm.consumeRestorePosition(1L)
+        assertEquals(45_000L, restoredPos)
+
+        // 4. Release gate, loadVideo commits
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        // Commit target position remains 45_000L
+        assertEquals(45_000L, vm.currentPosition.value)
+    }
+
+    @Test
+    fun `R4 - same-video commit does not set pendingRestore preventing progress rollback on subsequent recreation`() = runTest {
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        coEvery { playbackRepository.getByVideoId(1L) } returns PlaybackRecordEntity(videoItemId = 1L, position = 10_000L, duration = 60_000L)
+        val vm = createVm()
+
+        // 1. Cold start load: consumes initial DB record (10s)
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+        assertEquals(10_000L, vm.consumeRestorePosition(1L))
+
+        // Playback advances to 25s
+        vm.updatePlaybackProgress(25_000L, 60_000L, videoId = 1L)
+        assertEquals(25_000L, vm.currentPosition.value)
+
+        // 2. Recreation #1: loadVideo(1L) is issued and commits.
+        // With R4 guard (!isSameVideo), same-video commit does NOT set _pendingRestore or overwrite currentPosition.
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+
+        // 3. Playback progresses forward to 80s
+        vm.updatePlaybackProgress(80_000L, 60_000L, videoId = 1L)
+        assertEquals(80_000L, vm.currentPosition.value)
+
+        // 4. Double recreation sequence: consecutive consumeRestorePosition calls.
+        // First consume returns new live position (80s).
+        val firstConsume = vm.consumeRestorePosition(1L)
+        assertEquals(80_000L, firstConsume)
+
+        // Second consume (recreation #2) must ALSO return new live position (80s),
+        // proving no stale commit target (25s) was lingering in _pendingRestore.
+        val secondConsume = vm.consumeRestorePosition(1L)
+        assertEquals(80_000L, secondConsume)
+    }
+
+    @Test
+    fun `R1 - consumeRestorePosition strictly scopes to requested videoId and returns 0 on mismatch`() = runTest {
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        coEvery { playbackRepository.getByVideoId(1L) } returns PlaybackRecordEntity(videoItemId = 1L, position = 10_000L, duration = 60_000L)
+        val vm = createVm()
+
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+        vm.updatePlaybackProgress(25_000L, 60_000L, videoId = 1L)
+
+        // Requesting position for a different videoId (e.g. 2L) must NOT return video 1's position or record
+        assertEquals(0L, vm.consumeRestorePosition(2L))
+    }
+
+    @Test
+    fun `AND-039 switching video resets live position to prevent position leaking`() = runTest {
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        coEvery { videoRepository.getById(2L) } returns videoEntity(2L)
+        coEvery { playbackRepository.getByVideoId(1L) } returns PlaybackRecordEntity(videoItemId = 1L, position = 10_000L, duration = 60_000L)
+        coEvery { playbackRepository.getByVideoId(2L) } returns PlaybackRecordEntity(videoItemId = 2L, position = 5_000L, duration = 60_000L)
+        val vm = createVm()
+
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+        vm.updatePlaybackProgress(45_000L, 60_000L, videoId = 1L)
+        assertEquals(45_000L, vm.currentPosition.value)
+
+        // Switching to video 2 resets position and restores video 2's position
+        vm.loadVideo(2L)
+        advanceUntilIdle()
+        assertEquals(5_000L, vm.currentPosition.value)
+        assertEquals(5_000L, vm.consumeRestorePosition(2L))
+    }
+
+    @Test
+    fun `N1 - switching video during active playback gates polling updates and restores clean position`() = runTest {
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        coEvery { playbackRepository.getByVideoId(1L) } returns PlaybackRecordEntity(videoItemId = 1L, position = 10_000L, duration = 60_000L)
+        val vm = createVm()
+
+        // 1. Video 1 loads and plays up to 45s
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+        vm.consumeRestorePosition(1L)
+        vm.setPlaying(true)
+        vm.updatePlaybackProgress(45_000L, 60_000L)
+        assertEquals(45_000L, vm.currentPosition.value)
+        assertTrue(vm.uiState.value.isPlaying)
+
+        // 2. Mock video 2 with a suspension gate
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { videoRepository.getById(2L) } coAnswers {
+            gate.await()
+            videoEntity(2L)
+        }
+        coEvery { playbackRepository.getByVideoId(2L) } returns PlaybackRecordEntity(videoItemId = 2L, position = 5_000L, duration = 60_000L)
+
+        // 3. User switches to video 2: loadVideo(2L) initiated
+        vm.loadVideo(2L)
+        runCurrent() // Runs up to gate.await()
+
+        // Gate guarantees: isPlaying is cleared (cancelling UI polling loop) and currentPosition is reset
+        assertFalse(vm.uiState.value.isPlaying)
+        assertEquals(0L, vm.currentPosition.value)
+
+        // 4. Concurrent 200ms tick from old video arrives while load is in-flight:
+        // Must be dropped by inFlightSwitchGeneration gate!
+        vm.updatePlaybackProgress(45_200L, 60_000L)
+        assertEquals(0L, vm.currentPosition.value)
+
+        // 5. Release gate to complete loading video 2
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        // 6. Assert video 2 restore position is strictly video 2's DB record (5s), NEVER 45s or 45.2s!
+        assertEquals(2L, vm.uiState.value.videoItem?.id)
+        assertEquals(5_000L, vm.consumeRestorePosition(2L))
+        assertEquals(5_000L, vm.currentPosition.value)
+    }
+
+    @Test
+    fun `N1 - switching to unplayed video restores zero even if old video was near end and polling ticked`() = runTest {
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        coEvery { playbackRepository.getByVideoId(1L) } returns null
+        val vm = createVm()
+
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+        vm.consumeRestorePosition(1L)
+        vm.setPlaying(true)
+        vm.updatePlaybackProgress(58_000L, 60_000L)
+        assertEquals(58_000L, vm.currentPosition.value)
+
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { videoRepository.getById(2L) } coAnswers {
+            gate.await()
+            videoEntity(2L)
+        }
+        // Video 2 has never been played (no record in DB)
+        coEvery { playbackRepository.getByVideoId(2L) } returns null
+
+        vm.loadVideo(2L)
+        runCurrent()
+
+        // Stale tick from old video trying to sneak in
+        vm.updatePlaybackProgress(58_200L, 60_000L)
+        assertEquals(0L, vm.currentPosition.value)
+
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(2L, vm.uiState.value.videoItem?.id)
+        // Video 2 must start from 0L, strictly isolated from video 1
+        assertEquals(0L, vm.consumeRestorePosition(2L))
+        assertEquals(0L, vm.currentPosition.value)
+    }
+
+    @Test
+    fun `R3 - inFlightSwitchGeneration gate does not leak when cross-video load is superseded by same-video load`() = runTest {
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        coEvery { playbackRepository.getByVideoId(1L) } returns PlaybackRecordEntity(videoItemId = 1L, position = 10_000L, duration = 60_000L)
+        val vm = createVm()
+
+        // 1. Initial load of video 1
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+        vm.consumeRestorePosition(1L)
+        assertEquals(1L, vm.uiState.value.videoItem?.id)
+
+        // 2. Start cross-video loadVideo(2L) that suspends on DB
+        val gateVideo2 = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { videoRepository.getById(2L) } coAnswers {
+            gateVideo2.await()
+            videoEntity(2L)
+        }
+        vm.loadVideo(2L)
+        runCurrent() // Suspended in loadVideo(2L), inFlightSwitchGeneration set
+
+        // 3. Same-video loadVideo(1L) is issued (e.g. reload/recreation) and completes immediately
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        vm.loadVideo(1L)
+        advanceUntilIdle() // loadVideo(1L) commits and clears gate
+
+        // 4. Release video 2's gate so stale loadVideo(2L) resumes and hits return@launch
+        gateVideo2.complete(Unit)
+        advanceUntilIdle()
+
+        // 5. Assert: gate is cleared, video 1 remains active, and subsequent updatePlaybackProgress ticks are accepted
+        vm.updatePlaybackProgress(33_000L, 60_000L, videoId = 1L)
+        assertEquals(33_000L, vm.currentPosition.value)
+    }
 }

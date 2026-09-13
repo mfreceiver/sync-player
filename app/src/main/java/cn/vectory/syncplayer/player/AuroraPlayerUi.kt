@@ -68,6 +68,7 @@ import androidx.compose.material.icons.filled.BrightnessMedium
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.MoreHoriz
@@ -163,8 +164,8 @@ internal object AuroraTokens {
     val AuroraTrack = AuroraText.copy(alpha = 0.22f)
     val AuroraDisabled = AuroraTextSecondary.copy(alpha = 0.38f)
     val AuroraPanelFill = AuroraSurface.copy(alpha = 0.84f)
-    val AuroraPillFill = AuroraSurface.copy(alpha = 0.78f)
-    val AuroraControlFill = AuroraSurface.copy(alpha = 0.78f)
+    val AuroraPillFill = AuroraSurface.copy(alpha = 0.88f)
+    val AuroraControlFill = AuroraSurface.copy(alpha = 0.88f)
     val AuroraGlowBlue = AuroraBlue.copy(alpha = 0.10f)
     val AuroraGlowPurple = AuroraPurple.copy(alpha = 0.10f)
     val AuroraGlowClear = Color.Transparent
@@ -184,7 +185,7 @@ internal object AuroraTokens {
     val AuroraControlSize = 48.dp
     val AuroraPlaySize = 64.dp
     val AuroraControlGap = 16.dp
-    val AuroraControlRowMaxWidth = 320.dp
+    val AuroraControlRowMaxWidth = 420.dp
     val AuroraIconSize = 24.dp
     val AuroraPlayIconSize = 30.dp
     val AuroraPillRadius = 24.dp
@@ -328,7 +329,7 @@ internal fun AuroraBands() {
                 .fillMaxWidth()
                 .fillMaxHeight(AuroraTokens.AuroraBandFraction)
                 .background(AuroraTokens.AuroraTopBandBrush)
-                .graphicsLayer(alpha = alpha),
+                .graphicsLayer { this.alpha = alpha },
         )
         Box(
             modifier = Modifier
@@ -336,7 +337,7 @@ internal fun AuroraBands() {
                 .fillMaxWidth()
                 .fillMaxHeight(AuroraTokens.AuroraBandFraction)
                 .background(AuroraTokens.AuroraBottomBandBrush)
-                .graphicsLayer(alpha = alpha),
+                .graphicsLayer { this.alpha = alpha },
         )
     }
 }
@@ -398,6 +399,11 @@ internal fun AuroraBottomArea(
     onBack10: () -> Unit,
     onForward10: () -> Unit,
     onRotate: () -> Unit,
+    onPreviousVideo: (() -> Unit)? = null,
+    onNextVideo: (() -> Unit)? = null,
+    // Autoplay intent synchronization must be provided by the caller's togglePlay callback;
+    // direct inline control of exoPlayer here is forbidden to avoid breaking switch-while-paused semantics.
+    onTogglePlay: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -415,11 +421,13 @@ internal fun AuroraBottomArea(
         if (visibility.showControlRow) {
             AuroraControlRow(
                 isPlaying = isPlaying,
-                onTogglePlay = { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() },
+                onTogglePlay = onTogglePlay,
                 onOpenSettings = onOpenSettings,
                 onBack10 = onBack10,
                 onForward10 = onForward10,
                 onRotate = onRotate,
+                onPreviousVideo = onPreviousVideo,
+                onNextVideo = onNextVideo,
             )
         }
         if (visibility.showProgressZone || visibility.showControlRow) {
@@ -436,6 +444,8 @@ internal fun AuroraControlRow(
     onBack10: () -> Unit,
     onForward10: () -> Unit,
     onRotate: () -> Unit,
+    onPreviousVideo: (() -> Unit)? = null,
+    onNextVideo: (() -> Unit)? = null,
 ) {
     var revealPlay by remember { mutableStateOf(false) }
     var revealBack by remember { mutableStateOf(false) }
@@ -463,14 +473,24 @@ internal fun AuroraControlRow(
         AuroraControlSlot(AuroraTokens.AuroraControlSize, revealSettings) {
             AuroraControlButton(AuroraTokens.AuroraControlSize, Icons.Filled.Settings, stringResource(R.string.player_a11y_open_settings), onOpenSettings)
         }
+        if (onPreviousVideo != null) {
+            AuroraControlSlot(AuroraTokens.AuroraControlSize, revealBack) {
+                AuroraControlButton(AuroraTokens.AuroraControlSize, Icons.Filled.SkipPrevious, stringResource(R.string.player_a11y_prev_video), onPreviousVideo)
+            }
+        }
         AuroraControlSlot(AuroraTokens.AuroraControlSize, revealBack) {
-            AuroraControlButton(AuroraTokens.AuroraControlSize, Icons.Filled.SkipPrevious, stringResource(R.string.player_a11y_seek_backward_10s), onBack10)
+            AuroraControlButton(AuroraTokens.AuroraControlSize, Icons.Filled.FastRewind, stringResource(R.string.player_a11y_seek_backward_10s), onBack10)
         }
         AuroraControlSlot(AuroraTokens.AuroraPlaySize, revealPlay) {
             AuroraPlayButton(isPlaying, onTogglePlay)
         }
         AuroraControlSlot(AuroraTokens.AuroraControlSize, revealForward) {
-            AuroraControlButton(AuroraTokens.AuroraControlSize, Icons.Filled.SkipNext, stringResource(R.string.player_a11y_seek_forward_10s), onForward10)
+            AuroraControlButton(AuroraTokens.AuroraControlSize, Icons.Filled.FastForward, stringResource(R.string.player_a11y_seek_forward_10s), onForward10)
+        }
+        if (onNextVideo != null) {
+            AuroraControlSlot(AuroraTokens.AuroraControlSize, revealForward) {
+                AuroraControlButton(AuroraTokens.AuroraControlSize, Icons.Filled.SkipNext, stringResource(R.string.player_a11y_next_video), onNextVideo)
+            }
         }
         AuroraControlSlot(AuroraTokens.AuroraControlSize, revealRotate) {
             AuroraControlButton(AuroraTokens.AuroraControlSize, Icons.Filled.ScreenRotation, stringResource(R.string.player_a11y_rotation), onRotate)
@@ -797,7 +817,7 @@ internal fun AuroraSettingsModal(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(AuroraTokens.AuroraRecycleRowHeight)
+                            .heightIn(min = AuroraTokens.AuroraRecycleRowHeight)
                             .testTag("player_aurora_recycle_action")
                             .semantics { role = Role.Button; contentDescription = description }
                             .clickable(enabled = videoId != null && !trashTogglePending) {

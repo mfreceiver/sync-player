@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -14,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
@@ -35,11 +37,62 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import android.net.Uri
 import androidx.media3.exoplayer.ExoPlayer
 import cn.vectory.syncplayer.player.GesturePlayerView.DoubleTapZone
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.pow
+
+internal enum class MediaSwitchReason {
+    EOF,
+    MANUAL
+}
+
+internal fun determineAutoplayAfterSwitch(
+    reason: MediaSwitchReason,
+    currentPlayWhenReady: Boolean,
+): Boolean = when (reason) {
+    MediaSwitchReason.EOF -> true
+    MediaSwitchReason.MANUAL -> currentPlayWhenReady
+}
+
+internal fun updateAutoplayIntent(toggleToPlaying: Boolean): Boolean = toggleToPlaying
+
+/**
+ * Decision helper for system-initiated playWhenReady changes (e.g. audio focus loss,
+ * audio becoming noisy / headphone unplug).
+ *
+ * - When reason is USER_REQUEST: user code controls the autoplay intent via togglePlay()
+ *   or media switch handlers; this function returns null (no-op).
+ * - When reason is system-initiated (AUDIO_FOCUS_LOSS, AUDIO_BECOMING_NOISY, etc.):
+ *   the system paused playback without explicit user action. To honor the baseline
+ *   contract that switching while paused remains paused, we adopt the new playWhenReady
+ *   value (false) into pendingAutoplay.
+ */
+internal fun autoplayIntentAfterSystemPauseChange(
+    playWhenReady: Boolean,
+    reason: Int,
+): Boolean? = when (reason) {
+    Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> null
+    else -> playWhenReady
+}
+
+internal fun preparePlayerForMedia(
+    player: Player,
+    mediaUri: Uri,
+    restorePosition: Long,
+    shouldPlay: Boolean,
+) {
+    player.setMediaItem(MediaItem.fromUri(mediaUri))
+    if (restorePosition > 0L) {
+        player.seekTo(restorePosition)
+    }
+    player.prepare()
+    if (shouldPlay) {
+        player.play()
+    }
+}
 
 private fun Modifier.verticalGradientBackground(colors: List<Color>, height: Dp): Modifier =
     this.then(
@@ -61,6 +114,8 @@ fun PlayerScreen(
     val context = LocalContext.current
     val activity = context as? android.app.Activity ?: return
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val gestureSeekState by viewModel.gestureSeekState.collectAsStateWithLifecycle()
+    val overlayState by viewModel.overlayState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var pendingUndoTrigger by remember { mutableIntStateOf(0) }
@@ -76,17 +131,32 @@ fun PlayerScreen(
     var originalBrightness by remember { mutableFloatStateOf(-1f) }
     var initialVolume by remember { mutableIntStateOf(0) }
     var isExiting by remember { mutableStateOf(false) }
+    var currentMediaId by remember { mutableStateOf<Long?>(null) }
+    var pendingAutoplay by remember { mutableStateOf(true) }
 
     val window = activity.window
     val exoPlayer = remember {
-        ExoPlayer.Builder(context.applicationContext).build().apply {
-            playWhenReady = true
-        }
+        val audioAttributes = androidx.media3.common.AudioAttributes.Builder()
+            .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+            .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MOVIE)
+            .build()
+        ExoPlayer.Builder(context.applicationContext)
+            .setAudioAttributes(audioAttributes, true)
+            .setHandleAudioBecomingNoisy(true)
+            .build().apply {
+                playWhenReady = true
+            }
     }
     val gestureView = remember {
         GesturePlayerView(context).apply {
             getPlayerView().player = exoPlayer
         }
+    }
+
+    val togglePlay = {
+        val willPlay = !exoPlayer.isPlaying
+        pendingAutoplay = updateAutoplayIntent(willPlay)
+        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
     }
 
     DisposableEffect(Unit) {
@@ -111,7 +181,7 @@ fun PlayerScreen(
             val restoreController = WindowCompat.getInsetsController(w, w.decorView)
             restoreController.show(WindowInsetsCompat.Type.systemBars())
             restoreController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
-            viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
+            viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
             gestureView.getPlayerView().player = null
             exoPlayer.release()
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -124,13 +194,15 @@ fun PlayerScreen(
 
     LaunchedEffect(uiState.videoItem) {
         val item = uiState.videoItem ?: return@LaunchedEffect
-        val mediaItem = MediaItem.fromUri(cn.vectory.syncplayer.provider.MediaUris.mediaUri(item.id))
-        exoPlayer.setMediaItem(mediaItem)
-        val savedPos = viewModel.getSavedPosition()
-        if (savedPos > 0) {
-            exoPlayer.seekTo(savedPos)
-        }
-        exoPlayer.prepare()
+        val mediaUri = cn.vectory.syncplayer.provider.MediaUris.mediaUri(item.id)
+        currentMediaId = item.id
+        val savedPos = viewModel.consumeRestorePosition(item.id)
+        preparePlayerForMedia(
+            player = exoPlayer,
+            mediaUri = mediaUri,
+            restorePosition = savedPos,
+            shouldPlay = pendingAutoplay,
+        )
     }
 
     LaunchedEffect(uiState.isFullscreen, uiState.videoItem) {
@@ -167,16 +239,24 @@ fun PlayerScreen(
 
     val playerListener = remember {
         object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                autoplayIntentAfterSystemPauseChange(playWhenReady, reason)?.let {
+                    pendingAutoplay = it
+                }
+            }
+
             override fun onPlaybackStateChanged(playbackState: Int) {
                 val playerPos = exoPlayer.currentPosition.coerceAtLeast(0)
                 val playerDur = exoPlayer.duration.coerceAtLeast(0)
-                viewModel.updatePlaybackProgress(playerPos, playerDur)
+                viewModel.updatePlaybackProgress(playerPos, playerDur, videoId = currentMediaId)
 
                 if (playbackState == Player.STATE_ENDED) {
                     val nextId = viewModel.getNextVideoId()
                     if (nextId != null) {
+                        pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.EOF, exoPlayer.playWhenReady)
                         viewModel.updateAutoSwitchTime()
-                        viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
+                        viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
+                        exoPlayer.pause()
                         viewModel.loadVideo(nextId)
                     } else {
                         if (!isExiting) {
@@ -196,7 +276,7 @@ fun PlayerScreen(
                 newPosition: Player.PositionInfo,
                 reason: Int
             ) {
-                viewModel.updatePlaybackProgress(newPosition.positionMs, exoPlayer.duration.coerceAtLeast(0))
+                viewModel.updatePlaybackProgress(newPosition.positionMs, exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -214,9 +294,10 @@ fun PlayerScreen(
     }
 
     val seekTarget by rememberUpdatedState(uiState.seekTarget)
-    val isGestureSeeking by rememberUpdatedState(uiState.isGestureSeeking)
+    val isGestureSeeking by rememberUpdatedState(gestureSeekState.isSeeking)
     LaunchedEffect(uiState.isPlaying) {
         if (uiState.isPlaying) {
+            var lastCheckpointMs = System.currentTimeMillis()
             while (true) {
                 val playerPos = exoPlayer.currentPosition.coerceAtLeast(0)
                 val playerDur = exoPlayer.duration.coerceAtLeast(0)
@@ -234,7 +315,13 @@ fun PlayerScreen(
                     gestureView.currentPosition = playerPos
                 }
                 gestureView.videoDuration = playerDur
-                viewModel.updatePlaybackProgress(playerPos, playerDur)
+                viewModel.updatePlaybackProgress(playerPos, playerDur, videoId = currentMediaId)
+
+                val now = System.currentTimeMillis()
+                if (now - lastCheckpointMs >= 30_000L) {
+                    lastCheckpointMs = now
+                    viewModel.saveProgress(playerPos, playerDur, videoId = currentMediaId)
+                }
                 delay(200L)
             }
         }
@@ -254,7 +341,8 @@ fun PlayerScreen(
                     // paths, and viewModelScope may already be cancelled.
                     viewModel.saveProgress(
                         exoPlayer.currentPosition.coerceAtLeast(0),
-                        exoPlayer.duration.coerceAtLeast(0)
+                        exoPlayer.duration.coerceAtLeast(0),
+                        videoId = currentMediaId
                     )
                 }
             }
@@ -276,23 +364,9 @@ fun PlayerScreen(
         onExit()
     }
 
-    gestureView.setOnSingleTapCallback {
-        viewModel.toggleControls()
-    }
-
-    // Hold the latest uiState in a remembered State holder so the long-lived
-    // gestureListener below can read fresh values (playbackSpeed, quickRecycle,
-    // lastAutoSwitchTime, playbackRecord.isTrashed) without being rebuilt on
-    // every recomposition. Reading uiStateRef.value at callback time always
-    // returns the current snapshot (see AGENTS.md · Recomposition Isolation).
     val uiStateRef = rememberUpdatedState(uiState)
     var rippleEvent by remember { mutableStateOf<RippleEvent?>(null) }
 
-    // Build the listener ONCE. The previous code reallocated the whole object
-    // and re-assigned it to the View on every recomposition. Captures that are
-    // stable across the composition lifecycle (exoPlayer, viewModel, context,
-    // window, initialVolume's delegated State) are safe to close over here;
-    // uiState is read through uiStateRef above to avoid a stale snapshot.
     val gestureListener = remember {
         object : GesturePlayerView.GestureListener {
             override fun onSpeedUpChanged(speedUp: Boolean) {
@@ -347,7 +421,9 @@ fun PlayerScreen(
                         val prevId = viewModel.getPrevVideoId()
                         if (prevId != null) {
                             viewModel.showOverlay(PlayerOverlay.Previous)
-                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
+                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
+                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady || pendingAutoplay)
+                            exoPlayer.pause()
                             viewModel.loadVideo(prevId)
                         } else {
                             viewModel.showOverlay(PlayerOverlay.NoPrevious)
@@ -359,14 +435,16 @@ fun PlayerScreen(
                         val nextId = viewModel.getNextVideoId()
                         if (nextId != null) {
                             viewModel.showOverlay(PlayerOverlay.Next)
-                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
+                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
+                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady || pendingAutoplay)
+                            exoPlayer.pause()
                             viewModel.loadVideo(nextId)
                         } else {
                             viewModel.showOverlay(PlayerOverlay.NoNext)
                         }
                     }
                     DoubleTapZone.CENTER_TOP -> {
-                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                        togglePlay()
                     }
                     DoubleTapZone.CENTER_BOTTOM -> {
                         if (s.quickRecycle) {
@@ -382,7 +460,7 @@ fun PlayerScreen(
                                 pendingUndoTrigger++
                             }
                         } else {
-                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            togglePlay()
                         }
                     }
                 }
@@ -401,10 +479,18 @@ fun PlayerScreen(
             }
         }
     }
-    gestureView.gestureListener = gestureListener
-    // The player UI is unconditionally immersive (system bars always hidden, video
-    // fills the container), so edge-back must be enabled regardless of uiState.
-    gestureView.edgeBackEnabled = true
+
+    DisposableEffect(gestureView, gestureListener) {
+        gestureView.setOnSingleTapCallback {
+            viewModel.toggleControls()
+        }
+        gestureView.gestureListener = gestureListener
+        gestureView.edgeBackEnabled = true
+        onDispose {
+            gestureView.setOnSingleTapCallback(null)
+            gestureView.gestureListener = null
+        }
+    }
 
     var showSettingsPopup by remember { mutableStateOf(false) }
     val previewExtractor = remember { SeekPreviewExtractor(context) }
@@ -415,7 +501,7 @@ fun PlayerScreen(
     }
     val seekSource = when {
         uiState.isUserSeeking -> SeekSource.PROGRESS_BAR
-        uiState.isGestureSeeking -> SeekSource.GESTURE
+        gestureSeekState.isSeeking -> SeekSource.GESTURE
         else -> SeekSource.NONE
     }
     val chromeVisibility = resolveAuroraChromeVisibility(
@@ -473,8 +559,11 @@ fun PlayerScreen(
     // no underlying path/id/message leaks).
     uiState.error?.let { ev ->
         LaunchedEffect(ev.seq) {
-            snackbarHostState.showSnackbar(ev.message)
-            viewModel.clearError()
+            try {
+                snackbarHostState.showSnackbar(ev.message)
+            } finally {
+                viewModel.clearError()
+            }
         }
     }
 
@@ -520,12 +609,37 @@ fun PlayerScreen(
                     exoPlayer = exoPlayer,
                     seekSource = seekSource,
                     durationMs = uiState.duration,
-                    gesturePositionMs = (uiState.gestureSeekPosition * uiState.duration).toLong(),
+                    gesturePositionMs = (gestureSeekState.seekPositionFraction * uiState.duration).toLong(),
                     isPlaying = uiState.isPlaying,
                     onOpenSettings = { showSettingsPopup = true },
                     onBack10 = { seekBy(viewModel, exoPlayer, -10_000L) },
                     onForward10 = { seekBy(viewModel, exoPlayer, 10_000L) },
                     onRotate = viewModel::toggleFullscreen,
+                    onPreviousVideo = {
+                        val prevId = viewModel.getPrevVideoId()
+                        if (prevId != null) {
+                            viewModel.showOverlay(PlayerOverlay.Previous)
+                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
+                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady || pendingAutoplay)
+                            exoPlayer.pause()
+                            viewModel.loadVideo(prevId)
+                        } else {
+                            viewModel.showOverlay(PlayerOverlay.NoPrevious)
+                        }
+                    },
+                    onNextVideo = {
+                        val nextId = viewModel.getNextVideoId()
+                        if (nextId != null) {
+                            viewModel.showOverlay(PlayerOverlay.Next)
+                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
+                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady || pendingAutoplay)
+                            exoPlayer.pause()
+                            viewModel.loadVideo(nextId)
+                        } else {
+                            viewModel.showOverlay(PlayerOverlay.NoNext)
+                        }
+                    },
+                    onTogglePlay = togglePlay,
                 )
             }
         }
@@ -571,17 +685,17 @@ fun PlayerScreen(
         AuroraSeekPreviewHost(
             seekSource = seekSource,
             progressScrubState = viewModel.progressScrubState,
-            gesturePositionMs = (uiState.gestureSeekPosition * uiState.duration).toLong(),
+            gesturePositionMs = (gestureSeekState.seekPositionFraction * uiState.duration).toLong(),
             durationMs = uiState.duration,
             bottomChromeHeightPx = bottomChromeHeightPx,
             videoUri = videoUri,
             previewExtractor = previewExtractor,
         )
-        val speedOverlayMultiplier = uiState.speedOverlayMultiplier
+        val speedOverlayMultiplier = overlayState.speedMultiplier
         if (speedOverlayMultiplier != null) {
             AuroraSpeedPill(speedOverlayMultiplier)
         } else {
-            AuroraPill(uiState.currentOverlay)
+            AuroraPill(overlayState.overlay)
         }
         DoubleTapRipple(rippleEvent)
 
@@ -595,7 +709,10 @@ fun PlayerScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.7f)),
+                    .background(Color.Black.copy(alpha = 0.7f))
+                    .pointerInput(Unit) {
+                        detectTapGestures { }
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 Column(

@@ -63,12 +63,8 @@ data class PlayerUiState(
     val duration: Long = 0L,
     val isPlaying: Boolean = false,
     val showControls: Boolean = true,
-    val currentOverlay: PlayerOverlay? = null,
     val isUserSeeking: Boolean = false,
-    val isGestureSeeking: Boolean = false,
-    val gestureSeekPosition: Float = 0f,
     val seekTarget: Long = -1L,
-    val speedOverlayMultiplier: Float? = null,
     val isLongPressing: Boolean = false,
     val lastAutoSwitchTime: Long = 0L,
     val hasPlayerError: Boolean = false,
@@ -76,6 +72,16 @@ data class PlayerUiState(
     // BUG-019: structured queue-exhaustion terminal — normal EOF semantics, not an
     // error (no ErrorEvent, no Context-derived copy). UI consumes it and exits.
     val queueExhausted: Boolean = false,
+)
+
+data class GestureSeekUiState(
+    val isSeeking: Boolean = false,
+    val seekPositionFraction: Float = 0f,
+)
+
+data class PlayerOverlayUiState(
+    val overlay: PlayerOverlay? = null,
+    val speedMultiplier: Float? = null,
 )
 
 /**
@@ -148,6 +154,12 @@ class PlayerViewModel @Inject constructor(
 
     private val _progressScrubState = MutableStateFlow(ProgressScrubUiState())
     val progressScrubState: StateFlow<ProgressScrubUiState> = _progressScrubState.asStateFlow()
+
+    private val _gestureSeekState = MutableStateFlow(GestureSeekUiState())
+    val gestureSeekState: StateFlow<GestureSeekUiState> = _gestureSeekState.asStateFlow()
+
+    private val _overlayState = MutableStateFlow(PlayerOverlayUiState())
+    val overlayState: StateFlow<PlayerOverlayUiState> = _overlayState.asStateFlow()
 
     private val errorSeq = AtomicLong(0L)
 
@@ -243,14 +255,39 @@ class PlayerViewModel @Inject constructor(
     // suspension point must never overwrite a newer request's committed state.
     private val loadGeneration = AtomicLong(0L)
 
+    data class PendingRestore(
+        val videoId: Long,
+        val position: Long,
+        val generation: Long,
+    )
+
+    private val _pendingRestore = MutableStateFlow<PendingRestore?>(null)
+    val pendingRestore: StateFlow<PendingRestore?> = _pendingRestore.asStateFlow()
+
+    @Volatile
+    private var inFlightSwitchGeneration: Long? = null
+
     fun loadVideo(videoItemId: Long) {
         val generation = loadGeneration.incrementAndGet()   // 发起即占代
+        val isSameVideo = (videoItemId == _uiState.value.videoItem?.id && _uiState.value.videoItem != null)
+
+        if (!isSameVideo) {
+            inFlightSwitchGeneration = generation
+            _currentPosition.value = 0L
+            _pendingRestore.value = null
+            _uiState.update { it.copy(isPlaying = false) }
+        }
         viewModelScope.launch {
             try {
                 // A request whose body only starts after a newer request was issued is
                 // already stale — its commit would be dropped at the guard below, and its
                 // start-of-run flag clear could erase a terminal the newer request owns.
-                if (generation != loadGeneration.get()) return@launch
+                if (generation != loadGeneration.get()) {
+                    if (inFlightSwitchGeneration == generation) {
+                        inFlightSwitchGeneration = null
+                    }
+                    return@launch
+                }
                 _uiState.update { it.copy(queueExhausted = false) }   // 每次加载先清终态
                 var candidateId = videoItemId
                 var video = videoRepository.getById(candidateId)
@@ -265,7 +302,28 @@ class PlayerViewModel @Inject constructor(
                 }
                 if (video != null) {
                     val record = playbackRepository.getByVideoId(video.id)
-                    if (generation != loadGeneration.get()) return@launch   // BUG-015: 旧代次迟到，丢弃
+                    if (generation != loadGeneration.get()) {
+                        if (inFlightSwitchGeneration == generation) {
+                            inFlightSwitchGeneration = null
+                        }
+                        return@launch   // BUG-015: 旧代次迟到，丢弃
+                    }
+
+                    // R3: Clear any switch gate <= current committing generation
+                    val gate = inFlightSwitchGeneration
+                    if (gate != null && gate <= generation) {
+                        inFlightSwitchGeneration = null
+                    }
+
+                    // N1 / AND-039 / R4: determine restore target strictly:
+                    // - Recreation of same video: restored via live position (level 2 of consumeRestorePosition)
+                    // - Switch to different video or cold start: restore DB record (never live position of previous video)
+                    if (!isSameVideo) {
+                        val targetPosition = record?.position ?: 0L
+                        _pendingRestore.value = PendingRestore(video.id, targetPosition, generation)
+                        _currentPosition.value = targetPosition
+                    }
+
                     val gain = video.audioGainDb ?: 0f
                     val effectiveGain = if (_uiState.value.volumeBalance && video.audioGainDb != null) gain else 0f
                     _uiState.update { it.copy(
@@ -275,13 +333,21 @@ class PlayerViewModel @Inject constructor(
                         duration = record?.duration ?: 0L,
                         seekTarget = -1L,
                         isUserSeeking = false,
-                        isGestureSeeking = false,
-                        gestureSeekPosition = 0f
                     ) }
                     _progressScrubState.value = ProgressScrubUiState()
-                    _currentPosition.value = record?.position ?: 0L
+                    _gestureSeekState.value = GestureSeekUiState()
+                    _overlayState.value = PlayerOverlayUiState()
                 } else {
-                    if (generation != loadGeneration.get()) return@launch   // BUG-015：耗尽发布同样受代次门控
+                    if (generation != loadGeneration.get()) {
+                        if (inFlightSwitchGeneration == generation) {
+                            inFlightSwitchGeneration = null
+                        }
+                        return@launch   // BUG-015：耗尽发布同样受代次门控
+                    }
+                    val gate = inFlightSwitchGeneration
+                    if (gate != null && gate <= generation) {
+                        inFlightSwitchGeneration = null
+                    }
                     // Queue exhausted (or id not in queue at all) — keep the current video and
                     // publish the structured terminal; the UI consumes it and exits. No
                     // ErrorEvent (this is normal EOF, not an error) and no Context-derived copy
@@ -292,12 +358,30 @@ class PlayerViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                val gate = inFlightSwitchGeneration
+                if (gate != null && gate <= generation) {
+                    inFlightSwitchGeneration = null
+                }
                 Log.e(TAG, "Failed to load video: ${safeErrorDetail(e)}")
+            } finally {
+                if (loadGeneration.get() == generation) {
+                    val gate = inFlightSwitchGeneration
+                    if (gate != null && gate <= generation) {
+                        inFlightSwitchGeneration = null
+                    }
+                }
             }
         }
     }
 
-    fun updatePlaybackProgress(position: Long, duration: Long) {
+    fun updatePlaybackProgress(position: Long, duration: Long, videoId: Long? = null) {
+        val currentVideo = _uiState.value.videoItem
+        if (videoId != null && currentVideo != null && videoId != currentVideo.id) {
+            return
+        }
+        if (inFlightSwitchGeneration != null) {
+            return
+        }
         _currentPosition.value = position
         if (_uiState.value.duration != duration) {
             _uiState.update { it.copy(duration = duration) }
@@ -308,9 +392,12 @@ class PlayerViewModel @Inject constructor(
         _uiState.update { it.copy(isPlaying = playing) }
     }
 
-    fun saveProgress(position: Long, duration: Long) {
-        val videoId = _uiState.value.videoItem?.id ?: return   // 无已加载视频：no-op（与现状语义一致）
-        progressSaveChannel.trySend(PendingProgressSave(videoId, position, duration))
+    fun saveProgress(position: Long, duration: Long, videoId: Long? = null) {
+        val targetId = videoId ?: run {
+            if (inFlightSwitchGeneration != null) return
+            _uiState.value.videoItem?.id ?: return
+        }
+        progressSaveChannel.trySend(PendingProgressSave(targetId, position, duration))
     }
 
     /**
@@ -359,7 +446,28 @@ class PlayerViewModel @Inject constructor(
      */
     suspend fun undoDelete(expectedId: Long? = null): UndoResult = undoDeleteUseCase.undo(expectedId)
 
-    fun getSavedPosition(): Long = _uiState.value.playbackRecord?.position ?: 0L
+    fun consumeRestorePosition(videoId: Long): Long {
+        // 1. Pending restore set on loadVideo commit (matches requested videoId)
+        val pending = _pendingRestore.value
+        if (pending != null && pending.videoId == videoId) {
+            _pendingRestore.value = null
+            return pending.position
+        }
+        // 2. Live position in memory (AND-039 recreation scenario: swap effect runs before load commit)
+        // Must be scoped to current video matching videoId and live position > 0
+        val currentVideo = _uiState.value.videoItem
+        val live = _currentPosition.value
+        if (currentVideo != null && currentVideo.id == videoId && live > 0L) {
+            return live
+        }
+        // 3. Fallback to DB record snapshot — strictly scoped to requested videoId
+        val record = _uiState.value.playbackRecord
+        if (record != null && record.videoItemId == videoId) {
+            return record.position
+        }
+        // 4. Default to 0 (no match / across-video switch in-flight)
+        return 0L
+    }
 
     fun getVideoUri(): String? = _uiState.value.videoItem?.let { cn.vectory.syncplayer.provider.MediaUris.mediaUri(it.id).toString() }
 
@@ -414,21 +522,21 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun showOverlay(overlay: PlayerOverlay) {
-        _uiState.update { it.copy(currentOverlay = overlay) }
+        _overlayState.update { it.copy(overlay = overlay) }
         overlayHideJob?.cancel()
         overlayHideJob = viewModelScope.launch {
             delay(750L)
-            _uiState.update { it.copy(currentOverlay = null) }
+            _overlayState.update { it.copy(overlay = null) }
         }
     }
 
     fun hideOverlay() {
         overlayHideJob?.cancel()
-        _uiState.update { it.copy(currentOverlay = null, speedOverlayMultiplier = null) }
+        _overlayState.update { it.copy(overlay = null, speedMultiplier = null) }
     }
 
     fun setSpeedOverlay(multiplier: Float?) {
-        _uiState.update { it.copy(speedOverlayMultiplier = multiplier) }
+        _overlayState.update { it.copy(speedMultiplier = multiplier) }
     }
 
     fun setLongPressing(longPressing: Boolean) {
@@ -478,13 +586,13 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun onGestureSeekStarted() {
-        _uiState.update { it.copy(isGestureSeeking = true) }
+        _gestureSeekState.update { it.copy(isSeeking = true) }
     }
 
     fun onGestureSeekChanged(positionMs: Long, durationMs: Long) {
         if (durationMs > 0) {
             val pos = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-            _uiState.update { it.copy(isGestureSeeking = true, gestureSeekPosition = pos) }
+            _gestureSeekState.update { it.copy(isSeeking = true, seekPositionFraction = pos) }
         }
     }
 
@@ -496,10 +604,11 @@ class PlayerViewModel @Inject constructor(
      * from what the overlay previewed.
      */
     fun onGestureSeekFinished(targetMs: Long) {
+        _gestureSeekState.update { it.copy(isSeeking = false) }
         val duration = _uiState.value.duration
         val target = targetMs.coerceIn(0, duration.coerceAtLeast(0))
         _currentPosition.value = target
-        _uiState.update { it.copy(isGestureSeeking = false, seekTarget = target) }
+        _uiState.update { it.copy(seekTarget = target) }
     }
 
     fun updateAutoSwitchTime() {

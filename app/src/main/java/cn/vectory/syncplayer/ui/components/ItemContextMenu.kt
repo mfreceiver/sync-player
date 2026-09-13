@@ -102,7 +102,7 @@ fun FileContextMenuDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            modifier = Modifier.width(320.dp),
+            modifier = Modifier.widthIn(max = 320.dp),
             shape = RoundedCornerShape(16.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -162,7 +162,7 @@ fun FileContextMenuDialog(
                 }
 
                 Spacer(Modifier.height(8.dp))
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
@@ -240,7 +240,7 @@ fun FolderContextMenuDialog(
     if (actions.isFileInBaseDir(item.relativePath)) {
         Dialog(onDismissRequest = onDismiss) {
             Card(
-                modifier = Modifier.width(280.dp),
+                modifier = Modifier.widthIn(max = 280.dp),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -261,7 +261,7 @@ fun FolderContextMenuDialog(
                         CircularProgressIndicator(modifier = Modifier.size(24.dp))
                     }
                     Spacer(Modifier.height(16.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         TextButton(onClick = {
                             actions.markFolderRead(item.relativePath, true)
                             onDismiss()

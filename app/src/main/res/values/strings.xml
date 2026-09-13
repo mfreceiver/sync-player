@@ -455,4 +455,8 @@
     <string name="browser_a11y_star_filter_mode_greater_than">大于</string>
     <string name="browser_a11y_star_filter_mode_less_than">小于</string>
     <string name="filter_star_rating_a11y_n">第 %1$d 星，%2$s</string>
+
+    <!-- Player media navigation accessibility -->
+    <string name="player_a11y_prev_video">上一个视频</string>
+    <string name="player_a11y_next_video">下一个视频</string>
 </resources>
