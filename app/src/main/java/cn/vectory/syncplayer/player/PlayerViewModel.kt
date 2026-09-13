@@ -270,7 +270,6 @@ class PlayerViewModel @Inject constructor(
     fun loadVideo(videoItemId: Long) {
         val generation = loadGeneration.incrementAndGet()   // 发起即占代
         val isSameVideo = (videoItemId == _uiState.value.videoItem?.id && _uiState.value.videoItem != null)
-        val livePositionToRestore = if (isSameVideo) _currentPosition.value else 0L
 
         if (!isSameVideo) {
             inFlightSwitchGeneration = generation
@@ -316,17 +315,14 @@ class PlayerViewModel @Inject constructor(
                         inFlightSwitchGeneration = null
                     }
 
-                    // N1 / AND-039: determine restore target strictly:
-                    // - Recreation of same video: restore live position if > 0, else DB record
+                    // N1 / AND-039 / R4: determine restore target strictly:
+                    // - Recreation of same video: restored via live position (level 2 of consumeRestorePosition)
                     // - Switch to different video or cold start: restore DB record (never live position of previous video)
-                    val targetPosition = if (isSameVideo && livePositionToRestore > 0L) {
-                        livePositionToRestore
-                    } else {
-                        record?.position ?: 0L
+                    if (!isSameVideo) {
+                        val targetPosition = record?.position ?: 0L
+                        _pendingRestore.value = PendingRestore(video.id, targetPosition, generation)
+                        _currentPosition.value = targetPosition
                     }
-
-                    _pendingRestore.value = PendingRestore(video.id, targetPosition, generation)
-                    _currentPosition.value = targetPosition
 
                     val gain = video.audioGainDb ?: 0f
                     val effectiveGain = if (_uiState.value.volumeBalance && video.audioGainDb != null) gain else 0f

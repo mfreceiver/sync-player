@@ -347,6 +347,41 @@ class PlayerViewModelLoadVideoTest {
     }
 
     @Test
+    fun `R4 - same-video commit does not set pendingRestore preventing progress rollback on subsequent recreation`() = runTest {
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        coEvery { playbackRepository.getByVideoId(1L) } returns PlaybackRecordEntity(videoItemId = 1L, position = 10_000L, duration = 60_000L)
+        val vm = createVm()
+
+        // 1. Cold start load: consumes initial DB record (10s)
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+        assertEquals(10_000L, vm.consumeRestorePosition(1L))
+
+        // Playback advances to 25s
+        vm.updatePlaybackProgress(25_000L, 60_000L, videoId = 1L)
+        assertEquals(25_000L, vm.currentPosition.value)
+
+        // 2. Recreation #1: loadVideo(1L) is issued and commits.
+        // With R4 guard (!isSameVideo), same-video commit does NOT set _pendingRestore or overwrite currentPosition.
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+
+        // 3. Playback progresses forward to 80s
+        vm.updatePlaybackProgress(80_000L, 60_000L, videoId = 1L)
+        assertEquals(80_000L, vm.currentPosition.value)
+
+        // 4. Double recreation sequence: consecutive consumeRestorePosition calls.
+        // First consume returns new live position (80s).
+        val firstConsume = vm.consumeRestorePosition(1L)
+        assertEquals(80_000L, firstConsume)
+
+        // Second consume (recreation #2) must ALSO return new live position (80s),
+        // proving no stale commit target (25s) was lingering in _pendingRestore.
+        val secondConsume = vm.consumeRestorePosition(1L)
+        assertEquals(80_000L, secondConsume)
+    }
+
+    @Test
     fun `R1 - consumeRestorePosition strictly scopes to requested videoId and returns 0 on mismatch`() = runTest {
         coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
         coEvery { playbackRepository.getByVideoId(1L) } returns PlaybackRecordEntity(videoItemId = 1L, position = 10_000L, duration = 60_000L)
