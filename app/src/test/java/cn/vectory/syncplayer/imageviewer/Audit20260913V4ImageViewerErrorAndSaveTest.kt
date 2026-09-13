@@ -2,6 +2,7 @@ package cn.vectory.syncplayer.imageviewer
 
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
+import cn.vectory.syncplayer.browser.ErrorEvent
 import cn.vectory.syncplayer.browser.UndoDeleteUseCase
 import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
@@ -16,8 +17,11 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -74,16 +78,54 @@ class Audit20260913V4ImageViewerErrorAndSaveTest {
         vm.showError("Failed to delete")
         val ev1 = vm.imageError.value
         assertNotNull(ev1)
-        assertEquals("Failed to delete", ev1?.message)
 
         vm.showError("Failed to delete")
         val ev2 = vm.imageError.value
         assertNotNull(ev2)
-        assertEquals("Failed to delete", ev2?.message)
         assertNotEquals("Consecutive identical errors must produce distinct seq numbers", ev1?.seq, ev2?.seq)
 
         vm.clearError()
         assertNull(vm.imageError.value)
+    }
+
+    @Test
+    fun `AND-030 undoDeleteErrorFlow adapter intercepts toggleTrashed errors and produces distinct sequence numbers`() = runTest {
+        val vm = createVm()
+        val imageId = 42L
+        coEvery { videoRepository.getById(imageId) } returns imageEntity(imageId)
+        coEvery { playbackRepository.getByVideoId(imageId) } returns PlaybackRecordEntity(videoItemId = imageId)
+
+        vm.loadImage(imageId)
+        advanceUntilIdle()
+
+        var capturedErrorFlow: MutableStateFlow<String?>? = null
+        every {
+            undoDeleteUseCase.performTrashToggleNoGuard(eq(imageId), any(), any(), any())
+        } answers {
+            capturedErrorFlow = thirdArg<MutableStateFlow<String?>>()
+        }
+
+        vm.toggleTrashed()
+        advanceUntilIdle()
+
+        assertNotNull("undoDeleteUseCase should receive errorFlow", capturedErrorFlow)
+
+        val observedEvents = mutableListOf<ErrorEvent>()
+        val collectJob = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            vm.imageError.filterNotNull().collect {
+                observedEvents.add(it)
+            }
+        }
+
+        // Assign same error string twice via the captured adapter flow
+        capturedErrorFlow?.value = "Simulated error"
+        capturedErrorFlow?.value = "Simulated error"
+
+        // Verify both errors were observed and have distinct sequence numbers (asserting count and seq, never copy)
+        assertEquals(2, observedEvents.size)
+        assertNotEquals(observedEvents[0].seq, observedEvents[1].seq)
+
+        collectJob.cancel()
     }
 
     @Test
