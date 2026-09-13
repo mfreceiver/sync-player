@@ -27,7 +27,9 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.concurrent.ConcurrentHashMap
@@ -313,5 +315,105 @@ class PlayerViewModelSaveProgressTest {
         advanceUntilIdle()
 
         coVerify(exactly = 1) { playbackRepository.saveProgress(42L, 50_000L, 100_000L) }
+    }
+
+    // ------------------------------------------------------------------
+    // F-003: bounded flush on ViewModel teardown. onCleared() closes the
+    // progressSaveChannel; the single consumer drains all buffered saves to
+    // completion before cancelling progressSaveScope, ensuring the final save
+    // always lands in Room without leaking coroutines or ViewModel instances.
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `F-003 - repeatedly creating and clearing ViewModel flushes final save, terminates consumer, and scopes become inactive`() = runTest {
+        for (i in 1..5) {
+            val videoId = i * 10L
+            val vm = createVm()
+            assertTrue("Scope must be active on creation (iteration $i)", vm.isProgressSaveScopeActive)
+            assertFalse("Consumer must not be completed on creation (iteration $i)", vm.isProgressSaveConsumerCompleted)
+
+            coEvery { videoRepository.getById(videoId) } returns videoEntity(videoId)
+            coEvery { playbackRepository.getByVideoId(videoId) } returns null
+            vm.loadVideo(videoId)
+            advanceUntilIdle()
+
+            // Intermediate save + final save
+            vm.saveProgress(1_000L, 60_000L)
+            vm.saveProgress(5_000L, 60_000L)
+
+            // Teardown: simulate ViewModel clearance on exiting PlayerScreen
+            vm.clearForTest()
+            advanceUntilIdle()
+
+            // ① Final save executed and persisted
+            coVerify(exactly = 1) { playbackRepository.saveProgress(videoId, 5_000L, 60_000L) }
+
+            // ② Consumer coroutine exited and scope is inactive
+            assertFalse("Scope must be inactive after flush and teardown (iteration $i)", vm.isProgressSaveScopeActive)
+            assertTrue("Consumer must be completed after teardown (iteration $i)", vm.isProgressSaveConsumerCompleted)
+
+            // ③ Calls after channel closure do not throw and are dropped
+            vm.saveProgress(99_999L, 60_000L)
+            advanceUntilIdle()
+            coVerify(exactly = 0) { playbackRepository.saveProgress(videoId, 99_999L, 60_000L) }
+        }
+    }
+
+    @Test
+    fun `F-003 - onCleared drains in-flight and queued saves before cancelling scope`() = runTest {
+        val vm = createVm()
+        loadVideo42(vm)
+
+        val gate = CompletableDeferred<Unit>()
+        val persisted = mutableListOf<Long>()
+        coEvery { playbackRepository.saveProgress(42L, 10_000L, 60_000L) } coAnswers {
+            gate.await()
+            persisted.add(10_000L)
+        }
+        coEvery { playbackRepository.saveProgress(42L, 20_000L, 60_000L) } coAnswers {
+            persisted.add(20_000L)
+        }
+
+        vm.saveProgress(10_000L, 60_000L)
+        vm.saveProgress(20_000L, 60_000L)
+
+        // Clear while save is actively in-flight
+        vm.clearForTest()
+
+        // Before gate is released: flush is still in progress, scope remains active
+        assertTrue("Scope must remain active while in-flight saves drain", vm.isProgressSaveScopeActive)
+        assertFalse("Consumer must not complete until channel drains", vm.isProgressSaveConsumerCompleted)
+
+        try {
+            gate.complete(Unit)
+            advanceUntilIdle()
+        } finally {
+            if (!gate.isCompleted) gate.complete(Unit)
+        }
+
+        // Both in-flight and queued saves executed in order
+        assertEquals(listOf(10_000L, 20_000L), persisted)
+
+        // Now scope is cancelled and consumer is completed
+        assertFalse("Scope must become inactive after draining", vm.isProgressSaveScopeActive)
+        assertTrue("Consumer must be completed after draining", vm.isProgressSaveConsumerCompleted)
+    }
+
+    @Test
+    fun `F-003 - onCleared with no pending saves exits consumer and cancels scope immediately`() = runTest {
+        val vm = createVm()
+        assertTrue(vm.isProgressSaveScopeActive)
+        assertFalse(vm.isProgressSaveConsumerCompleted)
+
+        vm.clearForTest()
+        advanceUntilIdle()
+
+        assertFalse("Scope must be inactive when cleared with empty channel", vm.isProgressSaveScopeActive)
+        assertTrue("Consumer must be completed when cleared with empty channel", vm.isProgressSaveConsumerCompleted)
+
+        // Post-clear save does not throw and is not executed
+        vm.saveProgress(100L, 200L)
+        advanceUntilIdle()
+        coVerify(exactly = 0) { playbackRepository.saveProgress(any(), any(), any()) }
     }
 }
