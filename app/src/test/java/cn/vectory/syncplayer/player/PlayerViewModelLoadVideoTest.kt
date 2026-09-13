@@ -302,7 +302,10 @@ class PlayerViewModelLoadVideoTest {
         vm.updatePlaybackProgress(25_000L, 60_000L)
         assertEquals(25_000L, vm.currentPosition.value)
 
-        // Activity recreation scenario: getSavedPosition() must return live 25s, not stale 10s
+        // Activity recreation scenario: loadVideo(1L) re-invoked on same VM instance
+        // must restore live 25s, not stale 10s from DB playbackRecord
+        vm.loadVideo(1L)
+        advanceUntilIdle()
         assertEquals(25_000L, vm.getSavedPosition())
     }
 
@@ -324,5 +327,88 @@ class PlayerViewModelLoadVideoTest {
         advanceUntilIdle()
         assertEquals(5_000L, vm.currentPosition.value)
         assertEquals(5_000L, vm.getSavedPosition())
+    }
+
+    @Test
+    fun `N1 - switching video during active playback gates polling updates and restores clean position`() = runTest {
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        coEvery { playbackRepository.getByVideoId(1L) } returns PlaybackRecordEntity(videoItemId = 1L, position = 10_000L, duration = 60_000L)
+        val vm = createVm()
+
+        // 1. Video 1 loads and plays up to 45s
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+        vm.consumeRestorePosition(1L)
+        vm.setPlaying(true)
+        vm.updatePlaybackProgress(45_000L, 60_000L)
+        assertEquals(45_000L, vm.currentPosition.value)
+        assertTrue(vm.uiState.value.isPlaying)
+
+        // 2. Mock video 2 with a suspension gate
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { videoRepository.getById(2L) } coAnswers {
+            gate.await()
+            videoEntity(2L)
+        }
+        coEvery { playbackRepository.getByVideoId(2L) } returns PlaybackRecordEntity(videoItemId = 2L, position = 5_000L, duration = 60_000L)
+
+        // 3. User switches to video 2: loadVideo(2L) initiated
+        vm.loadVideo(2L)
+        runCurrent() // Runs up to gate.await()
+
+        // Gate guarantees: isPlaying is cleared (cancelling UI polling loop) and currentPosition is reset
+        assertFalse(vm.uiState.value.isPlaying)
+        assertEquals(0L, vm.currentPosition.value)
+
+        // 4. Concurrent 200ms tick from old video arrives while load is in-flight:
+        // Must be dropped by inFlightSwitchGeneration gate!
+        vm.updatePlaybackProgress(45_200L, 60_000L)
+        assertEquals(0L, vm.currentPosition.value)
+
+        // 5. Release gate to complete loading video 2
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        // 6. Assert video 2 restore position is strictly video 2's DB record (5s), NEVER 45s or 45.2s!
+        assertEquals(2L, vm.uiState.value.videoItem?.id)
+        assertEquals(5_000L, vm.consumeRestorePosition(2L))
+        assertEquals(5_000L, vm.currentPosition.value)
+    }
+
+    @Test
+    fun `N1 - switching to unplayed video restores zero even if old video was near end and polling ticked`() = runTest {
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        coEvery { playbackRepository.getByVideoId(1L) } returns null
+        val vm = createVm()
+
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+        vm.consumeRestorePosition(1L)
+        vm.setPlaying(true)
+        vm.updatePlaybackProgress(58_000L, 60_000L)
+        assertEquals(58_000L, vm.currentPosition.value)
+
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { videoRepository.getById(2L) } coAnswers {
+            gate.await()
+            videoEntity(2L)
+        }
+        // Video 2 has never been played (no record in DB)
+        coEvery { playbackRepository.getByVideoId(2L) } returns null
+
+        vm.loadVideo(2L)
+        runCurrent()
+
+        // Stale tick from old video trying to sneak in
+        vm.updatePlaybackProgress(58_200L, 60_000L)
+        assertEquals(0L, vm.currentPosition.value)
+
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(2L, vm.uiState.value.videoItem?.id)
+        // Video 2 must start from 0L, strictly isolated from video 1
+        assertEquals(0L, vm.consumeRestorePosition(2L))
+        assertEquals(0L, vm.currentPosition.value)
     }
 }

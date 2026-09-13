@@ -22,6 +22,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -279,5 +280,38 @@ class PlayerViewModelSaveProgressTest {
         // A deliberate seek-backward save takes effect per call order; no layer
         // may "monotonic-clamp" it away.
         assertEquals(5_000L, persisted.get())
+    }
+
+    @Test
+    fun `saveProgress during in-flight video switch drops un-attributed save to avoid polluting target video`() = runTest {
+        val vm = createVm()
+        loadVideo42(vm)
+
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { videoRepository.getById(43L) } coAnswers {
+            gate.await()
+            videoEntity(43L)
+        }
+        coEvery { playbackRepository.getByVideoId(43L) } returns null
+
+        // Initiate switch to video 43
+        vm.loadVideo(43L)
+        runCurrent()
+
+        // Un-attributed checkpoint save attempts to save while switch is in-flight:
+        // Must be dropped so stale player position is never saved to the new video!
+        vm.saveProgress(50_000L, 100_000L)
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { playbackRepository.saveProgress(43L, any(), any()) }
+
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        // Explicit save targeting video 42 still succeeds
+        vm.saveProgress(50_000L, 100_000L, videoId = 42L)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { playbackRepository.saveProgress(42L, 50_000L, 100_000L) }
     }
 }

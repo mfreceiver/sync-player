@@ -80,6 +80,7 @@ fun PlayerScreen(
     var originalBrightness by remember { mutableFloatStateOf(-1f) }
     var initialVolume by remember { mutableIntStateOf(0) }
     var isExiting by remember { mutableStateOf(false) }
+    var currentMediaId by remember { mutableStateOf<Long?>(null) }
 
     val window = activity.window
     val exoPlayer = remember {
@@ -122,7 +123,7 @@ fun PlayerScreen(
             val restoreController = WindowCompat.getInsetsController(w, w.decorView)
             restoreController.show(WindowInsetsCompat.Type.systemBars())
             restoreController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
-            viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0))
+            viewModel.saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
             gestureView.getPlayerView().player = null
             exoPlayer.release()
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -137,7 +138,8 @@ fun PlayerScreen(
         val item = uiState.videoItem ?: return@LaunchedEffect
         val mediaItem = MediaItem.fromUri(cn.vectory.syncplayer.provider.MediaUris.mediaUri(item.id))
         exoPlayer.setMediaItem(mediaItem)
-        val savedPos = viewModel.getSavedPosition()
+        currentMediaId = item.id
+        val savedPos = viewModel.consumeRestorePosition(item.id)
         if (savedPos > 0) {
             exoPlayer.seekTo(savedPos)
         }
@@ -181,13 +183,14 @@ fun PlayerScreen(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 val playerPos = exoPlayer.currentPosition.coerceAtLeast(0)
                 val playerDur = exoPlayer.duration.coerceAtLeast(0)
-                viewModel.updatePlaybackProgress(playerPos, playerDur)
+                viewModel.updatePlaybackProgress(playerPos, playerDur, videoId = currentMediaId)
 
                 if (playbackState == Player.STATE_ENDED) {
                     val nextId = viewModel.getNextVideoId()
                     if (nextId != null) {
                         viewModel.updateAutoSwitchTime()
-                        viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
+                        viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
+                        exoPlayer.pause()
                         viewModel.loadVideo(nextId)
                     } else {
                         if (!isExiting) {
@@ -207,7 +210,7 @@ fun PlayerScreen(
                 newPosition: Player.PositionInfo,
                 reason: Int
             ) {
-                viewModel.updatePlaybackProgress(newPosition.positionMs, exoPlayer.duration.coerceAtLeast(0))
+                viewModel.updatePlaybackProgress(newPosition.positionMs, exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -246,12 +249,12 @@ fun PlayerScreen(
                     gestureView.currentPosition = playerPos
                 }
                 gestureView.videoDuration = playerDur
-                viewModel.updatePlaybackProgress(playerPos, playerDur)
+                viewModel.updatePlaybackProgress(playerPos, playerDur, videoId = currentMediaId)
 
                 val now = System.currentTimeMillis()
                 if (now - lastCheckpointMs >= 30_000L) {
                     lastCheckpointMs = now
-                    viewModel.saveProgress(playerPos, playerDur)
+                    viewModel.saveProgress(playerPos, playerDur, videoId = currentMediaId)
                 }
                 delay(200L)
             }
@@ -272,7 +275,8 @@ fun PlayerScreen(
                     // paths, and viewModelScope may already be cancelled.
                     viewModel.saveProgress(
                         exoPlayer.currentPosition.coerceAtLeast(0),
-                        exoPlayer.duration.coerceAtLeast(0)
+                        exoPlayer.duration.coerceAtLeast(0),
+                        videoId = currentMediaId
                     )
                 }
             }
@@ -351,7 +355,8 @@ fun PlayerScreen(
                         val prevId = viewModel.getPrevVideoId()
                         if (prevId != null) {
                             viewModel.showOverlay(PlayerOverlay.Previous)
-                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
+                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
+                            exoPlayer.pause()
                             viewModel.loadVideo(prevId)
                         } else {
                             viewModel.showOverlay(PlayerOverlay.NoPrevious)
@@ -363,7 +368,8 @@ fun PlayerScreen(
                         val nextId = viewModel.getNextVideoId()
                         if (nextId != null) {
                             viewModel.showOverlay(PlayerOverlay.Next)
-                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
+                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
+                            exoPlayer.pause()
                             viewModel.loadVideo(nextId)
                         } else {
                             viewModel.showOverlay(PlayerOverlay.NoNext)
@@ -545,7 +551,8 @@ fun PlayerScreen(
                         val prevId = viewModel.getPrevVideoId()
                         if (prevId != null) {
                             viewModel.showOverlay(PlayerOverlay.Previous)
-                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
+                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
+                            exoPlayer.pause()
                             viewModel.loadVideo(prevId)
                         } else {
                             viewModel.showOverlay(PlayerOverlay.NoPrevious)
@@ -555,7 +562,8 @@ fun PlayerScreen(
                         val nextId = viewModel.getNextVideoId()
                         if (nextId != null) {
                             viewModel.showOverlay(PlayerOverlay.Next)
-                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
+                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
+                            exoPlayer.pause()
                             viewModel.loadVideo(nextId)
                         } else {
                             viewModel.showOverlay(PlayerOverlay.NoNext)

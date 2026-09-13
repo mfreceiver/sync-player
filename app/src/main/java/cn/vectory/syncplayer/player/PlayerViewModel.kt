@@ -255,10 +255,28 @@ class PlayerViewModel @Inject constructor(
     // suspension point must never overwrite a newer request's committed state.
     private val loadGeneration = AtomicLong(0L)
 
+    data class PendingRestore(
+        val videoId: Long,
+        val position: Long,
+        val generation: Long,
+    )
+
+    private val _pendingRestore = MutableStateFlow<PendingRestore?>(null)
+    val pendingRestore: StateFlow<PendingRestore?> = _pendingRestore.asStateFlow()
+
+    @Volatile
+    private var inFlightSwitchGeneration: Long? = null
+
     fun loadVideo(videoItemId: Long) {
         val generation = loadGeneration.incrementAndGet()   // 发起即占代
-        if (videoItemId != _uiState.value.videoItem?.id) {
+        val isSameVideo = (videoItemId == _uiState.value.videoItem?.id && _uiState.value.videoItem != null)
+        val livePositionToRestore = if (isSameVideo) _currentPosition.value else 0L
+
+        if (!isSameVideo) {
+            inFlightSwitchGeneration = generation
             _currentPosition.value = 0L
+            _pendingRestore.value = null
+            _uiState.update { it.copy(isPlaying = false) }
         }
         viewModelScope.launch {
             try {
@@ -281,6 +299,23 @@ class PlayerViewModel @Inject constructor(
                 if (video != null) {
                     val record = playbackRepository.getByVideoId(video.id)
                     if (generation != loadGeneration.get()) return@launch   // BUG-015: 旧代次迟到，丢弃
+
+                    if (inFlightSwitchGeneration == generation) {
+                        inFlightSwitchGeneration = null
+                    }
+
+                    // N1 / AND-039: determine restore target strictly:
+                    // - Recreation of same video: restore live position if > 0, else DB record
+                    // - Switch to different video or cold start: restore DB record (never live position of previous video)
+                    val targetPosition = if (isSameVideo && livePositionToRestore > 0L) {
+                        livePositionToRestore
+                    } else {
+                        record?.position ?: 0L
+                    }
+
+                    _pendingRestore.value = PendingRestore(video.id, targetPosition, generation)
+                    _currentPosition.value = targetPosition
+
                     val gain = video.audioGainDb ?: 0f
                     val effectiveGain = if (_uiState.value.volumeBalance && video.audioGainDb != null) gain else 0f
                     _uiState.update { it.copy(
@@ -294,11 +329,11 @@ class PlayerViewModel @Inject constructor(
                     _progressScrubState.value = ProgressScrubUiState()
                     _gestureSeekState.value = GestureSeekUiState()
                     _overlayState.value = PlayerOverlayUiState()
-                    if (_currentPosition.value <= 0L) {
-                        _currentPosition.value = record?.position ?: 0L
-                    }
                 } else {
                     if (generation != loadGeneration.get()) return@launch   // BUG-015：耗尽发布同样受代次门控
+                    if (inFlightSwitchGeneration == generation) {
+                        inFlightSwitchGeneration = null
+                    }
                     // Queue exhausted (or id not in queue at all) — keep the current video and
                     // publish the structured terminal; the UI consumes it and exits. No
                     // ErrorEvent (this is normal EOF, not an error) and no Context-derived copy
@@ -309,12 +344,22 @@ class PlayerViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (inFlightSwitchGeneration == generation) {
+                    inFlightSwitchGeneration = null
+                }
                 Log.e(TAG, "Failed to load video: ${safeErrorDetail(e)}")
             }
         }
     }
 
-    fun updatePlaybackProgress(position: Long, duration: Long) {
+    fun updatePlaybackProgress(position: Long, duration: Long, videoId: Long? = null) {
+        val currentVideo = _uiState.value.videoItem
+        if (videoId != null && currentVideo != null && videoId != currentVideo.id) {
+            return
+        }
+        if (inFlightSwitchGeneration != null) {
+            return
+        }
         _currentPosition.value = position
         if (_uiState.value.duration != duration) {
             _uiState.update { it.copy(duration = duration) }
@@ -325,9 +370,12 @@ class PlayerViewModel @Inject constructor(
         _uiState.update { it.copy(isPlaying = playing) }
     }
 
-    fun saveProgress(position: Long, duration: Long) {
-        val videoId = _uiState.value.videoItem?.id ?: return   // 无已加载视频：no-op（与现状语义一致）
-        progressSaveChannel.trySend(PendingProgressSave(videoId, position, duration))
+    fun saveProgress(position: Long, duration: Long, videoId: Long? = null) {
+        val targetId = videoId ?: run {
+            if (inFlightSwitchGeneration != null) return
+            _uiState.value.videoItem?.id ?: return
+        }
+        progressSaveChannel.trySend(PendingProgressSave(targetId, position, duration))
     }
 
     /**
@@ -376,7 +424,28 @@ class PlayerViewModel @Inject constructor(
      */
     suspend fun undoDelete(expectedId: Long? = null): UndoResult = undoDeleteUseCase.undo(expectedId)
 
-    fun getSavedPosition(): Long {
+    fun consumeRestorePosition(videoId: Long): Long {
+        val pending = _pendingRestore.value
+        return if (pending != null && pending.videoId == videoId) {
+            _pendingRestore.value = null
+            pending.position
+        } else {
+            val record = _uiState.value.playbackRecord
+            if (record != null && record.videoItemId == videoId) {
+                record.position
+            } else {
+                _currentPosition.value
+            }
+        }
+    }
+
+    fun getSavedPosition(videoId: Long? = null): Long {
+        val targetId = videoId ?: _uiState.value.videoItem?.id
+        val pending = _pendingRestore.value
+        if (pending != null && (targetId == null || pending.videoId == targetId)) {
+            _pendingRestore.value = null
+            return pending.position
+        }
         val live = _currentPosition.value
         if (live > 0L) return live
         return _uiState.value.playbackRecord?.position ?: 0L
