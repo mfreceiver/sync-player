@@ -2,6 +2,7 @@ package cn.vectory.syncplayer.player
 
 import android.content.pm.ActivityInfo
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -23,9 +24,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
@@ -112,12 +115,15 @@ class PlayerViewModel @Inject constructor(
 ) : ViewModel() {
 
     /**
-     * AND-001: progress persistence must NOT run on [viewModelScope]. On the
+     * AND-001 / F-003: progress persistence must NOT run on [viewModelScope]. On the
      * recents-swipe teardown path viewModelScope can already be cancelled when
      * the UI asks for a final save — a `viewModelScope.launch` is then a silent
-     * no-op and playback position is lost. This scope is deliberately
-     * independent of the ViewModel lifecycle (and intentionally not cancelled
-     * in [onCleared]) so a just-launched save always completes.
+     * no-op and playback position is lost.
+     *
+     * To prevent leaking coroutines and ViewModel references after [onCleared],
+     * [onCleared] closes [progressSaveChannel]. The consumer loop drains all already-queued
+     * saves (including the final teardown save), executes them sequentially to completion,
+     * and cancels [progressSaveScope] upon loop termination.
      */
     private val progressSaveScope = CoroutineScope(SupervisorJob() + ioDispatcher)
 
@@ -129,8 +135,8 @@ class PlayerViewModel @Inject constructor(
     // the consumer loop keeps serving the queue (oracle #1: CE 不得杀死唯一消费者).
     private val progressSaveChannel = Channel<PendingProgressSave>(Channel.UNLIMITED)
 
-    init { // 与现有 init 块并列
-        progressSaveScope.launch {
+    private val consumerJob: Job = progressSaveScope.launch {
+        try {
             for (save in progressSaveChannel) {
                 val job = launch {                       // 每次保存一个子 Job（父=消费者协程）
                     try {
@@ -143,8 +149,18 @@ class PlayerViewModel @Inject constructor(
                 }
                 job.join()                               // 上一保存结束才取下一项：完成序 == 入队序（仅串行保证，无时延上界）
             }
+        } finally {
+            progressSaveScope.cancel()
         }
     }
+
+    @get:VisibleForTesting
+    internal val isProgressSaveScopeActive: Boolean
+        get() = progressSaveScope.isActive
+
+    @get:VisibleForTesting
+    internal val isProgressSaveConsumerCompleted: Boolean
+        get() = consumerJob.isCompleted
 
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
@@ -635,6 +651,12 @@ class PlayerViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
+        progressSaveChannel.close()
+    }
+
+    @VisibleForTesting
+    internal fun clearForTest() {
+        onCleared()
     }
 
     companion object {
