@@ -539,6 +539,26 @@ fun PlayerScreen(
                     onBack10 = { seekBy(viewModel, exoPlayer, -10_000L) },
                     onForward10 = { seekBy(viewModel, exoPlayer, 10_000L) },
                     onRotate = viewModel::toggleFullscreen,
+                    onPreviousVideo = {
+                        val prevId = viewModel.getPrevVideoId()
+                        if (prevId != null) {
+                            viewModel.showOverlay(PlayerOverlay.Previous)
+                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
+                            viewModel.loadVideo(prevId)
+                        } else {
+                            viewModel.showOverlay(PlayerOverlay.NoPrevious)
+                        }
+                    },
+                    onNextVideo = {
+                        val nextId = viewModel.getNextVideoId()
+                        if (nextId != null) {
+                            viewModel.showOverlay(PlayerOverlay.Next)
+                            viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0))
+                            viewModel.loadVideo(nextId)
+                        } else {
+                            viewModel.showOverlay(PlayerOverlay.NoNext)
+                        }
+                    },
                 )
             }
         }
