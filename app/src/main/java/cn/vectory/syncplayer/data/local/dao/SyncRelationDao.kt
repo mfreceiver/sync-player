@@ -31,7 +31,11 @@ interface SyncRelationDao {
     @Query("""
         SELECT * FROM sync_relation
         WHERE localBasePath != :excludePath
-        AND (:checkPath = localBasePath OR :checkPath LIKE localBasePath || '/%' OR localBasePath LIKE :checkPath || '/%')
+        AND (
+            :checkPath = localBasePath
+            OR :checkPath LIKE REPLACE(REPLACE(REPLACE(localBasePath, '\', '\\'), '%', '\%'), '_', '\_') || '/%' ESCAPE '\'
+            OR localBasePath LIKE REPLACE(REPLACE(REPLACE(:checkPath, '\', '\\'), '%', '\%'), '_', '\_') || '/%' ESCAPE '\'
+        )
     """)
     suspend fun findConflictingBasePaths(checkPath: String, excludePath: String = ""): List<SyncRelationEntity>
 
