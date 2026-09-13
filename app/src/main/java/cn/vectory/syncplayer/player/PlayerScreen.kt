@@ -226,6 +226,7 @@ fun PlayerScreen(
     val isGestureSeeking by rememberUpdatedState(uiState.isGestureSeeking)
     LaunchedEffect(uiState.isPlaying) {
         if (uiState.isPlaying) {
+            var lastCheckpointMs = System.currentTimeMillis()
             while (true) {
                 val playerPos = exoPlayer.currentPosition.coerceAtLeast(0)
                 val playerDur = exoPlayer.duration.coerceAtLeast(0)
@@ -244,6 +245,12 @@ fun PlayerScreen(
                 }
                 gestureView.videoDuration = playerDur
                 viewModel.updatePlaybackProgress(playerPos, playerDur)
+
+                val now = System.currentTimeMillis()
+                if (now - lastCheckpointMs >= 30_000L) {
+                    lastCheckpointMs = now
+                    viewModel.saveProgress(playerPos, playerDur)
+                }
                 delay(200L)
             }
         }
