@@ -480,8 +480,11 @@ fun PlayerScreen(
     // no underlying path/id/message leaks).
     uiState.error?.let { ev ->
         LaunchedEffect(ev.seq) {
-            snackbarHostState.showSnackbar(ev.message)
-            viewModel.clearError()
+            try {
+                snackbarHostState.showSnackbar(ev.message)
+            } finally {
+                viewModel.clearError()
+            }
         }
     }
 
