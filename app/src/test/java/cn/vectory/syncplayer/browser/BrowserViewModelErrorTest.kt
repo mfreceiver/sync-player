@@ -41,6 +41,7 @@ class BrowserViewModelErrorTest {
         every { syncRelationRepository.getAllWithSourceFlow() } returns MutableStateFlow(emptyList())
         every { syncSourceRepository.getAllFlow() } returns MutableStateFlow(emptyList())
         every { videoRepository.getAllItemsFlow() } returns MutableStateFlow(emptyList())
+        every { videoRepository.hasAnyItemsFlow() } returns MutableStateFlow(false)
         every { userPrefs.onboardingDismissed } returns MutableStateFlow(false)
         coEvery { userPrefs.getDefaultSortMode() } returns "FILENAME_ASC"
         coEvery { userPrefs.getDefaultFilter() } returns "ALL"

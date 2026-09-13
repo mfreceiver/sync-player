@@ -138,12 +138,12 @@ class BrowserViewModel @Inject constructor(
     val firstRunState: StateFlow<FirstRunState?> = combine(
         syncSourceRepository.getAllFlow(),
         syncRelationRepository.getAllWithSourceFlow(),
-        videoRepository.getAllItemsFlow()
-    ) { sources, relations, media ->
+        videoRepository.hasAnyItemsFlow()
+    ) { sources, relations, hasMedia ->
         deriveFirstRunState(
             hasSource = sources.isNotEmpty(),
             hasRelation = relations.isNotEmpty(),
-            hasMedia = media.isNotEmpty()
+            hasMedia = hasMedia
         )
     }.stateIn(viewModelScope, SharingStarted.Lazily, null)
 
@@ -356,8 +356,8 @@ class BrowserViewModel @Inject constructor(
      * Used by onboarding to avoid showing the guidance card when the current view is
      * merely filtered empty while media exists elsewhere.
      */
-    val libraryEmpty: StateFlow<Boolean> = videoRepository.getAllItemsFlow()
-        .map { it.isEmpty() }
+    val libraryEmpty: StateFlow<Boolean> = videoRepository.hasAnyItemsFlow()
+        .map { !it }
         .stateIn(viewModelScope, SharingStarted.Lazily, true)
 
     /**
