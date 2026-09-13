@@ -26,7 +26,7 @@ fun LockScreenOverlay(
     val context = LocalContext.current
     val activity = context as? FragmentActivity ?: return
 
-    var authFailed by remember { mutableStateOf(false) }
+    var authFailed by rememberSaveable { mutableStateOf(false) }
     var failCount by rememberSaveable { mutableIntStateOf(0) }
     var isCooldown by rememberSaveable { mutableStateOf(false) }
     var cooldownRemaining by rememberSaveable { mutableIntStateOf(0) }
@@ -44,7 +44,7 @@ fun LockScreenOverlay(
     // Cooldown countdown timer — runs only when isCooldown is true
     LaunchedEffect(isCooldown) {
         if (isCooldown) {
-            var remaining = 30
+            var remaining = if (cooldownRemaining > 0) cooldownRemaining else 30
             while (remaining > 0) {
                 cooldownRemaining = remaining
                 delay(1000L)
@@ -53,6 +53,12 @@ fun LockScreenOverlay(
             cooldownRemaining = 0
             failCount = 0
             isCooldown = false
+            authFailed = false
+            biometricAuthManager.authenticate(
+                activity = activity,
+                onSuccess = { appLockManager.unlock() },
+                onError = onAuthError
+            )
         }
     }
 
@@ -99,7 +105,7 @@ fun LockScreenOverlay(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
-            if (authFailed) {
+            if (authFailed || isCooldown) {
                 Spacer(Modifier.height(24.dp))
                 Button(
                     enabled = !isCooldown,
