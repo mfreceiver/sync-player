@@ -455,4 +455,5 @@
     <string name="browser_a11y_star_filter_mode_greater_than">大于</string>
     <string name="browser_a11y_star_filter_mode_less_than">小于</string>
     <string name="filter_star_rating_a11y_n">第 %1$d 星，%2$s</string>
+    <string name="relation_delete_failed">删除失败</string>
 </resources>

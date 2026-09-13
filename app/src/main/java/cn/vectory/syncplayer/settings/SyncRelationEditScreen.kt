@@ -400,4 +400,5 @@ private fun relationTestResultText(result: RelationTestResult, sourceHost: Strin
 private fun relationSaveResultText(result: RelationSaveResult): String = when (result) {
     is RelationSaveResult.Saved -> stringResource(R.string.relation_save_success)
     is RelationSaveResult.Deleted -> stringResource(R.string.relation_delete_success)
+    is RelationSaveResult.DeleteFailed -> stringResource(R.string.relation_delete_failed)
 }
