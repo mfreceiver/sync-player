@@ -797,7 +797,7 @@ internal fun AuroraSettingsModal(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(AuroraTokens.AuroraRecycleRowHeight)
+                            .heightIn(min = AuroraTokens.AuroraRecycleRowHeight)
                             .testTag("player_aurora_recycle_action")
                             .semantics { role = Role.Button; contentDescription = description }
                             .clickable(enabled = videoId != null && !trashTogglePending) {
