@@ -7,11 +7,13 @@ import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.audio.AudioGainAnalyzer
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.provider.MediaUris
 import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.ui.util.isVideoFile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -32,7 +34,8 @@ class GainAnalysisViewModel @Inject constructor(
     private val videoRepository: VideoRepository,
     private val audioGainAnalyzer: AudioGainAnalyzer,
     @ApplicationContext private val context: Context,
-    savedStateHandle: SavedStateHandle
+    savedStateHandle: SavedStateHandle,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : ViewModel() {
 
     private val relationId: Long = savedStateHandle.get<Long>("relationId") ?: 0L
@@ -163,7 +166,7 @@ class GainAnalysisViewModel @Inject constructor(
             val failedMutex = Mutex()
 
             try {
-                withContext(Dispatchers.IO) {
+                withContext(ioDispatcher) {
                     files.map { video ->
                         async {
                             semaphore.withPermit {

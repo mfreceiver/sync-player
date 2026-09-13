@@ -264,4 +264,16 @@ class GainAnalysisConcurrencyTest {
         org.junit.Assert.assertTrue("analyzer should have received CancellationException", cancelled)
         assertFalse(vm.isAnalyzing.value)
     }
+
+    @Test
+    fun `GainAnalysisViewModel accepts injected ioDispatcher`() = runBlocking {
+        val vmWithDispatcher = GainAnalysisViewModel(
+            videoRepository = videoRepository,
+            audioGainAnalyzer = audioGainAnalyzer,
+            context = context,
+            savedStateHandle = SavedStateHandle(mapOf("relationId" to 1L)),
+            ioDispatcher = UnconfinedTestDispatcher()
+        )
+        assertFalse(vmWithDispatcher.isAnalyzing.value)
+    }
 }

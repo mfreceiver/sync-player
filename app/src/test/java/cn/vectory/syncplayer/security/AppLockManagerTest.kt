@@ -353,4 +353,15 @@ class AppLockManagerTest {
 
         assertTrue("locked state must persist until unlock()", manager.isLocked.value)
     }
+
+    @Test
+    fun `ioDispatcher parameter can be injected and used`() = runTest {
+        val userPrefs = mockk<UserPreferencesRepository>()
+        every { userPrefs.secureLockEnabled } returns MutableStateFlow(false)
+        val testDispatcher = kotlinx.coroutines.test.StandardTestDispatcher(testScheduler)
+        val manager = AppLockManager(context, userPrefs, testDispatcher)
+
+        manager.onStateChanged(mockk(), Lifecycle.Event.ON_START)
+        assertFalse("lock disabled should not lock", manager.isLocked.value)
+    }
 }

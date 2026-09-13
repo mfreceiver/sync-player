@@ -6,8 +6,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
+import cn.vectory.syncplayer.di.IoDispatcher
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,7 +30,8 @@ import javax.inject.Singleton
 @Singleton
 class AppLockManager @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val userPrefs: UserPreferencesRepository
+    private val userPrefs: UserPreferencesRepository,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : LifecycleEventObserver {
 
     private val _isLocked = MutableStateFlow(false)
@@ -45,7 +48,7 @@ class AppLockManager @Inject constructor(
     private val cacheWriteLock = Any()
     private val cacheGeneration = AtomicLong(0)
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + ioDispatcher)
 
     private var hasBeenInBackground = false
     private var isFirstStart = true
