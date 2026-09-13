@@ -59,6 +59,25 @@ internal fun determineAutoplayAfterSwitch(
 
 internal fun updateAutoplayIntent(toggleToPlaying: Boolean): Boolean = toggleToPlaying
 
+/**
+ * Decision helper for system-initiated playWhenReady changes (e.g. audio focus loss,
+ * audio becoming noisy / headphone unplug).
+ *
+ * - When reason is USER_REQUEST: user code controls the autoplay intent via togglePlay()
+ *   or media switch handlers; this function returns null (no-op).
+ * - When reason is system-initiated (AUDIO_FOCUS_LOSS, AUDIO_BECOMING_NOISY, etc.):
+ *   the system paused playback without explicit user action. To honor the baseline
+ *   contract that switching while paused remains paused, we adopt the new playWhenReady
+ *   value (false) into pendingAutoplay.
+ */
+internal fun autoplayIntentAfterSystemPauseChange(
+    playWhenReady: Boolean,
+    reason: Int,
+): Boolean? = when (reason) {
+    Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> null
+    else -> playWhenReady
+}
+
 internal fun preparePlayerForMedia(
     player: Player,
     mediaUri: Uri,
@@ -132,6 +151,12 @@ fun PlayerScreen(
         GesturePlayerView(context).apply {
             getPlayerView().player = exoPlayer
         }
+    }
+
+    val togglePlay = {
+        val willPlay = !exoPlayer.isPlaying
+        pendingAutoplay = updateAutoplayIntent(willPlay)
+        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
     }
 
     DisposableEffect(Unit) {
@@ -214,6 +239,12 @@ fun PlayerScreen(
 
     val playerListener = remember {
         object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                autoplayIntentAfterSystemPauseChange(playWhenReady, reason)?.let {
+                    pendingAutoplay = it
+                }
+            }
+
             override fun onPlaybackStateChanged(playbackState: Int) {
                 val playerPos = exoPlayer.currentPosition.coerceAtLeast(0)
                 val playerDur = exoPlayer.duration.coerceAtLeast(0)
@@ -385,11 +416,6 @@ fun PlayerScreen(
                     yFraction = yFraction,
                 )
                 val s = uiStateRef.value
-                val togglePlay = {
-                    val willPlay = !exoPlayer.isPlaying
-                    pendingAutoplay = updateAutoplayIntent(willPlay)
-                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                }
                 when (zone) {
                     DoubleTapZone.PREVIOUS -> {
                         val prevId = viewModel.getPrevVideoId()
@@ -613,6 +639,7 @@ fun PlayerScreen(
                             viewModel.showOverlay(PlayerOverlay.NoNext)
                         }
                     },
+                    onTogglePlay = togglePlay,
                 )
             }
         }

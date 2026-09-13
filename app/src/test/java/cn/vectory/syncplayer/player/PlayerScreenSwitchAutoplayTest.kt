@@ -111,6 +111,69 @@ class PlayerScreenSwitchAutoplayTest {
     }
 
     @Test
+    fun `R5 - Sequence C control bar pause to manual switch retains paused state`() {
+        // 1. Initial state: playing, cold-start initialized pendingAutoplay = true
+        var isPlaying = true
+        var playWhenReady = true
+        var pendingAutoplay = true
+
+        // 2. User taps play/pause button in AuroraControlRow (routed through lifted togglePlay)
+        val willPlay = !isPlaying
+        pendingAutoplay = updateAutoplayIntent(willPlay)
+        isPlaying = false
+        playWhenReady = false
+        assertFalse("Control bar pause must sync pendingAutoplay to false", pendingAutoplay)
+
+        // 3. User taps next video in control bar (MANUAL switch, Click 1)
+        val autoplayClick1 = determineAutoplayAfterSwitch(
+            reason = MediaSwitchReason.MANUAL,
+            currentPlayWhenReady = playWhenReady || pendingAutoplay,
+        )
+        assertFalse("Manual switch after control bar pause must remain paused", autoplayClick1)
+        pendingAutoplay = autoplayClick1
+        // Entry calls exoPlayer.pause(), setting playWhenReady = false
+        playWhenReady = false
+
+        // 4. Second burst click on next video while load is in flight
+        val autoplayClick2 = determineAutoplayAfterSwitch(
+            reason = MediaSwitchReason.MANUAL,
+            currentPlayWhenReady = playWhenReady || pendingAutoplay,
+        )
+        assertFalse("Burst switch click after control bar pause must still remain paused", autoplayClick2)
+        pendingAutoplay = autoplayClick2
+    }
+
+    @Test
+    fun `R5 - System pause intent decision respects user request vs system pause reasons`() {
+        // USER_REQUEST: user code controls intent, helper must return null (no-op)
+        val userReqPlay = autoplayIntentAfterSystemPauseChange(
+            playWhenReady = true,
+            reason = Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST,
+        )
+        org.junit.Assert.assertNull("USER_REQUEST must not modify pendingAutoplay", userReqPlay)
+
+        val userReqPause = autoplayIntentAfterSystemPauseChange(
+            playWhenReady = false,
+            reason = Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST,
+        )
+        org.junit.Assert.assertNull("USER_REQUEST must not modify pendingAutoplay", userReqPause)
+
+        // AUDIO_FOCUS_LOSS: system pause, should adopt false
+        val focusLoss = autoplayIntentAfterSystemPauseChange(
+            playWhenReady = false,
+            reason = Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS,
+        )
+        assertFalse("AUDIO_FOCUS_LOSS pause must update pendingAutoplay to false", focusLoss!!)
+
+        // AUDIO_BECOMING_NOISY: headphone unplug, system pause, should adopt false
+        val becomingNoisy = autoplayIntentAfterSystemPauseChange(
+            playWhenReady = false,
+            reason = Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY,
+        )
+        assertFalse("AUDIO_BECOMING_NOISY pause must update pendingAutoplay to false", becomingNoisy!!)
+    }
+
+    @Test
     fun `R2 - preparePlayerForMedia calls play when shouldPlay is true`() {
         val mockPlayer = mockk<Player>(relaxed = true)
         val uri = "content://cn.vectory.syncplayer/media/42".toUri()

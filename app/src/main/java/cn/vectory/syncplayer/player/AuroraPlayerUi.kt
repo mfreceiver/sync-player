@@ -401,6 +401,9 @@ internal fun AuroraBottomArea(
     onRotate: () -> Unit,
     onPreviousVideo: (() -> Unit)? = null,
     onNextVideo: (() -> Unit)? = null,
+    // Autoplay intent synchronization must be provided by the caller's togglePlay callback;
+    // direct inline control of exoPlayer here is forbidden to avoid breaking switch-while-paused semantics.
+    onTogglePlay: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -418,7 +421,7 @@ internal fun AuroraBottomArea(
         if (visibility.showControlRow) {
             AuroraControlRow(
                 isPlaying = isPlaying,
-                onTogglePlay = { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() },
+                onTogglePlay = onTogglePlay,
                 onOpenSettings = onOpenSettings,
                 onBack10 = onBack10,
                 onForward10 = onForward10,
