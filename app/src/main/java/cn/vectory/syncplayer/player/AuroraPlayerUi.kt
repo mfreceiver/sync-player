@@ -328,7 +328,7 @@ internal fun AuroraBands() {
                 .fillMaxWidth()
                 .fillMaxHeight(AuroraTokens.AuroraBandFraction)
                 .background(AuroraTokens.AuroraTopBandBrush)
-                .graphicsLayer(alpha = alpha),
+                .graphicsLayer { this.alpha = alpha },
         )
         Box(
             modifier = Modifier
@@ -336,7 +336,7 @@ internal fun AuroraBands() {
                 .fillMaxWidth()
                 .fillMaxHeight(AuroraTokens.AuroraBandFraction)
                 .background(AuroraTokens.AuroraBottomBandBrush)
-                .graphicsLayer(alpha = alpha),
+                .graphicsLayer { this.alpha = alpha },
         )
     }
 }
