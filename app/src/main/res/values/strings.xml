@@ -456,4 +456,5 @@
     <string name="browser_a11y_star_filter_mode_less_than">小于</string>
     <string name="filter_star_rating_a11y_n">第 %1$d 星，%2$s</string>
     <string name="relation_delete_failed">删除失败</string>
+    <string name="media_write_not_supported">不支持写入访问</string>
 </resources>

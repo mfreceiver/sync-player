@@ -42,7 +42,7 @@ class MediaContentProvider : ContentProvider() {
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor? {
         if (mode != "r") {
-            throw FileNotFoundException(context!!.getString(R.string.media_error_invalid))
+            throw FileNotFoundException(context!!.getString(R.string.media_write_not_supported))
         }
         val id = try {
             MediaUris.idOf(uri)
