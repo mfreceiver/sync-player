@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 sealed class ImageOverlay {
@@ -93,12 +94,19 @@ class ImageViewerViewModel @Inject constructor(
         }
     }
 
+    // BUG-015 pattern: load request generation — a stale request resuming after ANY
+    // suspension point must never overwrite a newer request's committed state.
+    private val loadGeneration = AtomicLong(0L)
+
     fun loadImage(imageItemId: Long) {
+        val generation = loadGeneration.incrementAndGet()
         viewModelScope.launch {
             try {
+                if (generation != loadGeneration.get()) return@launch
                 val image = videoRepository.getById(imageItemId)
                 if (image != null) {
                     val record = playbackRepository.getByVideoId(image.id)
+                    if (generation != loadGeneration.get()) return@launch
                     _uiState.update { it.copy(
                         currentImage = image,
                         playbackRecord = record,
