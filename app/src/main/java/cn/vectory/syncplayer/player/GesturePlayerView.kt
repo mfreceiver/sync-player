@@ -52,6 +52,7 @@ class GesturePlayerView @JvmOverloads constructor(
      */
     var edgeBackEnabled: Boolean = false
         set(value) {
+            if (field == value) return
             field = value
             updateSystemGestureExclusionRects()
         }
