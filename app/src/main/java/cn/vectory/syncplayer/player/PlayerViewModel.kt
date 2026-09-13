@@ -283,7 +283,12 @@ class PlayerViewModel @Inject constructor(
                 // A request whose body only starts after a newer request was issued is
                 // already stale — its commit would be dropped at the guard below, and its
                 // start-of-run flag clear could erase a terminal the newer request owns.
-                if (generation != loadGeneration.get()) return@launch
+                if (generation != loadGeneration.get()) {
+                    if (inFlightSwitchGeneration == generation) {
+                        inFlightSwitchGeneration = null
+                    }
+                    return@launch
+                }
                 _uiState.update { it.copy(queueExhausted = false) }   // 每次加载先清终态
                 var candidateId = videoItemId
                 var video = videoRepository.getById(candidateId)
@@ -298,9 +303,16 @@ class PlayerViewModel @Inject constructor(
                 }
                 if (video != null) {
                     val record = playbackRepository.getByVideoId(video.id)
-                    if (generation != loadGeneration.get()) return@launch   // BUG-015: 旧代次迟到，丢弃
+                    if (generation != loadGeneration.get()) {
+                        if (inFlightSwitchGeneration == generation) {
+                            inFlightSwitchGeneration = null
+                        }
+                        return@launch   // BUG-015: 旧代次迟到，丢弃
+                    }
 
-                    if (inFlightSwitchGeneration == generation) {
+                    // R3: Clear any switch gate <= current committing generation
+                    val gate = inFlightSwitchGeneration
+                    if (gate != null && gate <= generation) {
                         inFlightSwitchGeneration = null
                     }
 
@@ -330,8 +342,14 @@ class PlayerViewModel @Inject constructor(
                     _gestureSeekState.value = GestureSeekUiState()
                     _overlayState.value = PlayerOverlayUiState()
                 } else {
-                    if (generation != loadGeneration.get()) return@launch   // BUG-015：耗尽发布同样受代次门控
-                    if (inFlightSwitchGeneration == generation) {
+                    if (generation != loadGeneration.get()) {
+                        if (inFlightSwitchGeneration == generation) {
+                            inFlightSwitchGeneration = null
+                        }
+                        return@launch   // BUG-015：耗尽发布同样受代次门控
+                    }
+                    val gate = inFlightSwitchGeneration
+                    if (gate != null && gate <= generation) {
                         inFlightSwitchGeneration = null
                     }
                     // Queue exhausted (or id not in queue at all) — keep the current video and
@@ -344,10 +362,18 @@ class PlayerViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (inFlightSwitchGeneration == generation) {
+                val gate = inFlightSwitchGeneration
+                if (gate != null && gate <= generation) {
                     inFlightSwitchGeneration = null
                 }
                 Log.e(TAG, "Failed to load video: ${safeErrorDetail(e)}")
+            } finally {
+                if (loadGeneration.get() == generation) {
+                    val gate = inFlightSwitchGeneration
+                    if (gate != null && gate <= generation) {
+                        inFlightSwitchGeneration = null
+                    }
+                }
             }
         }
     }

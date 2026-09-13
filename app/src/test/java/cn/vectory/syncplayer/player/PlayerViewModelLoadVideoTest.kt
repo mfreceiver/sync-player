@@ -462,4 +462,39 @@ class PlayerViewModelLoadVideoTest {
         assertEquals(0L, vm.consumeRestorePosition(2L))
         assertEquals(0L, vm.currentPosition.value)
     }
+
+    @Test
+    fun `R3 - inFlightSwitchGeneration gate does not leak when cross-video load is superseded by same-video load`() = runTest {
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        coEvery { playbackRepository.getByVideoId(1L) } returns PlaybackRecordEntity(videoItemId = 1L, position = 10_000L, duration = 60_000L)
+        val vm = createVm()
+
+        // 1. Initial load of video 1
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+        vm.consumeRestorePosition(1L)
+        assertEquals(1L, vm.uiState.value.videoItem?.id)
+
+        // 2. Start cross-video loadVideo(2L) that suspends on DB
+        val gateVideo2 = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { videoRepository.getById(2L) } coAnswers {
+            gateVideo2.await()
+            videoEntity(2L)
+        }
+        vm.loadVideo(2L)
+        runCurrent() // Suspended in loadVideo(2L), inFlightSwitchGeneration set
+
+        // 3. Same-video loadVideo(1L) is issued (e.g. reload/recreation) and completes immediately
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        vm.loadVideo(1L)
+        advanceUntilIdle() // loadVideo(1L) commits and clears gate
+
+        // 4. Release video 2's gate so stale loadVideo(2L) resumes and hits return@launch
+        gateVideo2.complete(Unit)
+        advanceUntilIdle()
+
+        // 5. Assert: gate is cleared, video 1 remains active, and subsequent updatePlaybackProgress ticks are accepted
+        vm.updatePlaybackProgress(33_000L, 60_000L, videoId = 1L)
+        assertEquals(33_000L, vm.currentPosition.value)
+    }
 }
