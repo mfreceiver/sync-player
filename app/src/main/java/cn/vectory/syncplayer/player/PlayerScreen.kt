@@ -37,11 +37,41 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import android.net.Uri
 import androidx.media3.exoplayer.ExoPlayer
 import cn.vectory.syncplayer.player.GesturePlayerView.DoubleTapZone
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.pow
+
+internal enum class MediaSwitchReason {
+    EOF,
+    MANUAL
+}
+
+internal fun determineAutoplayAfterSwitch(
+    reason: MediaSwitchReason,
+    currentPlayWhenReady: Boolean,
+): Boolean = when (reason) {
+    MediaSwitchReason.EOF -> true
+    MediaSwitchReason.MANUAL -> currentPlayWhenReady
+}
+
+internal fun preparePlayerForMedia(
+    player: Player,
+    mediaUri: Uri,
+    restorePosition: Long,
+    shouldPlay: Boolean,
+) {
+    player.setMediaItem(MediaItem.fromUri(mediaUri))
+    if (restorePosition > 0L) {
+        player.seekTo(restorePosition)
+    }
+    player.prepare()
+    if (shouldPlay) {
+        player.play()
+    }
+}
 
 private fun Modifier.verticalGradientBackground(colors: List<Color>, height: Dp): Modifier =
     this.then(
@@ -81,6 +111,7 @@ fun PlayerScreen(
     var initialVolume by remember { mutableIntStateOf(0) }
     var isExiting by remember { mutableStateOf(false) }
     var currentMediaId by remember { mutableStateOf<Long?>(null) }
+    var pendingAutoplay by remember { mutableStateOf(true) }
 
     val window = activity.window
     val exoPlayer = remember {
@@ -136,14 +167,15 @@ fun PlayerScreen(
 
     LaunchedEffect(uiState.videoItem) {
         val item = uiState.videoItem ?: return@LaunchedEffect
-        val mediaItem = MediaItem.fromUri(cn.vectory.syncplayer.provider.MediaUris.mediaUri(item.id))
-        exoPlayer.setMediaItem(mediaItem)
+        val mediaUri = cn.vectory.syncplayer.provider.MediaUris.mediaUri(item.id)
         currentMediaId = item.id
         val savedPos = viewModel.consumeRestorePosition(item.id)
-        if (savedPos > 0) {
-            exoPlayer.seekTo(savedPos)
-        }
-        exoPlayer.prepare()
+        preparePlayerForMedia(
+            player = exoPlayer,
+            mediaUri = mediaUri,
+            restorePosition = savedPos,
+            shouldPlay = pendingAutoplay,
+        )
     }
 
     LaunchedEffect(uiState.isFullscreen, uiState.videoItem) {
@@ -188,6 +220,7 @@ fun PlayerScreen(
                 if (playbackState == Player.STATE_ENDED) {
                     val nextId = viewModel.getNextVideoId()
                     if (nextId != null) {
+                        pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.EOF, exoPlayer.playWhenReady)
                         viewModel.updateAutoSwitchTime()
                         viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
                         exoPlayer.pause()
@@ -356,6 +389,7 @@ fun PlayerScreen(
                         if (prevId != null) {
                             viewModel.showOverlay(PlayerOverlay.Previous)
                             viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
+                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady)
                             exoPlayer.pause()
                             viewModel.loadVideo(prevId)
                         } else {
@@ -369,6 +403,7 @@ fun PlayerScreen(
                         if (nextId != null) {
                             viewModel.showOverlay(PlayerOverlay.Next)
                             viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
+                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady)
                             exoPlayer.pause()
                             viewModel.loadVideo(nextId)
                         } else {
@@ -552,6 +587,7 @@ fun PlayerScreen(
                         if (prevId != null) {
                             viewModel.showOverlay(PlayerOverlay.Previous)
                             viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
+                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady)
                             exoPlayer.pause()
                             viewModel.loadVideo(prevId)
                         } else {
@@ -563,6 +599,7 @@ fun PlayerScreen(
                         if (nextId != null) {
                             viewModel.showOverlay(PlayerOverlay.Next)
                             viewModel.saveProgress(exoPlayer.currentPosition.coerceAtLeast(0), exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
+                            pendingAutoplay = determineAutoplayAfterSwitch(MediaSwitchReason.MANUAL, exoPlayer.playWhenReady)
                             exoPlayer.pause()
                             viewModel.loadVideo(nextId)
                         } else {
