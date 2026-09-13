@@ -163,8 +163,8 @@ internal object AuroraTokens {
     val AuroraTrack = AuroraText.copy(alpha = 0.22f)
     val AuroraDisabled = AuroraTextSecondary.copy(alpha = 0.38f)
     val AuroraPanelFill = AuroraSurface.copy(alpha = 0.84f)
-    val AuroraPillFill = AuroraSurface.copy(alpha = 0.78f)
-    val AuroraControlFill = AuroraSurface.copy(alpha = 0.78f)
+    val AuroraPillFill = AuroraSurface.copy(alpha = 0.88f)
+    val AuroraControlFill = AuroraSurface.copy(alpha = 0.88f)
     val AuroraGlowBlue = AuroraBlue.copy(alpha = 0.10f)
     val AuroraGlowPurple = AuroraPurple.copy(alpha = 0.10f)
     val AuroraGlowClear = Color.Transparent
