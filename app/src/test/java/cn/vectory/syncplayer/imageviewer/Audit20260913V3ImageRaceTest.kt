@@ -65,6 +65,7 @@ class Audit20260913V3ImageRaceTest {
             playbackRepository = playbackRepository,
             imageQueue = imageQueue,
             undoDeleteUseCase = undoDeleteUseCase,
+            ioDispatcher = testDispatcher,
         )
     }
 

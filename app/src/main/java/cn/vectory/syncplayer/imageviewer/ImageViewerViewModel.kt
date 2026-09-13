@@ -236,6 +236,8 @@ class ImageViewerViewModel @Inject constructor(
      * Dedicated independent scope for saving playback progress (AND-031).
      * Mirrored from PlayerViewModel.progressSaveScope so recents-swipe teardown
      * doesn't cancel in-flight saves when viewModelScope is cancelled.
+     * This scope is deliberately independent of the ViewModel lifecycle (and intentionally
+     * not cancelled in onCleared) so a just-launched save always completes.
      */
     private val progressSaveScope = CoroutineScope(SupervisorJob() + ioDispatcher)
 
