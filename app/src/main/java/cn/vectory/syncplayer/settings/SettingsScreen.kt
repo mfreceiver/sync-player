@@ -25,6 +25,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.vectory.syncplayer.BuildConfig
 import cn.vectory.syncplayer.R
@@ -42,8 +43,14 @@ fun SettingsScreen(
     onNavigateToDebugLog: () -> Unit = {},
 ) {
     val settingsState by viewModel.settingsState.collectAsStateWithLifecycle()
+    val authCapabilityInfo by viewModel.authCapabilityInfo.collectAsStateWithLifecycle()
     val currentContext = LocalContext.current
     var isNavigatingBack by remember { mutableStateOf(false) }
+
+    LifecycleResumeEffect(Unit) {
+        viewModel.refreshAuthCapability()
+        onPauseOrDispose { }
+    }
 
     Scaffold(
         topBar = {
@@ -161,7 +168,7 @@ fun SettingsScreen(
             ListItem(
                 headlineContent = { Text(stringResource(R.string.settings_app_lock)) },
                 supportingContent = {
-                    val cap = viewModel.authCapabilityInfo
+                    val cap = authCapabilityInfo
                     if (!cap.canAuthenticate) {
                         Text(stringResource(R.string.settings_no_auth), color = MaterialTheme.colorScheme.error)
                     } else {
@@ -178,7 +185,7 @@ fun SettingsScreen(
                                 viewModel.authenticateAndToggle(activity, checked)
                             }
                         },
-                        enabled = viewModel.authCapabilityInfo.canAuthenticate
+                        enabled = authCapabilityInfo.canAuthenticate
                     )
                 }
             )

@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.settings
 import android.util.Log
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
+import cn.vectory.syncplayer.security.AuthCapabilityInfo
 import cn.vectory.syncplayer.security.BiometricAuthManager
 import io.mockk.every
 import io.mockk.mockk
@@ -154,6 +155,26 @@ class SettingsViewModelTest {
         // Assert: last snapshot retained, generic failure branch ran exactly once.
         assertNotNull("last snapshot must be retained after non-IO failure", vm.settingsState.value)
         verify(exactly = 1) { Log.e(any(), any(), any<Throwable>()) }
+    }
+
+    @Test
+    fun `refreshAuthCapability updates authCapabilityInfo state`() = runTest {
+        val initialInfo = AuthCapabilityInfo(canAuthenticate = false, description = "none")
+        val updatedInfo = AuthCapabilityInfo(canAuthenticate = true, description = "biometric")
+        every { biometricAuthManager.getAuthCapabilityInfo() } returns initialInfo
+
+        val vm = SettingsViewModel(
+            context = mockk(relaxed = true),
+            syncLogRepository = syncLogRepository,
+            userPrefs = userPrefs,
+            biometricAuthManager = biometricAuthManager,
+        )
+        assertEquals(initialInfo, vm.authCapabilityInfo.value)
+
+        every { biometricAuthManager.getAuthCapabilityInfo() } returns updatedInfo
+        vm.refreshAuthCapability()
+
+        assertEquals(updatedInfo, vm.authCapabilityInfo.value)
     }
 
     @Test
