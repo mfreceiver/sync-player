@@ -12,6 +12,7 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.provider.MediaUris
+import cn.vectory.syncplayer.storage.MediaExistence
 import cn.vectory.syncplayer.storage.MediaFileStore
 import cn.vectory.syncplayer.sync.SyncErrorCode
 import cn.vectory.syncplayer.sync.SyncException
@@ -385,16 +386,27 @@ class FileOperationsUseCase @Inject constructor(
         val video = videoRepository.getById(id)
             ?: return DeleteMediaResult.SkippedNotFound(id)
 
-        val fileMissing = try {
-            !mediaStore.exists(id)
+        val existence = try {
+            mediaStore.checkExistence(id)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            // exists() itself failed — treat as IO error, do not wipe DB.
-            Log.w(TAG, "exists() failed: ${safeErrorDetail(e)}")
+            // checkExistence() itself threw unexpected exception — treat as IO error, do not wipe DB.
+            Log.w(TAG, "checkExistence failed: ${safeErrorDetail(e)}")
             return DeleteMediaResult.Failed(
                 id, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE, cause = e)
             )
+        }
+
+        val fileMissing = when (existence) {
+            is MediaExistence.NOT_FOUND -> true
+            is MediaExistence.EXISTS -> false
+            is MediaExistence.IO_ERROR -> {
+                Log.w(TAG, "checkExistence IO_ERROR: ${existence.reason}")
+                return DeleteMediaResult.Failed(
+                    id, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE)
+                )
+            }
         }
 
         if (!fileMissing) {
@@ -403,23 +415,33 @@ class FileOperationsUseCase @Inject constructor(
                 val deleted = mediaStore.delete(id)
                 if (!deleted) {
                     val stillThere = try {
-                        mediaStore.exists(id)
+                        mediaStore.checkExistence(id)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        Log.w(TAG, "exists() after delete failed: ${safeErrorDetail(e)}")
+                        Log.w(TAG, "checkExistence after delete failed: ${safeErrorDetail(e)}")
                         return DeleteMediaResult.Failed(
                             id, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE, cause = e)
                         )
                     }
-                    if (stillThere) {
-                        Log.e(TAG, "media still present after delete returned false")
-                        return DeleteMediaResult.Failed(
-                            id, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE)
-                        )
+                    when (stillThere) {
+                        is MediaExistence.EXISTS -> {
+                            Log.e(TAG, "media still present after delete returned false")
+                            return DeleteMediaResult.Failed(
+                                id, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE)
+                            )
+                        }
+                        is MediaExistence.IO_ERROR -> {
+                            Log.w(TAG, "checkExistence after delete returned IO_ERROR: ${stillThere.reason}")
+                            return DeleteMediaResult.Failed(
+                                id, SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DELETE)
+                            )
+                        }
+                        is MediaExistence.NOT_FOUND -> {
+                            // Race / already gone → idempotent ok
+                            Log.i(TAG, "media already gone")
+                        }
                     }
-                    // Race / already gone → idempotent ok
-                    Log.i(TAG, "media already gone")
                 }
             } catch (e: FileNotFoundException) {
                 Log.i(TAG, "media already gone")
@@ -442,22 +464,32 @@ class FileOperationsUseCase @Inject constructor(
             val deleted = mediaStore.deleteThumb(id)
             if (!deleted) {
                 val stillThere = try {
-                    mediaStore.thumbExists(id)
+                    mediaStore.checkThumbExistence(id)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    Log.w(TAG, "thumbExists() after delete failed: ${safeErrorDetail(e)}")
+                    Log.w(TAG, "checkThumbExistence after delete failed: ${safeErrorDetail(e)}")
                     return DeleteMediaResult.Failed(
                         id, SyncException(SyncErrorCode.THUMBNAIL_ERROR, SyncOperation.DELETE, cause = e)
                     )
                 }
-                if (stillThere) {
-                    Log.e(TAG, "thumb still present after delete returned false")
-                    return DeleteMediaResult.Failed(
-                        id, SyncException(SyncErrorCode.THUMBNAIL_ERROR, SyncOperation.DELETE)
-                    )
+                when (stillThere) {
+                    is MediaExistence.EXISTS -> {
+                        Log.e(TAG, "thumb still present after delete returned false")
+                        return DeleteMediaResult.Failed(
+                            id, SyncException(SyncErrorCode.THUMBNAIL_ERROR, SyncOperation.DELETE)
+                        )
+                    }
+                    is MediaExistence.IO_ERROR -> {
+                        Log.w(TAG, "checkThumbExistence after delete returned IO_ERROR: ${stillThere.reason}")
+                        return DeleteMediaResult.Failed(
+                            id, SyncException(SyncErrorCode.THUMBNAIL_ERROR, SyncOperation.DELETE)
+                        )
+                    }
+                    is MediaExistence.NOT_FOUND -> {
+                        // No thumb file → idempotent success (common: never generated)
+                    }
                 }
-                // No thumb file → idempotent success (common: never generated)
             }
         } catch (e: CancellationException) {
             throw e

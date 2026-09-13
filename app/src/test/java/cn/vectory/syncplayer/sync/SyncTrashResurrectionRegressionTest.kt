@@ -12,8 +12,9 @@ import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
-import cn.vectory.syncplayer.storage.StoragePaths
+import cn.vectory.syncplayer.storage.MediaExistence
 import cn.vectory.syncplayer.storage.MediaFileStore
+import cn.vectory.syncplayer.storage.StoragePaths
 import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -130,9 +131,9 @@ class SyncTrashResurrectionRegressionTest {
         stubBasics()
         seedRow()
         coEvery { client.deleteFile(any()) } returns true
-        // 本地密文删不掉（delete false + exists true → mediaGone=false）→ 行保留
+        // 本地密文删不掉（delete false + checkExistence EXISTS → mediaGone=false）→ 行保留
         coEvery { store.delete(7L) } returns false
-        coEvery { store.exists(7L) } returns true
+        coEvery { store.checkExistence(7L) } returns MediaExistence.EXISTS
 
         val deleteOk = deleteExecutor.executeDeleteLocked(1L, listOf(trashAction))
         assertFalse(deleteOk)

@@ -13,8 +13,9 @@ import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
-import cn.vectory.syncplayer.storage.StoragePaths
+import cn.vectory.syncplayer.storage.MediaExistence
 import cn.vectory.syncplayer.storage.MediaFileStore
+import cn.vectory.syncplayer.storage.StoragePaths
 import dagger.Lazy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -229,21 +230,30 @@ internal class SyncDeleteExecutor(
     }
 
     /**
-     * Delete media; [Boolean] false is ambiguous (missing vs fail) — re-check [MediaFileStore.exists].
-     * @return true if media is gone (deleted or never present); false if still present after failed delete.
+     * Delete media; [Boolean] false is ambiguous (missing vs fail) — re-check [MediaFileStore.checkExistence].
+     * @return true if media is gone (deleted or definitively not found); false if still present or probe failed.
      */
     suspend fun deleteStoreMedia(store: MediaFileStore, id: Long): Boolean {
         return try {
             val deleted = store.delete(id)
-            if (deleted) true
-            else !store.exists(id)
+            if (deleted) {
+                true
+            } else {
+                when (store.checkExistence(id)) {
+                    is MediaExistence.NOT_FOUND -> true
+                    is MediaExistence.EXISTS, is MediaExistence.IO_ERROR -> false
+                }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             // 复审红线：只留行 id + 异常类别，不传原始 Throwable。
             Log.w(TAG, SyncSafeLog.cleanupFailed("deleteStoreMedia", id, e))
             try {
-                !store.exists(id)
+                when (store.checkExistence(id)) {
+                    is MediaExistence.NOT_FOUND -> true
+                    is MediaExistence.EXISTS, is MediaExistence.IO_ERROR -> false
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -253,20 +263,29 @@ internal class SyncDeleteExecutor(
     }
 
     /**
-     * Delete thumb; missing thumb is success. Still-present after false → failure.
+     * Delete thumb; missing thumb is success. Still-present or IO error after false → failure.
      */
     suspend fun deleteStoreThumb(store: MediaFileStore, id: Long): Boolean {
         return try {
             val deleted = store.deleteThumb(id)
-            if (deleted) true
-            else !store.thumbExists(id)
+            if (deleted) {
+                true
+            } else {
+                when (store.checkThumbExistence(id)) {
+                    is MediaExistence.NOT_FOUND -> true
+                    is MediaExistence.EXISTS, is MediaExistence.IO_ERROR -> false
+                }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             // 复审红线：只留行 id + 异常类别，不传原始 Throwable。
             Log.w(TAG, SyncSafeLog.cleanupFailed("deleteStoreThumb", id, e))
             try {
-                !store.thumbExists(id)
+                when (store.checkThumbExistence(id)) {
+                    is MediaExistence.NOT_FOUND -> true
+                    is MediaExistence.EXISTS, is MediaExistence.IO_ERROR -> false
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
