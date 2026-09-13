@@ -285,4 +285,44 @@ class PlayerViewModelLoadVideoTest {
         assertEquals(1L, vm.uiState.value.videoItem?.id)      // final: not overwritten by the stale request
         assertFalse(vm.uiState.value.queueExhausted)          // final: stale request must NOT publish exhaustion
     }
+
+    @Test
+    fun `AND-039 getSavedPosition prioritizes live currentPosition over stale playbackRecord`() = runTest {
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        coEvery { playbackRepository.getByVideoId(1L) } returns PlaybackRecordEntity(videoItemId = 1L, position = 10_000L, duration = 60_000L)
+        val vm = createVm()
+
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+
+        // Initially restores DB position
+        assertEquals(10_000L, vm.getSavedPosition())
+
+        // Simulated playback progress advances live currentPosition to 25s
+        vm.updatePlaybackProgress(25_000L, 60_000L)
+        assertEquals(25_000L, vm.currentPosition.value)
+
+        // Activity recreation scenario: getSavedPosition() must return live 25s, not stale 10s
+        assertEquals(25_000L, vm.getSavedPosition())
+    }
+
+    @Test
+    fun `AND-039 switching video resets live position to prevent position leaking`() = runTest {
+        coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
+        coEvery { videoRepository.getById(2L) } returns videoEntity(2L)
+        coEvery { playbackRepository.getByVideoId(1L) } returns PlaybackRecordEntity(videoItemId = 1L, position = 10_000L, duration = 60_000L)
+        coEvery { playbackRepository.getByVideoId(2L) } returns PlaybackRecordEntity(videoItemId = 2L, position = 5_000L, duration = 60_000L)
+        val vm = createVm()
+
+        vm.loadVideo(1L)
+        advanceUntilIdle()
+        vm.updatePlaybackProgress(45_000L, 60_000L)
+        assertEquals(45_000L, vm.currentPosition.value)
+
+        // Switching to video 2 resets position and restores video 2's position
+        vm.loadVideo(2L)
+        advanceUntilIdle()
+        assertEquals(5_000L, vm.currentPosition.value)
+        assertEquals(5_000L, vm.getSavedPosition())
+    }
 }

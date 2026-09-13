@@ -63,12 +63,8 @@ data class PlayerUiState(
     val duration: Long = 0L,
     val isPlaying: Boolean = false,
     val showControls: Boolean = true,
-    val currentOverlay: PlayerOverlay? = null,
     val isUserSeeking: Boolean = false,
-    val isGestureSeeking: Boolean = false,
-    val gestureSeekPosition: Float = 0f,
     val seekTarget: Long = -1L,
-    val speedOverlayMultiplier: Float? = null,
     val isLongPressing: Boolean = false,
     val lastAutoSwitchTime: Long = 0L,
     val hasPlayerError: Boolean = false,
@@ -76,6 +72,16 @@ data class PlayerUiState(
     // BUG-019: structured queue-exhaustion terminal — normal EOF semantics, not an
     // error (no ErrorEvent, no Context-derived copy). UI consumes it and exits.
     val queueExhausted: Boolean = false,
+)
+
+data class GestureSeekUiState(
+    val isSeeking: Boolean = false,
+    val seekPositionFraction: Float = 0f,
+)
+
+data class PlayerOverlayUiState(
+    val overlay: PlayerOverlay? = null,
+    val speedMultiplier: Float? = null,
 )
 
 /**
@@ -148,6 +154,12 @@ class PlayerViewModel @Inject constructor(
 
     private val _progressScrubState = MutableStateFlow(ProgressScrubUiState())
     val progressScrubState: StateFlow<ProgressScrubUiState> = _progressScrubState.asStateFlow()
+
+    private val _gestureSeekState = MutableStateFlow(GestureSeekUiState())
+    val gestureSeekState: StateFlow<GestureSeekUiState> = _gestureSeekState.asStateFlow()
+
+    private val _overlayState = MutableStateFlow(PlayerOverlayUiState())
+    val overlayState: StateFlow<PlayerOverlayUiState> = _overlayState.asStateFlow()
 
     private val errorSeq = AtomicLong(0L)
 
@@ -245,6 +257,9 @@ class PlayerViewModel @Inject constructor(
 
     fun loadVideo(videoItemId: Long) {
         val generation = loadGeneration.incrementAndGet()   // 发起即占代
+        if (videoItemId != _uiState.value.videoItem?.id) {
+            _currentPosition.value = 0L
+        }
         viewModelScope.launch {
             try {
                 // A request whose body only starts after a newer request was issued is
@@ -275,11 +290,13 @@ class PlayerViewModel @Inject constructor(
                         duration = record?.duration ?: 0L,
                         seekTarget = -1L,
                         isUserSeeking = false,
-                        isGestureSeeking = false,
-                        gestureSeekPosition = 0f
                     ) }
                     _progressScrubState.value = ProgressScrubUiState()
-                    _currentPosition.value = record?.position ?: 0L
+                    _gestureSeekState.value = GestureSeekUiState()
+                    _overlayState.value = PlayerOverlayUiState()
+                    if (_currentPosition.value <= 0L) {
+                        _currentPosition.value = record?.position ?: 0L
+                    }
                 } else {
                     if (generation != loadGeneration.get()) return@launch   // BUG-015：耗尽发布同样受代次门控
                     // Queue exhausted (or id not in queue at all) — keep the current video and
@@ -359,7 +376,11 @@ class PlayerViewModel @Inject constructor(
      */
     suspend fun undoDelete(expectedId: Long? = null): UndoResult = undoDeleteUseCase.undo(expectedId)
 
-    fun getSavedPosition(): Long = _uiState.value.playbackRecord?.position ?: 0L
+    fun getSavedPosition(): Long {
+        val live = _currentPosition.value
+        if (live > 0L) return live
+        return _uiState.value.playbackRecord?.position ?: 0L
+    }
 
     fun getVideoUri(): String? = _uiState.value.videoItem?.let { cn.vectory.syncplayer.provider.MediaUris.mediaUri(it.id).toString() }
 
@@ -414,21 +435,21 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun showOverlay(overlay: PlayerOverlay) {
-        _uiState.update { it.copy(currentOverlay = overlay) }
+        _overlayState.update { it.copy(overlay = overlay) }
         overlayHideJob?.cancel()
         overlayHideJob = viewModelScope.launch {
             delay(750L)
-            _uiState.update { it.copy(currentOverlay = null) }
+            _overlayState.update { it.copy(overlay = null) }
         }
     }
 
     fun hideOverlay() {
         overlayHideJob?.cancel()
-        _uiState.update { it.copy(currentOverlay = null, speedOverlayMultiplier = null) }
+        _overlayState.update { it.copy(overlay = null, speedMultiplier = null) }
     }
 
     fun setSpeedOverlay(multiplier: Float?) {
-        _uiState.update { it.copy(speedOverlayMultiplier = multiplier) }
+        _overlayState.update { it.copy(speedMultiplier = multiplier) }
     }
 
     fun setLongPressing(longPressing: Boolean) {
@@ -478,13 +499,13 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun onGestureSeekStarted() {
-        _uiState.update { it.copy(isGestureSeeking = true) }
+        _gestureSeekState.update { it.copy(isSeeking = true) }
     }
 
     fun onGestureSeekChanged(positionMs: Long, durationMs: Long) {
         if (durationMs > 0) {
             val pos = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-            _uiState.update { it.copy(isGestureSeeking = true, gestureSeekPosition = pos) }
+            _gestureSeekState.update { it.copy(isSeeking = true, seekPositionFraction = pos) }
         }
     }
 
@@ -496,10 +517,11 @@ class PlayerViewModel @Inject constructor(
      * from what the overlay previewed.
      */
     fun onGestureSeekFinished(targetMs: Long) {
+        _gestureSeekState.update { it.copy(isSeeking = false) }
         val duration = _uiState.value.duration
         val target = targetMs.coerceIn(0, duration.coerceAtLeast(0))
         _currentPosition.value = target
-        _uiState.update { it.copy(isGestureSeeking = false, seekTarget = target) }
+        _uiState.update { it.copy(seekTarget = target) }
     }
 
     fun updateAutoSwitchTime() {

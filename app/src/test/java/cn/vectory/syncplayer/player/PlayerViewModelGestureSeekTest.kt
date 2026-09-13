@@ -108,7 +108,7 @@ class PlayerViewModelGestureSeekTest {
 
         assertEquals(15_000L, vm.currentPosition.value)
         assertEquals(15_000L, vm.uiState.value.seekTarget)
-        assertFalse(vm.uiState.value.isGestureSeeking)
+        assertFalse(vm.gestureSeekState.value.isSeeking)
     }
 
     @Test

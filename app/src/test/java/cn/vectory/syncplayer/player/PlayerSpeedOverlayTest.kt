@@ -68,10 +68,10 @@ class PlayerSpeedOverlayTest {
         val vm = createVm()
 
         vm.setSpeedOverlay(2f)
-        assertEquals(2f, vm.uiState.value.speedOverlayMultiplier)
+        assertEquals(2f, vm.overlayState.value.speedMultiplier)
 
         vm.hideOverlay()
 
-        assertNull(vm.uiState.value.speedOverlayMultiplier)
+        assertNull(vm.overlayState.value.speedMultiplier)
     }
 }

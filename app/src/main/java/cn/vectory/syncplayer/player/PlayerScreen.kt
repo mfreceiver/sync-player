@@ -63,6 +63,8 @@ fun PlayerScreen(
     val context = LocalContext.current
     val activity = context as? android.app.Activity ?: return
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val gestureSeekState by viewModel.gestureSeekState.collectAsStateWithLifecycle()
+    val overlayState by viewModel.overlayState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var pendingUndoTrigger by remember { mutableIntStateOf(0) }
@@ -223,7 +225,7 @@ fun PlayerScreen(
     }
 
     val seekTarget by rememberUpdatedState(uiState.seekTarget)
-    val isGestureSeeking by rememberUpdatedState(uiState.isGestureSeeking)
+    val isGestureSeeking by rememberUpdatedState(gestureSeekState.isSeeking)
     LaunchedEffect(uiState.isPlaying) {
         if (uiState.isPlaying) {
             var lastCheckpointMs = System.currentTimeMillis()
@@ -425,7 +427,7 @@ fun PlayerScreen(
     }
     val seekSource = when {
         uiState.isUserSeeking -> SeekSource.PROGRESS_BAR
-        uiState.isGestureSeeking -> SeekSource.GESTURE
+        gestureSeekState.isSeeking -> SeekSource.GESTURE
         else -> SeekSource.NONE
     }
     val chromeVisibility = resolveAuroraChromeVisibility(
@@ -533,7 +535,7 @@ fun PlayerScreen(
                     exoPlayer = exoPlayer,
                     seekSource = seekSource,
                     durationMs = uiState.duration,
-                    gesturePositionMs = (uiState.gestureSeekPosition * uiState.duration).toLong(),
+                    gesturePositionMs = (gestureSeekState.seekPositionFraction * uiState.duration).toLong(),
                     isPlaying = uiState.isPlaying,
                     onOpenSettings = { showSettingsPopup = true },
                     onBack10 = { seekBy(viewModel, exoPlayer, -10_000L) },
@@ -604,17 +606,17 @@ fun PlayerScreen(
         AuroraSeekPreviewHost(
             seekSource = seekSource,
             progressScrubState = viewModel.progressScrubState,
-            gesturePositionMs = (uiState.gestureSeekPosition * uiState.duration).toLong(),
+            gesturePositionMs = (gestureSeekState.seekPositionFraction * uiState.duration).toLong(),
             durationMs = uiState.duration,
             bottomChromeHeightPx = bottomChromeHeightPx,
             videoUri = videoUri,
             previewExtractor = previewExtractor,
         )
-        val speedOverlayMultiplier = uiState.speedOverlayMultiplier
+        val speedOverlayMultiplier = overlayState.speedMultiplier
         if (speedOverlayMultiplier != null) {
             AuroraSpeedPill(speedOverlayMultiplier)
         } else {
-            AuroraPill(uiState.currentOverlay)
+            AuroraPill(overlayState.overlay)
         }
         DoubleTapRipple(rippleEvent)
 
