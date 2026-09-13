@@ -241,6 +241,7 @@ internal class SyncDownloadPipeline(
                                                     guarded { store.cancel(id) }
                                                     if (existing == null) {
                                                         guarded { videoRepository.deleteById(id) }
+                                                        assignedId = 0L
                                                     }
                                                 }
                                                 AttemptPhase.FINALIZE_UNCERTAIN -> {
@@ -258,6 +259,7 @@ internal class SyncDownloadPipeline(
                                                             guarded { store.cancel(id) }
                                                             if (existing == null) {
                                                                 guarded { videoRepository.deleteById(id) }
+                                                                assignedId = 0L
                                                             }
                                                         }
                                                         TmpProbeState.ABSENT -> {
@@ -265,10 +267,14 @@ internal class SyncDownloadPipeline(
                                                             // （前提链见计划 §2.1）——与 COMMITTED 分支同构
                                                             guarded { store.delete(id) }
                                                             guarded { videoRepository.deleteById(id) }
+                                                            assignedId = 0L
+                                                            existing = null
                                                         }
                                                         TmpProbeState.UNKNOWN -> {
                                                             // 探测不可信：删行（行不得指向可能已换的文件），不删 final
                                                             guarded { videoRepository.deleteById(id) }
+                                                            assignedId = 0L
+                                                            existing = null
                                                         }
                                                     }
                                                 }
@@ -276,6 +282,8 @@ internal class SyncDownloadPipeline(
                                                     guarded { store.delete(id) }
                                                     // 无条件：旧行指向已覆盖文件；占位行同理（幽灵文件防线）
                                                     guarded { videoRepository.deleteById(id) }
+                                                    assignedId = 0L
+                                                    existing = null
                                                 }
                                             }
                                             // 清理侧清零点：与外层补偿 catch 互斥（恰一次回滚）
