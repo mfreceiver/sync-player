@@ -10,6 +10,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.File
@@ -150,6 +151,14 @@ class MediaFileStoreTest {
         val unreadable = parent.setReadable(false, false)
 
         if (unexecutable && unreadable) {
+            // chmod 在 root（CI 容器默认用户）下返回成功，但 CAP_DAC_OVERRIDE 绕过 DAC 检查，
+            // 永不产生 EACCES —— 权限模型在该环境下不可强制，EACCES 路径无法复现。
+            // assumeTrue → 测试计为 skipped 而非 failed；EACCES→IO_ERROR 的映射逻辑
+            // 已由上方 attributeReader 注入式测试覆盖。
+            assumeTrue(
+                "EACCES not enforceable (running as root/privileged); skipping real-FS probe",
+                !parent.canRead()
+            )
             try {
                 val result = store.checkExistence(id)
                 assertTrue(
