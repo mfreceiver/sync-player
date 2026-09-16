@@ -52,6 +52,14 @@ class SftpFileClient internal constructor(
      */
     private fun classifySftpException(e: Throwable): SyncErrorCode = when (e) {
         is UserAuthException -> SyncErrorCode.AUTHENTICATION_FAILED
+        is SFTPException -> when (e.statusCode) {
+            // sshj 状态码直译：存在性/目录性否定 → PATH_NOT_FOUND；权限 → ACCESS_DENIED。
+            Response.StatusCode.NO_SUCH_FILE,
+            Response.StatusCode.NO_SUCH_PATH,
+            Response.StatusCode.NOT_A_DIRECTORY -> SyncErrorCode.PATH_NOT_FOUND
+            Response.StatusCode.PERMISSION_DENIED -> SyncErrorCode.ACCESS_DENIED
+            else -> SyncErrorCode.UNKNOWN
+        }
         is net.schmizz.sshj.transport.TransportException -> {
             // TransportException covers most connection-level SFTP failures.
             val cause = e.cause
@@ -166,10 +174,14 @@ class SftpFileClient internal constructor(
             sftp.ls(path)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: SyncException) {
+            throw e
         } catch (e: Exception) {
-            // CQ-001: 已取消则终结为 CE，不降级为空列表（那会让取消被吞掉）。
+            // CQ-001: 已取消则终结为 CE，不包装成 SyncException（那会让取消被吞掉）。
             currentCoroutineContext().ensureActive()
-            return@withContext result
+            // listDirectories 契约：枚举失败 fail-loud，不降级为空列表
+            // （否则 PERMISSION_DENIED/传输故障被浏览 UI 与 testRemotePath 误报为"空目录/可访问"）。
+            throw SyncException(classifySftpException(e), SyncOperation.BROWSE, path = path, cause = e)
         }
         for (entry in entries) {
             if (entry.name == "." || entry.name == "..") continue

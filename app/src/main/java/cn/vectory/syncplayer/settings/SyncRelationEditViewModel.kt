@@ -259,6 +259,8 @@ class SyncRelationEditViewModel @Inject constructor(
             val client = remoteFileClientFactory.create(source.protocol)
             try {
                 client.connect(source, path)
+                // fail-loud 契约：connect 成功但枚举失败（权限/IO）同样抛 SyncException，
+                // 走下方 catch → AccessFailed——绝不把"枚举被拒"误报为 DirAccessible。
                 client.listDirectories(path)
                 _testResult.value = RelationTestResult.DirAccessible
             } catch (e: CancellationException) {

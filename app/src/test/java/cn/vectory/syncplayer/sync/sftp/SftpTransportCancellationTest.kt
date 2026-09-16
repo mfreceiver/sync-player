@@ -304,13 +304,16 @@ class SftpTransportCancellationTest {
     }
 
     @Test
-    fun `listDirectories uncanceled IOException still degrades to empty list`() {
+    fun `listDirectories uncanceled IOException throws SyncException not empty list`() {
         connectSuccessfully()
         every { sftpClient.ls(any()) } throws IOException("simulated transport failure")
 
-        val result = runBlocking { client.listDirectories("/base") }
+        // listDirectories 契约：枚举失败 fail-loud —— SyncException 而非空列表。
+        val t = runCatching { runBlocking { client.listDirectories("/base") } }.exceptionOrNull()
 
-        assertTrue(result.isEmpty())
+        assertTrue("expected SyncException but was ${t?.javaClass}", t is SyncException)
+        assertEquals(SyncErrorCode.UNKNOWN, (t as SyncException).code)
+        assertEquals(SyncOperation.BROWSE, (t as SyncException).operation)
     }
 
     @Test

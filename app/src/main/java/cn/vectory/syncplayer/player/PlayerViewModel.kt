@@ -31,6 +31,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import kotlin.math.roundToInt
@@ -125,8 +126,21 @@ class PlayerViewModel @Inject constructor(
      * [onCleared] closes [progressSaveChannel]. The consumer loop drains all already-queued
      * saves (including the final teardown save), executes them sequentially to completion,
      * and cancels [progressSaveScope] upon loop termination.
+     *
+     * The drain is bounded: each individual save is capped by [saveTimeoutMs]. A save
+     * that exceeds the bound is abandoned (logged) and the consumer proceeds to the next
+     * queued item — a permanently-hung repository call can never park the consumer, and
+     * the ViewModel reference it captures, forever.
      */
     private val progressSaveScope = CoroutineScope(SupervisorJob() + ioDispatcher)
+
+    /**
+     * Upper bound for a single progress save, read at each save's execution time.
+     * Instance-level (not const) so tests can inject a small value before enqueueing.
+     */
+    @Volatile
+    @VisibleForTesting
+    internal var saveTimeoutMs: Long = 5_000L
 
     private data class PendingProgressSave(val videoId: Long, val position: Long, val duration: Long)
 
@@ -141,14 +155,25 @@ class PlayerViewModel @Inject constructor(
             for (save in progressSaveChannel) {
                 val job = launch {                       // 每次保存一个子 Job（父=消费者协程）
                     try {
-                        playbackRepository.saveProgress(save.videoId, save.position, save.duration)
+                        // saveProgress returns Unit, so a null result here can only mean
+                        // the timeout fired — the hung call is abandoned. An external
+                        // (scope/job) cancellation is NOT swallowed by withTimeoutOrNull:
+                        // it rethrows the foreign CancellationException, handled below.
+                        val saved = withTimeoutOrNull(saveTimeoutMs) {
+                            playbackRepository.saveProgress(save.videoId, save.position, save.duration)
+                        }
+                        if (saved == null) {
+                            // No exception object on timeout — fixed text only, no
+                            // paths or underlying messages (security red line #4).
+                            Log.w(TAG, "Progress save timed out after ${saveTimeoutMs}ms (videoId=${save.videoId})")
+                        }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to save progress: ${safeErrorDetail(e)}")
                     }
                 }
-                job.join()                               // 上一保存结束才取下一项：完成序 == 入队序（仅串行保证，无时延上界）
+                job.join()                               // 上一保存结束（成功/失败/超时放弃）才取下一项：完成序 == 入队序，单次以 saveTimeoutMs 为上界
             }
         } finally {
             progressSaveScope.cancel()
