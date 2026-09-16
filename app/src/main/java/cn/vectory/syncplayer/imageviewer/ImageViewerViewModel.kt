@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.browser.ErrorEvent
 import cn.vectory.syncplayer.browser.UndoDeleteUseCase
 import cn.vectory.syncplayer.browser.UndoResult
+import cn.vectory.syncplayer.browser.safeErrorDetail
 import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
@@ -48,7 +49,7 @@ data class ImageViewerUiState(
 
 @HiltViewModel
 class ImageViewerViewModel @Inject constructor(
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
     private val videoRepository: VideoRepository,
     private val playbackRepository: PlaybackRepository,
     private val imageQueue: ImageQueue,
@@ -79,8 +80,9 @@ class ImageViewerViewModel @Inject constructor(
     }
 
     /** Clear the image error after the UI has shown it. */
-    fun clearError() {
-        _imageErrorFlow.value = null
+    fun clearError(expectedSeq: Long? = null) {
+        // AND-068: seq-guarded clear — see BrowserViewModel.clearError.
+        _imageErrorFlow.update { if (expectedSeq == null || it?.seq == expectedSeq) null else it }
     }
 
     /**
@@ -107,7 +109,9 @@ class ImageViewerViewModel @Inject constructor(
     }
 
     private fun loadImageIds() {
-        val queueIds = imageQueue.consumeIds()
+        // AND-071: anchored consume — see PlayerViewModel.loadFolderVideoIds.
+        val anchorId = savedStateHandle.get<Long>("imageItemId") ?: 0L
+        val queueIds = imageQueue.consumeIds(anchorId)
         if (queueIds.isNotEmpty()) {
             _allImageIds.value = queueIds
             return
@@ -149,7 +153,7 @@ class ImageViewerViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to load image $imageItemId", e)
+                Log.e(TAG, "Failed to load image id=$imageItemId: ${safeErrorDetail(e)}")
             }
         }
     }

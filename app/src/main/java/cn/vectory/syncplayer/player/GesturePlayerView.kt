@@ -37,6 +37,8 @@ class GesturePlayerView @JvmOverloads constructor(
     var currentPosition: Long = 0L
     private var isLongPressing = false
     private var isSeeking = false
+    /** True while a horizontal seek gesture is active — the seek base is frozen. */
+    val isGestureSeeking: Boolean get() = isSeeking
     private var seekOffsetMs = 0L
     private var seekBasePositionMs = 0L
     private var touchStartX = 0f

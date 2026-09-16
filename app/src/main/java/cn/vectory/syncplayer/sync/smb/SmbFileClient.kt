@@ -16,6 +16,7 @@ import jcifs.smb.SmbAuthException
 import jcifs.smb.SmbException
 import jcifs.smb.SmbFile
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -33,13 +34,10 @@ internal fun interface SmbFileFactory {
 
 class SmbFileClient internal constructor(
     private val context: Context,
-    private val smbFileFactory: SmbFileFactory
+    private val smbFileFactory: SmbFileFactory = SmbFileFactory { url, ctx -> SmbFile(url, ctx) },
+    // AND-090: injectable dispatcher — same rationale as SftpFileClient.
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : RemoteFileClient {
-
-    constructor(context: Context) : this(
-        context,
-        SmbFileFactory { url, ctx -> SmbFile(url, ctx) }
-    )
 
     private companion object {
         const val TAG = "SmbFileClient"
@@ -93,7 +91,7 @@ class SmbFileClient internal constructor(
         // Therefore the whole withContext is wrapped by an OUTER try/catch, and session
         // fields are published only AFTER withContext returns normally.
         try {
-            val session = withContext(Dispatchers.IO) {
+            val session = withContext(ioDispatcher) {
                 checkNetworkAvailable(context)
                 val props = Properties()
                 props.setProperty("jcifs.smb.client.minVersion", "SMB202")
@@ -152,7 +150,7 @@ class SmbFileClient internal constructor(
     }
 
     override suspend fun disconnect() {
-        withContext(Dispatchers.IO + NonCancellable) {
+        withContext(ioDispatcher + NonCancellable) {
             try {
                 cifsContext?.close()
             } catch (e: Exception) {
@@ -177,7 +175,7 @@ class SmbFileClient internal constructor(
         }
     }
 
-    override suspend fun listFiles(path: String): List<RemoteFile> = withContext(Dispatchers.IO) {
+    override suspend fun listFiles(path: String): List<RemoteFile> = withContext(ioDispatcher) {
         val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.BROWSE)
         val result = mutableListOf<RemoteFile>()
         val pathParts = path.trim('/').split("/")
@@ -200,7 +198,7 @@ class SmbFileClient internal constructor(
         result
     }
 
-    suspend fun listShares(): List<RemoteFile> = withContext(Dispatchers.IO) {
+    suspend fun listShares(): List<RemoteFile> = withContext(ioDispatcher) {
         val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.BROWSE)
         val result = mutableListOf<RemoteFile>()
         val smbFile = smbFileFactory.create("smb://$currentHost/", ctx)
@@ -239,7 +237,7 @@ class SmbFileClient internal constructor(
         result
     }
 
-    override suspend fun listDirectories(path: String): List<RemoteFile> = withContext(Dispatchers.IO) {
+    override suspend fun listDirectories(path: String): List<RemoteFile> = withContext(ioDispatcher) {
         val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.BROWSE)
 
         val trimmedPath = path.trim('/')
@@ -364,7 +362,7 @@ class SmbFileClient internal constructor(
         remotePath: String,
         sink: java.io.OutputStream,
         onProgress: ((transferred: Long, total: Long) -> Unit)?
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(ioDispatcher) {
         val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.DOWNLOAD)
         try {
             val smbUrl = if (subPath.isNotEmpty()) {
@@ -428,7 +426,7 @@ class SmbFileClient internal constructor(
         }
     }
 
-    override suspend fun deleteFile(remotePath: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun deleteFile(remotePath: String): Boolean = withContext(ioDispatcher) {
         val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.DELETE)
         try {
             val smbUrl = if (subPath.isNotEmpty()) {

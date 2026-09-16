@@ -15,6 +15,7 @@ import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.di.IoDispatcher
+import cn.vectory.syncplayer.data.model.OrientationPreference
 import cn.vectory.syncplayer.navigation.SAVED_VIDEO_IDS_KEY
 import cn.vectory.syncplayer.navigation.VideoQueue
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -105,7 +106,7 @@ data class ProgressScrubUiState(
 
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
     private val videoRepository: VideoRepository,
     private val playbackRepository: PlaybackRepository,
     private val userPrefs: UserPreferencesRepository,
@@ -197,8 +198,11 @@ class PlayerViewModel @Inject constructor(
     }
 
     /** Clear the player error after the UI has shown it. */
-    fun clearError() {
-        _uiState.update { it.copy(error = null) }
+    fun clearError(expectedSeq: Long? = null) {
+        // AND-068: seq-guarded clear — see BrowserViewModel.clearError.
+        _uiState.update { s ->
+            if (expectedSeq == null || s.error?.seq == expectedSeq) s.copy(error = null) else s
+        }
     }
 
     /** Publish an already-mapped user-facing error as a distinct, one-shot UI event. */
@@ -217,6 +221,10 @@ class PlayerViewModel @Inject constructor(
     private val savedVideoIdsFlow: StateFlow<String?> =
         savedStateHandle.getStateFlow(SAVED_VIDEO_IDS_KEY, null)
 
+    // AND-089: loaded once in init; resolveOrientation() is synchronous and
+    // called during composition, so it can't suspend to read the pref.
+    @Volatile private var orientationPref = OrientationPreference.FOLLOW_VIDEO
+
     private var overlayHideJob: Job? = null
 
     init {
@@ -225,6 +233,7 @@ class PlayerViewModel @Inject constructor(
             try {
                 val vb = userPrefs.getVolumeBalance()
                 val qr = userPrefs.getQuickRecycle()
+                orientationPref = userPrefs.getOrientation() ?: OrientationPreference.FOLLOW_VIDEO
                 _uiState.update { it.copy(volumeBalance = vb, quickRecycle = qr) }
             } catch (e: CancellationException) {
                 throw e
@@ -235,7 +244,10 @@ class PlayerViewModel @Inject constructor(
     }
 
     private fun loadFolderVideoIds() {
-        val queueIds = videoQueue.consumeIds()
+        // AND-071: consume only a payload anchored to this entry's target id;
+        // a mismatched payload belongs to a newer navigation and is left alone.
+        val anchorId = savedStateHandle.get<Long>("videoItemId") ?: 0L
+        val queueIds = videoQueue.consumeIds(anchorId)
         if (queueIds.isNotEmpty()) {
             _allVideoIds.value = queueIds
             return
@@ -507,7 +519,13 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun resolveOrientation(videoWidth: Int?, videoHeight: Int?): Int {
-        if (!_uiState.value.isFullscreen) return ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        // AND-089: FOLLOW_SYSTEM means "don't force an orientation change" —
+        // the player stays under system rotation control even in fullscreen.
+        if (orientationPref == OrientationPreference.FOLLOW_SYSTEM ||
+            !_uiState.value.isFullscreen
+        ) {
+            return ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
         if (videoWidth != null && videoHeight != null && videoWidth > 0 && videoHeight > 0) {
             return if (videoWidth >= videoHeight) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             else ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT

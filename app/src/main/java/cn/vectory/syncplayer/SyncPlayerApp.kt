@@ -2,6 +2,7 @@ package cn.vectory.syncplayer
 
 import android.app.Application
 import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
 import cn.vectory.syncplayer.security.AppLockManager
 import cn.vectory.syncplayer.storage.MediaFileStore
 import cn.vectory.syncplayer.sync.SyncEngine
@@ -27,6 +28,13 @@ class SyncPlayerApp : Application() {
     @Inject lateinit var mediaFileStore: Provider<MediaFileStore>
     @Inject lateinit var syncEngine: SyncEngine
 
+    /**
+     * AND-086: [MasterKey]/[EncryptedSharedPreferences] first construction does
+     * keystore load/gen + prefs read — without this, it happens on main at the
+     * first credential touch. Warm it on the IO pool at startup.
+     */
+    @Inject lateinit var encryptedPrefs: Provider<EncryptedSharedPreferences>
+
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
@@ -45,6 +53,11 @@ class SyncPlayerApp : Application() {
      */
     private fun purgeUpgradeOrphans() {
         appScope.launch {
+            try {
+                encryptedPrefs.get() // AND-086 warmup — see field doc.
+            } catch (e: Exception) {
+                Log.w(TAG, "secure prefs warmup failed: ${e.javaClass.simpleName}")
+            }
             try {
                 val removed = syncEngine.storageOperationMutex.withLock {
                     mediaFileStore.get().purgeOrphansIfNeeded()

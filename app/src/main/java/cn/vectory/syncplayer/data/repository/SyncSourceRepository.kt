@@ -7,8 +7,12 @@ import cn.vectory.syncplayer.data.local.dao.SyncSourceDao
 import cn.vectory.syncplayer.data.local.entity.SyncSourceEntity
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.data.model.SyncProtocol
+import cn.vectory.syncplayer.di.IoDispatcher
 import android.util.Log
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -19,7 +23,10 @@ import javax.inject.Singleton
 class SyncSourceRepository @Inject constructor(
     private val syncSourceDao: SyncSourceDao,
     private val masterKey: MasterKey,
-    private val encryptedPrefs: EncryptedSharedPreferences
+    private val encryptedPrefs: EncryptedSharedPreferences,
+    // AND-081: EncryptedSharedPreferences.commit() is synchronous XML+AES+fsync —
+    // it must not run on the caller's (main) dispatcher.
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
     /** Serializes save() operations so concurrent calls for the same source id
      *  cannot race on prefs vs DB ordering. Saves are not a hot path, so a
@@ -45,7 +52,7 @@ class SyncSourceRepository @Inject constructor(
     // synchronously durable before the DB row references it, and the boolean result
     // drives rollback (restore previous password / delete the new row).
     @SuppressLint("ApplySharedPref")
-    suspend fun save(source: SyncSource): Long = saveMutex.withLock {
+    suspend fun save(source: SyncSource): Long = withContext(ioDispatcher) { saveMutex.withLock {
         val entity = SyncSourceEntity(
             id = source.id,
             name = source.name,
@@ -92,7 +99,7 @@ class SyncSourceRepository @Inject constructor(
             }
             savedId
         }
-    }
+    } }
 
     /**
      * Shares [saveMutex] with [save] on purpose. Guarding only save/save is not enough — a
@@ -103,11 +110,11 @@ class SyncSourceRepository @Inject constructor(
     // commit() is deliberate: credential removal must be durable alongside the DB delete;
     // apply()'s async write could outlive process death and leave an orphaned password.
     @SuppressLint("ApplySharedPref")
-    suspend fun delete(id: Long) = saveMutex.withLock {
+    suspend fun delete(id: Long) = withContext(ioDispatcher) { saveMutex.withLock {
         syncSourceDao.deleteById(id)
         encryptedPrefs.edit().remove("pw_$id").commit()
         Unit
-    }
+    } }
 
     private fun SyncSourceEntity.toInfo() = SyncSource(
         id = id,

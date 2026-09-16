@@ -5,6 +5,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.audio.AudioGainAnalyzer
+import cn.vectory.syncplayer.browser.safeErrorDetail
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.di.IoDispatcher
@@ -198,11 +199,7 @@ class GainAnalysisViewModel @Inject constructor(
                                 } catch (e: kotlinx.coroutines.CancellationException) {
                                     throw e
                                 } catch (e: Exception) {
-                                    Log.w(
-                                        TAG,
-                                        "Gain analysis failed for id=${video.id}",
-                                        e
-                                    )
+                                    Log.w(TAG, "Gain analysis failed id=${video.id}: ${safeErrorDetail(e)}")
                                     failedMutex.withLock {
                                         failed.add(video.id)
                                         _failedIds.value = failed.toSet()

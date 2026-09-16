@@ -163,7 +163,7 @@ interface VideoItemDao {
                COALESCE(pr.isTrashed, 0) as isTrashed
         FROM video_item v
         LEFT JOIN playback_record pr ON pr.videoItemId = v.id
-        WHERE v.fileName LIKE '%' || :query || '%' COLLATE NOCASE
+        WHERE v.fileName LIKE '%' || REPLACE(REPLACE(REPLACE(:query, '\', '\\'), '%', '\%'), '_', '\_') || '%' COLLATE NOCASE ESCAPE '\'
     """)
     fun searchByFileName(query: String): Flow<List<VideoItemWithPlayback>>
 
@@ -176,7 +176,7 @@ interface VideoItemDao {
                COALESCE(pr.isTrashed, 0) as isTrashed
         FROM video_item v
         LEFT JOIN playback_record pr ON pr.videoItemId = v.id
-        WHERE v.fileName LIKE '%' || :query || '%' COLLATE NOCASE
+        WHERE v.fileName LIKE '%' || REPLACE(REPLACE(REPLACE(:query, '\', '\\'), '%', '\%'), '_', '\_') || '%' COLLATE NOCASE ESCAPE '\'
         AND CASE
             WHEN :folder = '' THEN 1
             ELSE (v.parentPath = :folder

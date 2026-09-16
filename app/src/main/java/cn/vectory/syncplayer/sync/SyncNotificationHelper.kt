@@ -166,7 +166,10 @@ object SyncNotificationHelper {
         }
         return PendingIntent.getActivity(
             context,
-            COMPLETE_NOTIFICATION_ID,
+            // AND-069: key the request code by the target path so each completion
+            // notification keeps its own PendingIntent — a fixed code made every
+            // older notification navigate to the newest synced folder.
+            COMPLETE_NOTIFICATION_ID + localBasePath.hashCode(),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

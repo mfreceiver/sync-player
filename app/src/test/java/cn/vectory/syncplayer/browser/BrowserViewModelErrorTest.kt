@@ -63,6 +63,7 @@ class BrowserViewModelErrorTest {
         userPrefs = userPrefs,
         fileOps = fileOps,
         undoDeleteUseCase = undoDeleteUseCase,
+        savedStateHandle = androidx.lifecycle.SavedStateHandle(),
         context = context,
     )
 

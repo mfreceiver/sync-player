@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,6 +35,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateSetOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -66,7 +68,9 @@ internal fun DirectoryTreeDialog(
 ) {
     val selectedPath = remember { mutableStateOf(currentPath) }
     val scope = rememberCoroutineScope()
-    val loadingPath = remember { mutableStateOf<String?>(null) }
+    // AND-077: per-path loading set — a single loadingPath raced when two
+    // expands were in flight (first completion cleared the other's spinner).
+    val loadingPaths = remember { mutableStateSetOf<String>() }
 
     val expandedPaths = remember { mutableStateMapOf<String, Boolean>() }
     val childrenMap = remember { mutableStateMapOf<String, List<DirectoryNode>>() }
@@ -77,12 +81,15 @@ internal fun DirectoryTreeDialog(
             expandedPaths[node.fullPath] = !isExpanded
             return
         }
-        loadingPath.value = node.fullPath
+        if (!loadingPaths.add(node.fullPath)) return // already loading
         scope.launch {
-            val children = onLoadChildren(node.fullPath)
-            childrenMap[node.fullPath] = children
-            expandedPaths[node.fullPath] = true
-            loadingPath.value = null
+            try {
+                val children = onLoadChildren(node.fullPath)
+                childrenMap[node.fullPath] = children
+                expandedPaths[node.fullPath] = true
+            } finally {
+                loadingPaths.remove(node.fullPath)
+            }
         }
     }
 
@@ -105,7 +112,9 @@ internal fun DirectoryTreeDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            modifier = modifier.width(360.dp),
+            // AND-077: fill up to 360dp — a fixed width could exceed narrow
+            // windows (small screens / multi-window) and clip.
+            modifier = modifier.fillMaxWidth().widthIn(max = 360.dp),
             shape = RoundedCornerShape(16.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -151,7 +160,7 @@ internal fun DirectoryTreeDialog(
                             level = entry.level,
                             isExpanded = entry.isExpanded,
                             isLeaf = entry.isLeaf,
-                            isLoading = loadingPath.value == entry.node.fullPath,
+                            isLoading = loadingPaths.contains(entry.node.fullPath),
                             isSelected = selectedPath.value == entry.node.fullPath,
                             isSyncBaseDir = entry.node.isSyncBaseDir,
                             onSelect = {

@@ -50,7 +50,7 @@ class ImageViewerViewModelToggleTest {
     @Before
     fun setUp() = runTest {
         Dispatchers.setMain(testDispatcher)
-        every { imageQueue.consumeIds() } returns emptyList()
+        every { imageQueue.consumeIds(any()) } returns emptyList()
     }
 
     @After

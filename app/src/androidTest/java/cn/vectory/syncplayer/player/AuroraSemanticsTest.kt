@@ -41,7 +41,7 @@ class AuroraSemanticsTest {
         coEvery { userPrefs.getVolumeBalance() } returns false
         coEvery { userPrefs.getQuickRecycle() } returns true
         val queue = mockk<VideoQueue>()
-        every { queue.consumeIds() } returns emptyList()
+        every { queue.consumeIds(any()) } returns emptyList()
         every { queue.getIds() } returns emptyList()
         return PlayerViewModel(
             savedStateHandle = androidx.lifecycle.SavedStateHandle(),

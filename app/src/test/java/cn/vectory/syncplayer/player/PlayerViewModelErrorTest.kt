@@ -42,7 +42,7 @@ class PlayerViewModelErrorTest {
     @Before
     fun setUp() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
-        every { videoQueue.consumeIds() } returns emptyList()
+        every { videoQueue.consumeIds(any()) } returns emptyList()
         every { videoQueue.getIds() } returns emptyList()
         coEvery { userPrefs.getVolumeBalance() } returns false
         coEvery { userPrefs.getQuickRecycle() } returns true

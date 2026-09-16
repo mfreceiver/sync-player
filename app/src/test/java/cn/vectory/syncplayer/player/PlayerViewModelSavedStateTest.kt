@@ -35,7 +35,7 @@ class PlayerViewModelSavedStateTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        every { videoQueue.consumeIds() } returns emptyList()
+        every { videoQueue.consumeIds(any()) } returns emptyList()
         coEvery { userPrefs.getVolumeBalance() } returns false
         coEvery { userPrefs.getQuickRecycle() } returns true
     }

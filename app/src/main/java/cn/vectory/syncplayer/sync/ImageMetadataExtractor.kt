@@ -65,8 +65,11 @@ class ImageMetadataExtractor @Inject constructor(
     private companion object {
         const val TAG = "ImageMetadataExtractor"
         const val THUMB_MAX_WIDTH = 640
-        val EXIF_DATE_FORMAT = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US)
-        val EXIF_DATE_FORMAT_ALT = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+        // AND-082: SimpleDateFormat is not thread-safe and these were shared while
+        // up to MAX_CONCURRENCY download lanes parse concurrently — per-call
+        // instances are cheap here (once per image, off the hot path).
+        const val EXIF_DATE_PATTERN = "yyyy:MM:dd HH:mm:ss"
+        const val EXIF_DATE_PATTERN_ALT = "yyyy-MM-dd'T'HH:mm:ss"
     }
 
     private val store: MediaFileStore get() = mediaFileStoreLazy.get()
@@ -109,7 +112,7 @@ class ImageMetadataExtractor @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "Image metadata extraction failed for ${item.fileName}", e)
+            Log.w(TAG, SyncSafeLog.failure("image metadata id=${item.id}", e))
             return item
         }
         val updated = item.copy(width = width, height = height, dateTaken = dateTaken)
@@ -140,10 +143,10 @@ class ImageMetadataExtractor @Inject constructor(
 
     private fun parseDateString(dateStr: String): Long? {
         return try {
-            EXIF_DATE_FORMAT.parse(dateStr)?.time
+            SimpleDateFormat(EXIF_DATE_PATTERN, Locale.US).parse(dateStr)?.time
         } catch (_: Exception) {
             try {
-                EXIF_DATE_FORMAT_ALT.parse(dateStr)?.time
+                SimpleDateFormat(EXIF_DATE_PATTERN_ALT, Locale.US).parse(dateStr)?.time
             } catch (_: Exception) {
                 null
             }

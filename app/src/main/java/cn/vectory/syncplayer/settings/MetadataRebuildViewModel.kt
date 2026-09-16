@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.browser.DeleteMediaResult
 import cn.vectory.syncplayer.browser.FileOperationsUseCase
+import cn.vectory.syncplayer.browser.safeErrorDetail
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.data.repository.VideoRepository
@@ -180,7 +181,7 @@ class MetadataRebuildViewModel @Inject constructor(
                             } catch (e: kotlinx.coroutines.CancellationException) {
                                 throw e
                             } catch (e: Exception) {
-                                Log.w(TAG, "Failed to extract metadata for ${record.fileName}", e)
+                                Log.w(TAG, "Failed to extract metadata id=${record.id}: ${safeErrorDetail(e)}")
                                 fail++
                                 failures.add(record.id to syncErrorMessage(e, context))
                             }

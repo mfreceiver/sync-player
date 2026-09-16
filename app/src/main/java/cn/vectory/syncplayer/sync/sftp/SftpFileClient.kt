@@ -11,6 +11,7 @@ import cn.vectory.syncplayer.sync.SyncException
 import cn.vectory.syncplayer.sync.SyncOperation
 import cn.vectory.syncplayer.sync.checkNetworkAvailable
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -27,15 +28,13 @@ import java.net.UnknownHostException
 
 class SftpFileClient internal constructor(
     private val context: Context,
-    // Test seam only — production callers use the public single-arg constructor
-    // (identical behavior: constructs a real sshj SSHClient).
-    private val sshClientFactory: () -> SSHClient
+    // Test seam only — production callers use the defaults (real sshj SSHClient).
+    private val sshClientFactory: () -> SSHClient =
+        { SSHClient(net.schmizz.sshj.DefaultSecurityProviderConfig()) },
+    // AND-090: injectable dispatcher so tests can substitute a TestDispatcher;
+    // production keeps Dispatchers.IO.
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : RemoteFileClient {
-
-    constructor(context: Context) : this(
-        context,
-        { SSHClient(net.schmizz.sshj.DefaultSecurityProviderConfig()) }
-    )
 
     private companion object {
         const val TAG = "SftpFileClient"
@@ -89,7 +88,7 @@ class SftpFileClient internal constructor(
             sftpClient = null
         }
         try {
-            val established = withContext(Dispatchers.IO) {
+            val established = withContext(ioDispatcher) {
                 checkNetworkAvailable(context)
                 // E4: `client` 必须保持局部变量，直到握手完全成功；任何失败路径都要
                 // disconnect，防止部分建立的连接泄漏（同步重试会持续累积）。
@@ -126,7 +125,7 @@ class SftpFileClient internal constructor(
     }
 
     override suspend fun disconnect() {
-        withContext(Dispatchers.IO + NonCancellable) {
+        withContext(ioDispatcher + NonCancellable) {
             try {
                 sftpClient?.close()
                 sshClient?.disconnect()
@@ -153,14 +152,14 @@ class SftpFileClient internal constructor(
         }
     }
 
-    override suspend fun listFiles(path: String): List<RemoteFile> = withContext(Dispatchers.IO) {
+    override suspend fun listFiles(path: String): List<RemoteFile> = withContext(ioDispatcher) {
         val sftp = sftpClient ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.BROWSE)
         val result = mutableListOf<RemoteFile>()
         listFilesRecursive(sftp, path, path, result)
         result
     }
 
-    override suspend fun listDirectories(path: String): List<RemoteFile> = withContext(Dispatchers.IO) {
+    override suspend fun listDirectories(path: String): List<RemoteFile> = withContext(ioDispatcher) {
         val sftp = sftpClient ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.BROWSE)
         val result = mutableListOf<RemoteFile>()
         val entries = try {
@@ -237,7 +236,7 @@ class SftpFileClient internal constructor(
         remotePath: String,
         sink: java.io.OutputStream,
         onProgress: ((transferred: Long, total: Long) -> Unit)?
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(ioDispatcher) {
         val sftp = sftpClient ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.DOWNLOAD)
         try {
             val fullRemotePath = if (remoteBasePath.isNotEmpty()) "$remoteBasePath/$remotePath" else remotePath
@@ -292,7 +291,7 @@ class SftpFileClient internal constructor(
         }
     }
 
-    override suspend fun deleteFile(remotePath: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun deleteFile(remotePath: String): Boolean = withContext(ioDispatcher) {
         val sftp = sftpClient ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.DELETE)
         try {
             val fullRemotePath = if (remoteBasePath.isNotEmpty()) "$remoteBasePath/$remotePath" else remotePath

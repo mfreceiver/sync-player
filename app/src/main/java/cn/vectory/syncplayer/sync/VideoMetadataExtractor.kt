@@ -46,7 +46,7 @@ class VideoMetadataExtractor @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "Metadata extraction failed for ${videoItem.fileName}", e)
+            Log.w(TAG, SyncSafeLog.failure("metadata extraction id=${videoItem.id}", e))
             return videoItem
         }
         val updated = videoItem.copy(
@@ -68,7 +68,7 @@ class VideoMetadataExtractor @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "Thumbnail repair failed for ${videoItem.fileName}", e)
+            Log.w(TAG, SyncSafeLog.failure("thumb repair id=${videoItem.id}", e))
         }
         return videoItem
     }
@@ -85,7 +85,7 @@ class VideoMetadataExtractor @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "Thumbnail generation failed for ${videoItem.fileName}", e)
+            Log.w(TAG, SyncSafeLog.failure("thumb generation id=${videoItem.id}", e))
         }
     }
 }

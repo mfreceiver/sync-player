@@ -82,6 +82,18 @@ class SyncPreviewViewModel @Inject constructor(
             _previewLoaded.value = true
             observeSyncCompletion()
         }
+        // AND-070: a sync can legitimately start AFTER this VM exists (service
+        // redelivery after process death). Watch progress continuously and arm
+        // the completion observer whenever a running sync for this relation
+        // appears — the restored screen must still reach its terminal state.
+        viewModelScope.launch {
+            syncEngine.progress.collect { p ->
+                if (p.isRunning && p.relationId == relationId && !_isSyncing.value) {
+                    _isSyncing.value = true
+                    observeSyncCompletion()
+                }
+            }
+        }
         viewModelScope.launch {
             try {
                 _allRelations.value = syncRelationRepository.getAllWithSource().map { it.relation }
@@ -113,6 +125,13 @@ class SyncPreviewViewModel @Inject constructor(
     }
 
     fun loadPreview() {
+        // AND-083: dryRun/setPendingTask park on storageOperationMutex for the
+        // entire duration of a running sync — surface that as a message instead
+        // of an indefinite spinner.
+        if (syncEngine.progress.value.isRunning) {
+            _error.value = context.getString(R.string.sync_preview_busy)
+            return
+        }
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
@@ -181,6 +200,8 @@ class SyncPreviewViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                // AND-070: a failed start must not leave the UI stuck on "syncing".
+                _isSyncing.value = false
                 _error.value = syncErrorMessage(e, context)
             }
         }
@@ -229,6 +250,10 @@ class SyncPreviewViewModel @Inject constructor(
     fun cancelSync() {
         if (_isSyncing.value) {
             SyncService.stop(context)
+            // AND-088/AND-070: if the service isn't actually running the stop
+            // intent only cold-starts+self-terminates it and no CANCELLED
+            // terminal ever arrives — clear the flag here so the UI unsticks.
+            _isSyncing.value = false
         }
         deleteJob?.cancel()
         deleteJob = null

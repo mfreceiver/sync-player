@@ -68,7 +68,7 @@ class AuroraSeekLifecycleTest {
         coEvery { userPrefs.getVolumeBalance() } returns false
         coEvery { userPrefs.getQuickRecycle() } returns true
         val queue = mockk<VideoQueue>()
-        every { queue.consumeIds() } returns emptyList()
+        every { queue.consumeIds(any()) } returns emptyList()
         every { queue.getIds() } returns emptyList()
         val viewModel = PlayerViewModel(
             savedStateHandle = SavedStateHandle(),

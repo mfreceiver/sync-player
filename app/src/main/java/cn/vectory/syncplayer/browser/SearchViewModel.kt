@@ -142,7 +142,10 @@ class SearchViewModel @Inject constructor(
         _error.update { ErrorEvent(message, errorSeq.incrementAndGet()) }
     }
 
-    fun clearError() { _error.value = null }
+    fun clearError(expectedSeq: Long? = null) {
+        // AND-068: seq-guarded clear — see BrowserViewModel.clearError.
+        _error.update { if (expectedSeq == null || it?.seq == expectedSeq) null else it }
+    }
 
     fun getSearchResultVideoIds(): List<Long> {
         return searchResults.value

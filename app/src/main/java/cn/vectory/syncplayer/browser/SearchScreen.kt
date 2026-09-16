@@ -65,6 +65,9 @@ fun SearchScreen(
 
     var showContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
     var showFolderContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
+    // AND-060: the menu's delete fallback performs an immediate irreversible hard
+    // delete — intercept it behind an explicit confirmation instead.
+    var pendingHardDeleteId by remember { mutableStateOf<Long?>(null) }
 
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
@@ -290,7 +293,29 @@ fun SearchScreen(
             onDismiss = { showContextMenu = null },
             scope = scope,
             snackbarHostState = snackbarHostState,
-            context = context
+            context = context,
+            onDeleted = { id -> pendingHardDeleteId = id }
+        )
+    }
+
+    pendingHardDeleteId?.let { deleteId ->
+        AlertDialog(
+            onDismissRequest = { pendingHardDeleteId = null },
+            title = { Text(stringResource(R.string.file_delete_confirm_title)) },
+            text = { Text(stringResource(R.string.file_delete_confirm_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingHardDeleteId = null
+                    viewModel.deleteFile(deleteId)
+                }) {
+                    Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingHardDeleteId = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
         )
     }
 
@@ -304,8 +329,13 @@ fun SearchScreen(
 
     error?.let { ev ->
         LaunchedEffect(ev.seq) {
-            snackbarHostState.showSnackbar(ev.message)
-            viewModel.clearError()
+            // AND-080: finally-guaranteed clear — cancellation mid-snackbar must
+            // still retire the event so it can't replay after recreation.
+            try {
+                snackbarHostState.showSnackbar(ev.message)
+            } finally {
+                viewModel.clearError(ev.seq)
+            }
         }
     }
 }

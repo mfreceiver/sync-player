@@ -132,6 +132,13 @@ internal fun buildMetadataLine(
     return parts.joinToString(" · ")
 }
 
+// AND-073: SimpleDateFormat was allocated per list-item composition. It is not
+// thread-safe, so reuse is done via ThreadLocal rather than a shared instance.
+private val imageDateFormat = object : ThreadLocal<java.text.SimpleDateFormat>() {
+    override fun initialValue() =
+        java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+}
+
 internal fun buildImageMetadataLine(
     width: Int?,
     height: Int?,
@@ -144,8 +151,7 @@ internal fun buildImageMetadataLine(
     }
     dateTaken?.let { dt ->
         if (dt > 0) {
-            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
-            parts.add(sdf.format(java.util.Date(dt)))
+            parts.add(imageDateFormat.get()!!.format(java.util.Date(dt)))
         }
     }
     if (fileSize > 0) {
@@ -167,8 +173,7 @@ internal fun buildImageMetadataLineWithExtension(
     }
     dateTaken?.let { dt ->
         if (dt > 0) {
-            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
-            parts.add(sdf.format(java.util.Date(dt)))
+            parts.add(imageDateFormat.get()!!.format(java.util.Date(dt)))
         }
     }
     if (fileSize > 0) {

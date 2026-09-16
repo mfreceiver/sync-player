@@ -65,7 +65,7 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                 currentFolder = folder,
                 onNavigateToPlayer = { videoItemId, videoIds ->
                     val currentFolder = viewModel.currentFolder.value
-                    navHelper.videoQueue.setIds(videoIds)
+                    navHelper.videoQueue.setIds(videoItemId, videoIds)
                     navController.navigate(Route.Player.create(videoItemId, currentFolder, "browser")) {
                         launchSingleTop = true
                     }
@@ -76,7 +76,7 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                 },
                 onNavigateToImageViewer = { imageItemId, imageIds ->
                     val currentFolder = viewModel.currentFolder.value
-                    navHelper.imageQueue.setIds(imageIds)
+                    navHelper.imageQueue.setIds(imageItemId, imageIds)
                     navController.navigate(Route.ImageViewer.create(imageItemId, currentFolder, "browser")) {
                         launchSingleTop = true
                     }
@@ -182,7 +182,11 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
         ) {
             SyncSourceEditScreen(
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToSourceList = { navController.popBackStack(Route.SyncSourceList.route, inclusive = true) }
+                // AND-057: pop only the edit screen — lands on the list when it is
+                // present, or on the entry below (e.g. Browser onboarding path).
+                // The previous inclusive pop skipped the list and silently no-oped
+                // when the list was absent.
+                onNavigateToSourceList = { navController.popBackStack() }
             )
         }
 
@@ -211,7 +215,7 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
         ) {
             SyncRelationEditScreen(
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToRelationList = { navController.popBackStack(Route.SyncRelationList.route, inclusive = true) }
+                onNavigateToRelationList = { navController.popBackStack() }
             )
         }
 
@@ -250,7 +254,7 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                     navController.navigate(Route.Browser.create(folderPath))
                 },
                 onNavigateToPlayer = { videoItemId, videoIds ->
-                    navHelper.videoQueue.setIds(videoIds)
+                    navHelper.videoQueue.setIds(videoItemId, videoIds)
                     navController.navigate(Route.Player.create(videoItemId, "", "search")) {
                         launchSingleTop = true
                     }
@@ -260,7 +264,7 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                     )
                 },
                 onNavigateToImageViewer = { imageItemId, imageIds ->
-                    navHelper.imageQueue.setIds(imageIds)
+                    navHelper.imageQueue.setIds(imageItemId, imageIds)
                     navController.navigate(Route.ImageViewer.create(imageItemId, "", "search")) {
                         launchSingleTop = true
                     }
@@ -285,7 +289,8 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                 onNavigateToSyncSourceList = { navController.navigate(Route.SyncSourceList.route) },
                 onNavigateToSyncRelationList = { navController.navigate(Route.SyncRelationList.route) },
                 onNavigateToStorageManagement = { navController.navigate(Route.StorageManagement.route) },
-                onNavigateToDebugLog = { navController.navigate(Route.DebugLog.route) }
+                onNavigateToDebugLog = { navController.navigate(Route.DebugLog.route) },
+                onNavigateToAbout = { navController.navigate(Route.About.route) }
             )
         }
 
@@ -314,6 +319,12 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
 
         composable(Route.DebugLog.route) {
             DebugLogScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Route.About.route) {
+            cn.vectory.syncplayer.settings.AboutScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

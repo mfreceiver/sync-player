@@ -134,7 +134,13 @@ fun DebugLogScreen(onNavigateBack: () -> Unit) {
             } else {
                 val listState = rememberLazyListState()
                 LaunchedEffect(filteredEntries.size) {
-                    listState.animateScrollToItem(filteredEntries.lastIndex)
+                    // AND-078: follow the stream only while the user is already
+                    // at the bottom — unconditional jumps fight anyone reading
+                    // older entries.
+                    val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+                    if (lastVisible == null || lastVisible >= filteredEntries.lastIndex - 1) {
+                        listState.animateScrollToItem(filteredEntries.lastIndex)
+                    }
                 }
                 LazyColumn(
                     state = listState,

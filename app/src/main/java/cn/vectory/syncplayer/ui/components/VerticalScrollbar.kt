@@ -16,6 +16,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -127,7 +128,10 @@ fun Modifier.verticalScrollbar(
                     down.consume()
                     val viewport = size.height.toFloat()
                     val progress = (down.position.y / viewport).coerceIn(0f, 1f)
-                    scope.launch { state.scrollToIndex(progress) }
+                    // AND-075: bound the queue to one pending scroll — each move
+                    // event replaces the stale pending job instead of piling
+                    // scrolls up behind the scroll mutex at ~60/s.
+                    var scrollJob: Job? = scope.launch { state.scrollToIndex(progress) }
 
                     do {
                         val event = awaitPointerEvent()
@@ -135,7 +139,8 @@ fun Modifier.verticalScrollbar(
                         change.consume()
                         val dragProgress = (change.position.y / viewport).coerceIn(0f, 1f)
                         if (abs(dragProgress - progress) > 0.001f) {
-                            scope.launch { state.scrollToIndex(dragProgress) }
+                            scrollJob?.cancel()
+                            scrollJob = scope.launch { state.scrollToIndex(dragProgress) }
                         }
                     } while (change.pressed)
                 }
@@ -222,7 +227,10 @@ fun Modifier.gridVerticalScrollbar(
                     down.consume()
                     val viewport = size.height.toFloat()
                     val progress = (down.position.y / viewport).coerceIn(0f, 1f)
-                    scope.launch { state.scrollToIndex(progress) }
+                    // AND-075: bound the queue to one pending scroll — each move
+                    // event replaces the stale pending job instead of piling
+                    // scrolls up behind the scroll mutex at ~60/s.
+                    var scrollJob: Job? = scope.launch { state.scrollToIndex(progress) }
 
                     do {
                         val event = awaitPointerEvent()
@@ -230,7 +238,8 @@ fun Modifier.gridVerticalScrollbar(
                         change.consume()
                         val dragProgress = (change.position.y / viewport).coerceIn(0f, 1f)
                         if (abs(dragProgress - progress) > 0.001f) {
-                            scope.launch { state.scrollToIndex(dragProgress) }
+                            scrollJob?.cancel()
+                            scrollJob = scope.launch { state.scrollToIndex(dragProgress) }
                         }
                     } while (change.pressed)
                 }
@@ -317,7 +326,10 @@ fun Modifier.staggeredGridVerticalScrollbar(
                     down.consume()
                     val viewport = size.height.toFloat()
                     val progress = (down.position.y / viewport).coerceIn(0f, 1f)
-                    scope.launch { state.scrollToIndex(progress) }
+                    // AND-075: bound the queue to one pending scroll — each move
+                    // event replaces the stale pending job instead of piling
+                    // scrolls up behind the scroll mutex at ~60/s.
+                    var scrollJob: Job? = scope.launch { state.scrollToIndex(progress) }
 
                     do {
                         val event = awaitPointerEvent()
@@ -325,7 +337,8 @@ fun Modifier.staggeredGridVerticalScrollbar(
                         change.consume()
                         val dragProgress = (change.position.y / viewport).coerceIn(0f, 1f)
                         if (abs(dragProgress - progress) > 0.001f) {
-                            scope.launch { state.scrollToIndex(dragProgress) }
+                            scrollJob?.cancel()
+                            scrollJob = scope.launch { state.scrollToIndex(dragProgress) }
                         }
                     } while (change.pressed)
                 }

@@ -6,6 +6,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Cloud
@@ -14,6 +15,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
@@ -41,6 +43,7 @@ fun SettingsScreen(
     onNavigateToSyncRelationList: () -> Unit = {},
     onNavigateToStorageManagement: () -> Unit = {},
     onNavigateToDebugLog: () -> Unit = {},
+    onNavigateToAbout: () -> Unit = {},
 ) {
     val settingsState by viewModel.settingsState.collectAsStateWithLifecycle()
     val authCapabilityInfo by viewModel.authCapabilityInfo.collectAsStateWithLifecycle()
@@ -149,12 +152,36 @@ fun SettingsScreen(
                 supportingContent = { Text(stringResource(R.string.settings_volume_balance_desc)) },
                 leadingContent = { Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null) },
                 trailingContent = {
+                    // AND-076: two unrelated actions on one row was ambiguous —
+                    // the row now toggles the setting (matching switch-row
+                    // convention), and the chevron is the navigation affordance.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(
+                            checked = state.volumeBalance,
+                            onCheckedChange = { viewModel.setVolumeBalance(it) }
+                        )
+                        IconButton(onClick = onNavigateToGainAnalysis) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = stringResource(R.string.gain_title)
+                            )
+                        }
+                    }
+                },
+                modifier = Modifier.clickable { viewModel.setVolumeBalance(!state.volumeBalance) }
+            )
+
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.settings_orientation_follow_system)) },
+                supportingContent = { Text(stringResource(R.string.settings_orientation_follow_system_desc)) },
+                leadingContent = { Icon(Icons.Default.ScreenRotation, contentDescription = null) },
+                trailingContent = {
                     Switch(
-                        checked = state.volumeBalance,
-                        onCheckedChange = { viewModel.setVolumeBalance(it) }
+                        checked = state.followSystemOrientation,
+                        onCheckedChange = { viewModel.setFollowSystemOrientation(it) }
                     )
                 },
-                modifier = Modifier.clickable { onNavigateToGainAnalysis() }
+                modifier = Modifier.clickable { viewModel.setFollowSystemOrientation(!state.followSystemOrientation) }
             )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
@@ -220,7 +247,10 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                }
+                },
+                // AND-079: AboutScreen (version + sync-log viewer) was unreachable —
+                // the version row is its natural entry point.
+                modifier = Modifier.clickable { onNavigateToAbout() }
             )
 
         }

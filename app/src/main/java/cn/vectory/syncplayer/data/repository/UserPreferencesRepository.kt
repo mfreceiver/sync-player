@@ -2,7 +2,9 @@ package cn.vectory.syncplayer.data.repository
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
@@ -17,7 +19,14 @@ import cn.vectory.syncplayer.data.model.OrientationPreference
 import javax.inject.Inject
 import javax.inject.Singleton
 
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "player_prefs")
+// AND-059: without a corruption handler, `data` throws CorruptionException into
+// every collector/reader — one damaged write takes the app down wherever prefs
+// are touched. Replacing the file with empty prefs is the least-bad recovery:
+// every consumer already has a default for every key.
+private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "player_prefs",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() }
+)
 
 @Singleton
 class UserPreferencesRepository @Inject constructor(

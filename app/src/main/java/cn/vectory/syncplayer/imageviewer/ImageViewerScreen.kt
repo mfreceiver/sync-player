@@ -147,7 +147,7 @@ fun ImageViewerScreen(
             try {
                 snackbarHostState.showSnackbar(ev.message)
             } finally {
-                viewModel.clearError()
+                viewModel.clearError(ev.seq)
             }
         }
     }
@@ -260,7 +260,8 @@ private fun ZoomableImage(
     Box(
         modifier = modifier
             .pointerInput(Unit) {
-                val swipeThreshold = 60f
+                // AND-072: px→dp — 60px is ~20dp at 3x density (too easy to trigger).
+                val swipeThreshold = 60.dp.toPx()
 
                 awaitEachGesture {
                     val firstDown = awaitFirstDown(requireUnconsumed = false)
@@ -302,29 +303,43 @@ private fun ZoomableImage(
                                 previousCenter = currentCenter
                                 previousDistance = currentDist
                                 totalDragX = 0f
+                            } else {
+                                // Pinch baseline must re-arm when a finger rejoins —
+                                // a stale distance would compute a bogus zoom jump.
+                                previousCenter = null
+                                previousDistance = null
                             }
                         } else if (pointerCount == 1) {
-                            val change = event.changes.firstOrNull { it.id == firstDown.id } ?: continue
-                            if (!change.pressed) {
-                                change.consume()
-                                break
-                            }
-                            val dragX = change.position.x - change.previousPosition.x
-                            val dragY = change.position.y - change.previousPosition.y
-                            totalDragX += dragX
+                            val change = event.changes.firstOrNull { it.id == firstDown.id }
+                            if (change != null) {
+                                if (!change.pressed) {
+                                    change.consume()
+                                    break
+                                }
+                                val dragX = change.position.x - change.previousPosition.x
+                                val dragY = change.position.y - change.previousPosition.y
+                                totalDragX += dragX
 
-                            if (scale > 1f) {
-                                val maxOffX = (scale - 1f) * size.width / 2f
-                                val maxOffY = (scale - 1f) * size.height / 2f
-                                val atLeftEdge = offsetX <= -maxOffX + 1f
-                                val atRightEdge = offsetX >= maxOffX - 1f
-                                canSwipeHorizontal = (atRightEdge && dragX < 0f) || (atLeftEdge && dragX > 0f)
-                                offsetX = (offsetX + dragX).coerceIn(-maxOffX, maxOffX)
-                                offsetY = (offsetY + dragY).coerceIn(-maxOffY, maxOffY)
+                                if (scale > 1f) {
+                                    val maxOffX = (scale - 1f) * size.width / 2f
+                                    val maxOffY = (scale - 1f) * size.height / 2f
+                                    val atLeftEdge = offsetX <= -maxOffX + 1f
+                                    val atRightEdge = offsetX >= maxOffX - 1f
+                                    canSwipeHorizontal = (atRightEdge && dragX < 0f) || (atLeftEdge && dragX > 0f)
+                                    offsetX = (offsetX + dragX).coerceIn(-maxOffX, maxOffX)
+                                    offsetY = (offsetY + dragY).coerceIn(-maxOffY, maxOffY)
+                                }
+                                previousCenter = null
+                                previousDistance = null
+                                change.consume()
                             }
-                            previousCenter = null
-                            previousDistance = null
-                            change.consume()
+                            // AND-058: the loop used to exit only when firstDown's id
+                            // appeared in a single-pointer event. If the first-down
+                            // finger lifted while another pointer was still down, its
+                            // release lived in a size>=2 event and was never observed —
+                            // the loop spun forever and swipe/zoom died. Terminate on
+                            // all-pointers-up instead.
+                            if (event.changes.none { it.pressed }) break
                         }
                     } while (true)
 

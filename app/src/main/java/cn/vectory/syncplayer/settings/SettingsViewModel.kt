@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
+import cn.vectory.syncplayer.data.model.OrientationPreference
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.security.AuthCapabilityInfo
 import cn.vectory.syncplayer.security.BiometricAuthManager
@@ -24,6 +25,7 @@ data class SettingsState(
     val volumeBalance: Boolean = false,
     val quickRecycle: Boolean = true,
     val secureLockEnabled: Boolean = false,
+    val followSystemOrientation: Boolean = false,
 )
 
 @HiltViewModel
@@ -54,11 +56,13 @@ class SettingsViewModel @Inject constructor(
                     userPrefs.volumeBalance,
                     userPrefs.quickRecycle,
                     userPrefs.secureLockEnabled,
-                ) { volumeBalance, quickRecycle, secureLockEnabled ->
+                    userPrefs.orientation,
+                ) { volumeBalance, quickRecycle, secureLockEnabled, orientation ->
                     SettingsState(
                         volumeBalance = volumeBalance,
                         quickRecycle = quickRecycle,
                         secureLockEnabled = secureLockEnabled,
+                        followSystemOrientation = orientation == OrientationPreference.FOLLOW_SYSTEM,
                     )
                 }
                 .retryWhen { cause, attempt ->
@@ -100,6 +104,22 @@ class SettingsViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to set quick recycle", e)
+            }
+        }
+    }
+
+    // AND-089: OrientationPreference existed as repo CRUD + spec but had no
+    // consumer — wire it to a real settings toggle consumed by the player.
+    fun setFollowSystemOrientation(enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                userPrefs.setOrientation(
+                    if (enabled) OrientationPreference.FOLLOW_SYSTEM else OrientationPreference.FOLLOW_VIDEO
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to set orientation preference", e)
             }
         }
     }
