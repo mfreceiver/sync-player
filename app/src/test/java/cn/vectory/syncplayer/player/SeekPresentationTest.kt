@@ -21,7 +21,8 @@ class SeekPresentationTest {
         assertFalse(frame.matches(4L, 3L, 1_200L))
     }
 
-    @Test fun `precision rebase settles event under previous factor`() {
+    @Test fun `generic segment math applies the supplied scale`() {
+        // Utility arithmetic only; live player input always supplies Full (1f).
         val first = resolveSegmentTargetMs(10f, 30f, 100, 10_000L, 5_000L, 1f)
         val second = resolveSegmentTargetMs(30f, 50f, 100, 10_000L, first, 0.25f)
         assertEquals(7_000L, first)
@@ -37,12 +38,12 @@ class SeekPresentationTest {
         assertEquals(0L, resolver.move(-5f, SeekPrecision.Full, relativeRequested = false))
     }
 
-    @Test fun `enter fine settles absolute event then returning to full restores absolute semantics`() {
+    @Test fun `legacy fine requests cannot change absolute track semantics`() {
         val resolver = TrackSeekResolver(20f, 200L, 100, 1_000L)
         assertEquals(400L, resolver.move(40f, SeekPrecision.Full, relativeRequested = false))
         assertEquals(500L, resolver.move(50f, SeekPrecision.Quarter, relativeRequested = true))
-        assertEquals(525L, resolver.move(60f, SeekPrecision.Quarter, relativeRequested = true))
-        assertEquals(550L, resolver.move(70f, SeekPrecision.Full, relativeRequested = false))
+        assertEquals(600L, resolver.move(60f, SeekPrecision.Quarter, relativeRequested = true))
+        assertEquals(700L, resolver.move(70f, SeekPrecision.Full, relativeRequested = false))
         assertEquals(800L, resolver.move(80f, SeekPrecision.Full, relativeRequested = false))
     }
 

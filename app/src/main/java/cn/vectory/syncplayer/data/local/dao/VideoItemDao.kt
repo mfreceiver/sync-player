@@ -320,6 +320,65 @@ interface VideoItemDao {
         val isTrashed: Boolean
     )
 
+    /**
+     * U2-4a: [folderPath] 的**任意深度**后代媒体行（relativePath 前缀 folder+'/'，含递归层级，
+     * 直接位于 [folderPath] 内的文件同样计入）。与 [getChildVideoStats] 的区别是去掉了
+     * 「恰好直接子目录一层」的深度限制；单次扫描服务当前文件夹全部直接子文件夹的缩略图
+     * 合成，绝不按文件夹逐个查询（无 N+1）。注意前缀匹配用 relativePath（parentPath 前缀
+     * 会漏掉 folder 本身的直属文件）；根目录（''）= parentPath 非空（排除根散落文件）。
+     */
+    @Query("""
+        SELECT vi.id, vi.relativePath, vi.fileName, vi.audioGainDb,
+               pr.position, pr.isCompleted, pr.isTrashed
+        FROM video_item vi
+        LEFT JOIN playback_record pr ON pr.videoItemId = vi.id
+        WHERE vi.mediaType IN ('VIDEO', 'IMAGE')
+        AND CASE
+            WHEN :folderPath = '' THEN vi.parentPath != ''
+            ELSE substr(vi.relativePath, 1, length(:folderPath) + 1) = :folderPath || '/'
+        END
+        ORDER BY vi.fileName COLLATE NOCASE ASC, vi.relativePath COLLATE BINARY ASC, vi.id ASC
+    """)
+    suspend fun getDescendantVideoStats(folderPath: String): List<ChildVideoStat>
+
+    /**
+     * U2c: [folderPath] 路径范围内的后代候选行（单次扫描，**无任何语义过滤**）。
+     * 路径口径与 [getDescendantVideoStats] 相同：任意深度后代（前缀匹配 relativePath）；
+     * 根目录（''）= parentPath 非空。
+     *
+     * 为什么不做 mediaType 的 media/star/unwatched SQL 门：mediaType 不可靠 —— 同步占位
+     * 实体不设 mediaType（SyncDownloadPipeline 占位行），落在 [VideoItemEntity] 默认值
+     * "VIDEO" 上，后续按列 UPDATE 也不修正；非媒体文件（.txt/.nfo 等）入库后 mediaType
+     * 同为 VIDEO，按它建门必然错杀/漏放。筛选口径（扩展名分类 + 未看判定 + star 仅作用
+     * 媒体扩展名行）统一在 BrowseItemBuilder 内与目录列表同源执行，保证「列表显示 ⇔
+     * 父文件夹计数」同进同出。
+     */
+    data class DescendantFilterStat(
+        val id: Long,
+        val relativePath: String,
+        val fileName: String,
+        val mediaType: String,
+        val star: Int,
+        val playbackPosition: Long,
+        val playbackDuration: Long,
+        val isCompleted: Boolean
+    )
+
+    @Query("""
+        SELECT vi.id, vi.relativePath, vi.fileName, vi.mediaType, vi.star,
+               COALESCE(pr.position, 0) AS playbackPosition,
+               COALESCE(pr.duration, 0) AS playbackDuration,
+               COALESCE(pr.isCompleted, 0) AS isCompleted
+        FROM video_item vi
+        LEFT JOIN playback_record pr ON pr.videoItemId = vi.id
+        WHERE CASE
+            WHEN :folderPath = '' THEN vi.parentPath != ''
+            ELSE substr(vi.relativePath, 1, length(:folderPath) + 1) = :folderPath || '/'
+        END
+        ORDER BY vi.relativePath COLLATE NOCASE ASC
+    """)
+    suspend fun getDescendantFilterStats(folderPath: String): List<DescendantFilterStat>
+
     data class FlatItemWithPlayback(
         val id: Long,
         val fileName: String,

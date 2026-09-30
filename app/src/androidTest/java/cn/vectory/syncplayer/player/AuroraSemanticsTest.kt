@@ -242,7 +242,7 @@ class AuroraSemanticsTest {
     }
 
     @Test
-    fun `precision control rebases via composable click`() {
+    fun `preview has no fine precision controls and track remains absolute`() {
         val vm = createViewModel()
         vm.updatePlaybackProgress(10_000L, 60_000L)
         val session = vm.onProgressScrubStarted(10_000L)
@@ -257,10 +257,12 @@ class AuroraSemanticsTest {
         }
         assertEquals(12_000L, resolver.move(20f, SeekPrecision.Full, relativeRequested = false))
         vm.onProgressScrubChanged(12_000L, 1f, false, session)
-        composeRule.onNodeWithTag("player_seek_precision_quarter").performClick()
-        assertEquals(SeekPrecision.Quarter, vm.seekPresentation.value.precision)
+        composeRule.onNodeWithTag("player_seek_precision_full").assertDoesNotExist()
+        composeRule.onNodeWithTag("player_seek_precision_quarter").assertDoesNotExist()
+        composeRule.onNodeWithTag("player_seek_precision_tenth").assertDoesNotExist()
+        assertEquals(SeekPrecision.Full, vm.seekPresentation.value.precision)
         assertEquals(18_000L, resolver.move(30f, vm.seekPresentation.value.precision, relativeRequested = true))
-        assertEquals(19_500L, resolver.move(40f, vm.seekPresentation.value.precision, relativeRequested = true))
+        assertEquals(24_000L, resolver.move(40f, vm.seekPresentation.value.precision, relativeRequested = true))
     }
 
     @Test

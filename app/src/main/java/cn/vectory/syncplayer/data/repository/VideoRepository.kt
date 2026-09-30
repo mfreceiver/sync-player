@@ -111,6 +111,19 @@ class VideoRepository @Inject constructor(
     suspend fun getChildVideoStats(folderPath: String): List<ChildVideoStat> =
         videoItemDao.getChildVideoStats(folderPath)
 
+    /** U2-4a: all-depth descendant media rows for the folder mosaic (single scan, no N+1). */
+    suspend fun getDescendantVideoStats(folderPath: String): List<ChildVideoStat> =
+        videoItemDao.getDescendantVideoStats(folderPath)
+
+    /**
+     * U2c: path-scope descendant CANDIDATE rows (single scan, no semantic filtering) —
+     * filter/star semantics are applied in BrowseItemBuilder, shared with the list rules.
+     * mediaType is unreliable in production (sync placeholder rows default to "VIDEO" and
+     * are never corrected), so the DAO must not gate on it.
+     */
+    suspend fun getDescendantFilterStats(folderPath: String): List<VideoItemDao.DescendantFilterStat> =
+        videoItemDao.getDescendantFilterStats(folderPath)
+
     suspend fun getRecursiveFolderStats(folderPath: String): FolderStats {
         val daoResult = videoItemDao.getRecursiveFolderStats(folderPath)
         return FolderStats(

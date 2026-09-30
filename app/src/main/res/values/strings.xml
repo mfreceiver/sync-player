@@ -491,10 +491,7 @@
     <!-- D3 同步预览运行归属：其它 relation 占用引擎时拒绝提交并如实告知。 -->
     <string name="sync_preview_another_sync_running">另一同步任务正在进行，请等待其完成后再试</string>
 
-    <!-- 播放器（des-3）：进度条 seek 精度切换与秒级 seek -->
-    <string name="player_seek_precision_full">1×</string>
-    <string name="player_seek_precision_quarter">¼×</string>
-    <string name="player_seek_precision_tenth">¹⁄₁₀×</string>
+    <!-- 播放器：秒级 seek -->
     <string name="player_seek_back_1s">后退1秒</string>
     <string name="player_seek_forward_1s">前进1秒</string>
     <!-- F1 浏览器空态与可撤销删除入口 -->

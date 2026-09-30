@@ -22,7 +22,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import cn.vectory.syncplayer.provider.MediaUris
 import coil.compose.AsyncImage
@@ -37,7 +41,9 @@ internal fun FolderGridItem(
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
     videoItemIds: List<Long> = emptyList(),
-    gridDensity: Int = 2
+    gridDensity: Int = 2,
+    /** U2-6: descendant file count matching the current filter; 0 hides the "(N)" suffix. */
+    descendantCount: Int = 0
 ) {
     Column(
         modifier = modifier
@@ -68,14 +74,40 @@ internal fun FolderGridItem(
             }
         }
 
+        // U2-6: "(N)" descendant count next to the folder name — pure numeric suffix, no string
+        // resource. Styling is owned by [folderNameLabel] so the GRID and LIST forms cannot
+        // drift. A single AnnotatedString keeps the one-line ellipsis behavior intact.
         Text(
-            text = folderName,
+            text = folderNameLabel(folderName, descendantCount),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp)
         )
+    }
+}
+
+/**
+ * U2b: shared folder-name label for the GRID ([FolderGridItem]) and LIST
+ * ([cn.vectory.syncplayer.browser.BrowserContent] FolderItem) forms. Appends the pure-numeric
+ * descendant-count suffix " (N)" — smaller type (labelSmall) + secondary color
+ * (onSurfaceVariant) so it reads as metadata next to the name; [descendantCount] == 0 hides
+ * the suffix entirely. Single source of truth: the two forms cannot drift.
+ */
+@Composable
+internal fun folderNameLabel(folderName: String, descendantCount: Int): AnnotatedString {
+    if (descendantCount <= 0) return AnnotatedString(folderName)
+    return buildAnnotatedString {
+        append(folderName)
+        withStyle(
+            SpanStyle(
+                fontSize = MaterialTheme.typography.labelSmall.fontSize,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        ) {
+            append(" (${descendantCount})")
+        }
     }
 }
 
@@ -98,25 +130,25 @@ private fun ThumbnailGrid(
                     .weight(1f)
                     .fillMaxWidth()
             ) {
-                for (i in 0 until gridSize) {
-                    val id = row.getOrNull(i)
+                // U2-4b: render only the actual ids of this row — the old `0 until gridSize`
+                // loop padded the last row with empty cells, which showed as gray tiles
+                // whenever id count % gridSize != 0 (e.g. a single trailing gray square).
+                for (id in row) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxSize()
                             .padding(gap)
                     ) {
-                        if (id != null) {
-                            AsyncImage(
-                                model = ImageRequest.Builder(context)
-                                    .data(MediaUris.thumbUri(id))
-                                    .size(160)
-                                    .build(),
-                                contentDescription = null,
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
-                            )
-                        }
+                        AsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(MediaUris.thumbUri(id))
+                                .size(160)
+                                .build(),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
                     }
                 }
             }

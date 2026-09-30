@@ -26,10 +26,17 @@ data class BrowseItem(
     val videoCount: Int = 0,
     val playedCount: Int = 0,
     val trashedCount: Int = 0,
+    /**
+     * U2-6: descendant file count under this folder matching the CURRENT browse filter/star
+     * criteria (directory items only; 0 = hide the "(N)" suffix). ALL counts every file
+     * (incl. non-media, mirroring the builder's ALL semantics); MEDIA_ONLY/UNWATCHED count
+     * media only, with the DAO's star/unwatched criteria already applied upstream.
+     */
+    val descendantCount: Int = 0,
     // Video metadata
     val hasGainAdjusted: Boolean = false,
     val star: Int = 0,
-    /** Direct-child media ids used for folder thumbnail mosaic (via MediaUris.thumbUri). */
+    /** Up to 9 all-depth descendant video ids for the folder thumbnail mosaic (MediaUris.thumbUri). */
     val videoItemIds: List<Long> = emptyList(),
     // Image metadata
     val mediaType: String = "VIDEO",

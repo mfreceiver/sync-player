@@ -276,6 +276,8 @@ internal class BrowserContentCoordinator(
                     subFolders = emptyList(),
                     itemsInFolder = emptyList(),
                     childVideoStats = emptyList(),
+                    descendantVideoStats = emptyList(),
+                    descendantFilterStats = emptyList(),
                     folderHasSubDirs = emptyMap(),
                     records = records,
                     baseDirSet = baseDirSet
@@ -287,6 +289,13 @@ internal class BrowserContentCoordinator(
         val dbFolderNames = videoRepository.getSubFolders(folder).first()
         val videoEntities = videoRepository.getItemsInFolder(folder).first()
         val childStats = videoRepository.getChildVideoStats(folder)
+        // U2-4a: ONE all-depth descendant scan feeds every folder's thumbnail mosaic (never a
+        // per-folder N+1).
+        val descendantVideoStats = videoRepository.getDescendantVideoStats(folder)
+        // U2-6: ONE descendant scan for the per-folder "(N)" counts. U2c: rows are path-scope
+        // candidates only (mediaType is unreliable — sync placeholders default to "VIDEO");
+        // the builder applies the filter/star semantics shared with the list rules.
+        val descendantFilterStats = videoRepository.getDescendantFilterStats(folder)
         // Subfolder presence: one deep-parentPath query, computed in memory (no N+1). Sort order
         // of directChildNames does not affect the resulting map, but matches the original call.
         val allFolderNames = dbFolderNames.sortedWith(fileNameComparator)
@@ -305,6 +314,8 @@ internal class BrowserContentCoordinator(
                 subFolders = dbFolderNames,
                 itemsInFolder = videoEntities,
                 childVideoStats = childStats,
+                descendantVideoStats = descendantVideoStats,
+                descendantFilterStats = descendantFilterStats,
                 folderHasSubDirs = folderHasSubDirs,
                 records = records,
                 baseDirSet = baseDirSet

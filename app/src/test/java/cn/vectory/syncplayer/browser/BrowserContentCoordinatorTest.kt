@@ -68,6 +68,8 @@ class BrowserContentCoordinatorTest {
         every { videoRepository.getSubFolders(any()) } returns flowOf(emptyList())
         every { videoRepository.getItemsInFolder(any()) } returns flowOf(emptyList())
         coEvery { videoRepository.getChildVideoStats(any()) } returns emptyList()
+        coEvery { videoRepository.getDescendantVideoStats(any()) } returns emptyList()
+        coEvery { videoRepository.getDescendantFilterStats(any()) } returns emptyList()
         coEvery { videoRepository.getDirectChildFolderHasSubFolders(any(), any()) } returns emptyMap()
         coEvery { videoRepository.getFlatItemsFiltered(any(), any(), any(), any(), any()) } returns emptyList()
         coEvery { videoRepository.getTotalItemCount() } returns 0
@@ -178,6 +180,68 @@ class BrowserContentCoordinatorTest {
         sut.refresh()
         advanceTimeBy(50)
         verify(atLeast = 2) { videoRepository.getSubFolders("videos") }
+    }
+
+    /**
+     * U2c: DIRECTORY builds fetch the two descendant scans — the all-depth mosaic scan and the
+     * candidate-row scan for the "(N)" counts — both scoped to the current folder. Since U2c
+     * the count scan carries NO filter/star parameters (mediaType is unreliable; semantics
+     * live in the builder), so only the folder scoping is asserted here.
+     */
+    @Test
+    fun directoryBuild_fetchesDescendantScopesForCurrentFolder() = runTest {
+        stubQueries()
+        coEvery { userPrefs.getBrowseMode() } returns "DIRECTORY"
+        val sut = sut()
+        collectEagerly(sut)
+        sut.setFolder("videos")
+        advanceTimeBy(301)
+        coVerify(atLeast = 1) { videoRepository.getDescendantVideoStats("videos") }
+        coVerify(atLeast = 1) { videoRepository.getDescendantFilterStats("videos") }
+    }
+
+    /** U2-6: FILE mode is a flat list — the folder-oriented descendant scans must not run. */
+    @Test
+    fun fileBuild_doesNotFetchDirectoryDescendantStats() = runTest {
+        stubQueries() // browseMode hydrated to FILE
+        val sut = sut()
+        collectEagerly(sut)
+        advanceTimeBy(301)
+        coVerify(exactly = 0) { videoRepository.getDescendantVideoStats(any()) }
+        coVerify(exactly = 0) { videoRepository.getDescendantFilterStats(any()) }
+    }
+
+    /**
+     * U2b: a rebuild must issue EACH descendant scan exactly ONCE per build, regardless of the
+     * number of direct-child subfolders (single descendant scan, never per-folder N+1). The
+     * counters stub over the warm-up phase; the delta across one refresh() is asserted.
+     */
+    @Test
+    fun directoryBuild_issuesSingleDescendantScanPerRebuild() = runTest {
+        stubQueries()
+        coEvery { userPrefs.getBrowseMode() } returns "DIRECTORY"
+        coEvery { videoRepository.getSubFolders("videos") } returns flowOf(listOf("a", "b", "c"))
+        val mosaicCalls = AtomicInteger(0)
+        val filterCalls = AtomicInteger(0)
+        coEvery { videoRepository.getDescendantVideoStats(any()) } coAnswers {
+            mosaicCalls.incrementAndGet()
+            emptyList()
+        }
+        coEvery { videoRepository.getDescendantFilterStats(any()) } coAnswers {
+            filterCalls.incrementAndGet()
+            emptyList()
+        }
+        val sut = sut()
+        collectEagerly(sut)
+        sut.setFolder("videos")
+        advanceTimeBy(301) // warm-up rebuild with multiple direct-child subfolders
+        val mosaicBefore = mosaicCalls.get()
+        val filterBefore = filterCalls.get()
+        assertTrue(mosaicBefore >= 1)
+        sut.refresh()
+        advanceTimeBy(50)
+        assertEquals(mosaicBefore + 1, mosaicCalls.get())
+        assertEquals(filterBefore + 1, filterCalls.get())
     }
 
     @Test

@@ -6,18 +6,15 @@ import org.junit.Test
 class FineScrubMathTest {
 
     @Test
-    fun `fine factor enters and returns at hysteresis boundaries`() {
-        assertEquals(1f, stabilizedFineScrubFactor(39f, 1f))
-        assertEquals(0.25f, stabilizedFineScrubFactor(40f, 1f))
-        assertEquals(0.25f, stabilizedFineScrubFactor(32.1f, 0.25f))
-        assertEquals(1f, stabilizedFineScrubFactor(32f, 0.25f))
-        assertEquals(0.1f, stabilizedFineScrubFactor(80f, 0.25f))
-        assertEquals(0.1f, stabilizedFineScrubFactor(72.1f, 0.1f))
-        assertEquals(0.25f, stabilizedFineScrubFactor(72f, 0.1f))
+    fun `absolute rail ignores legacy fine requests from the first move`() {
+        val resolver = TrackSeekResolver(20f, 5_000L, 100, 10_000L)
+        assertEquals(3_000L, resolver.move(30f, SeekPrecision.Tenth, true))
+        assertEquals(4_000L, resolver.move(40f, SeekPrecision.Quarter, true))
     }
 
     @Test
-    fun `factor transition rebases target without a jump`() {
+    fun `generic segment math preserves anchor and scales delta`() {
+        // Utility arithmetic only, not an available precision-switching feature.
         val beforeTransition = resolveSegmentTargetMs(
             segmentStartX = 0f,
             currentX = 100f,

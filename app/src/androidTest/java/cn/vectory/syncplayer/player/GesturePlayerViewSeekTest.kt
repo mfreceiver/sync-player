@@ -62,7 +62,7 @@ class GesturePlayerViewSeekTest {
         }
     }
 
-    @Test fun newGestureReadsResetPrecisionAndPausedAcknowledgedPosition() {
+    @Test fun gesturesIgnoreLegacyPrecisionAndReadPausedAcknowledgedPosition() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             val capture = Capture()
             val view = makeView(capture)
@@ -70,6 +70,7 @@ class GesturePlayerViewSeekTest {
             view.positionProvider = { actualPosition }
             touch(view, 1L, MotionEvent.ACTION_DOWN, 400f)
             touch(view, 20L, MotionEvent.ACTION_MOVE, 440f)
+            capture.precision = 0.1f // A legacy provider cannot slow an active drag.
             touch(view, 40L, MotionEvent.ACTION_MOVE, 460f)
             assertEquals(12_000L, capture.target)
             touch(view, 60L, MotionEvent.ACTION_UP, 460f)

@@ -59,6 +59,16 @@ import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
 
+// Bound card height to 1/3..3 times its width: keep thumbnails readable and
+// prevent extreme metadata from producing near-zero or abnormal measured sizes.
+internal const val VIDEO_GRID_MIN_ASPECT_RATIO = 1f / 3f
+internal const val VIDEO_GRID_MAX_ASPECT_RATIO = 3f
+
+internal fun resolveVideoGridAspectRatio(staggeredMode: Boolean, isImage: Boolean, isVideo: Boolean, width: Int?, height: Int?): Float =
+    if (staggeredMode && (isImage || isVideo) && width != null && height != null && width > 0 && height > 0) {
+        (width.toFloat() / height.toFloat()).coerceIn(VIDEO_GRID_MIN_ASPECT_RATIO, VIDEO_GRID_MAX_ASPECT_RATIO)
+    } else 4f / 3f
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun VideoGridItem(
@@ -81,15 +91,9 @@ internal fun VideoGridItem(
 ) {
     val extendedColors = LocalExtendedColors.current
 
-    val imageAspectRatio = if (isImage && width != null && height != null && width > 0 && height > 0) {
-        width.toFloat() / height.toFloat()
-    } else null
-
-    val thumbnailModifier = if (staggeredMode && isImage && imageAspectRatio != null) {
-        Modifier.fillMaxWidth().aspectRatio(imageAspectRatio)
-    } else {
-        Modifier.fillMaxWidth().aspectRatio(4f / 3f)
-    }
+    val thumbnailModifier = Modifier.fillMaxWidth().aspectRatio(
+        resolveVideoGridAspectRatio(staggeredMode, isImage, isVideo, width, height)
+    )
 
     Column(
         modifier = modifier

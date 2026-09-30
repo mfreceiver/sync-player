@@ -86,6 +86,7 @@ data class GestureSeekUiState(
 )
 
 enum class SeekPhase { Idle, Dragging, Settling }
+// Legacy values remain for the separately owned preview host; live seek uses Full only.
 enum class SeekPrecision(val factor: Float) { Full(1f), Quarter(0.25f), Tenth(0.1f) }
 enum class SeekFrame { CurrentBucket, Pending, Failed, Suppressed }
 enum class SeekInput { Track, Gesture }
@@ -675,6 +676,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     /** MOVE deliberately updates only the narrow progress state. */
+    @Suppress("UNUSED_PARAMETER") // Legacy callers can no longer enable fine seek.
     fun onProgressScrubChanged(
         targetPositionMs: Long,
         factor: Float,
@@ -685,15 +687,15 @@ class PlayerViewModel @Inject constructor(
         val duration = _uiState.value.duration.coerceAtLeast(0L)
         _seekPresentation.update { it.copy(
             targetMs = targetPositionMs.coerceIn(0L, duration),
-            precision = SeekPrecision.entries.minBy { precision -> kotlin.math.abs(precision.factor - factor) },
-            fineActivated = it.fineActivated || isFineMode,
+            precision = SeekPrecision.Full,
+            fineActivated = false,
             frame = SeekFrame.Pending,
         ) }
         _progressScrubState.update {
             it.copy(
                 targetPositionMs = targetPositionMs.coerceIn(0L, duration),
-                factor = factor,
-                isFineMode = isFineMode,
+                factor = SeekPrecision.Full.factor,
+                isFineMode = false,
             )
         }
     }
@@ -781,8 +783,10 @@ class PlayerViewModel @Inject constructor(
         _currentPosition.value = positionMs.coerceAtLeast(0L)
     }
 
+    @Suppress("UNUSED_PARAMETER")
     fun selectSeekPrecision(precision: SeekPrecision) {
-        _seekPresentation.update { if (it.phase == SeekPhase.Dragging) it.copy(precision = precision, precisionExplicit = true) else it }
+        // Compatibility for the separately owned preview host. Fine seek is removed.
+        _seekPresentation.update { it.copy(precision = SeekPrecision.Full, precisionExplicit = false, fineActivated = false) }
     }
 
     fun updateSeekFrame(session: Long, targetMs: Long, frame: SeekFrame) {

@@ -640,10 +640,12 @@ fun PlayerScreen(
             onExit = ::doExit,
         )
 
-        if (chromeVisibility.showProgressZone || chromeVisibility.showControlRow) {
+        AuroraBottomChrome(
+            visible = chromeVisibility.showProgressZone || chromeVisibility.showControlRow,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
                     // Measured (never guessed) bottom-chrome height — fed to the seek
                     // preview host so the coarse preview anchors above the progress
                     // zone in both visibility cases (with/without control row) and

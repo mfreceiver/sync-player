@@ -1,6 +1,8 @@
 package cn.vectory.syncplayer.browser
 
+import cn.vectory.syncplayer.data.local.dao.VideoItemDao
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao.ChildVideoStat
+import cn.vectory.syncplayer.data.local.dao.VideoItemDao.DescendantFilterStat
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao.FlatItemWithPlayback
 import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
@@ -94,6 +96,27 @@ class BrowseItemBuilderTest {
         isTrashed = isTrashed
     )
 
+    /** U2-6 descendant filter-count row stub (DAO has already applied its SQL criteria). */
+    private fun descStat(
+        id: Long,
+        relativePath: String,
+        fileName: String,
+        star: Int = 0,
+        mediaType: String = "VIDEO",
+        playbackPosition: Long = 0L,
+        playbackDuration: Long = 0L,
+        isCompleted: Boolean = false
+    ): DescendantFilterStat = DescendantFilterStat(
+        id = id,
+        relativePath = relativePath,
+        fileName = fileName,
+        mediaType = mediaType,
+        star = star,
+        playbackPosition = playbackPosition,
+        playbackDuration = playbackDuration,
+        isCompleted = isCompleted
+    )
+
     private fun record(
         videoItemId: Long,
         position: Long = 0L,
@@ -114,6 +137,8 @@ class BrowseItemBuilderTest {
         subFolders: List<String> = emptyList(),
         itemsInFolder: List<VideoItemEntity> = emptyList(),
         childVideoStats: List<ChildVideoStat> = emptyList(),
+        descendantVideoStats: List<ChildVideoStat> = emptyList(),
+        descendantFilterStats: List<DescendantFilterStat> = emptyList(),
         folderHasSubDirs: Map<String, Boolean> = emptyMap(),
         records: List<PlaybackRecordEntity> = emptyList(),
         baseDirSet: Set<String> = emptySet(),
@@ -133,6 +158,8 @@ class BrowseItemBuilderTest {
         subFolders = subFolders,
         itemsInFolder = itemsInFolder,
         childVideoStats = childVideoStats,
+        descendantVideoStats = descendantVideoStats,
+        descendantFilterStats = descendantFilterStats,
         folderHasSubDirs = folderHasSubDirs,
         records = records,
         baseDirSet = baseDirSet
@@ -157,6 +184,8 @@ class BrowseItemBuilderTest {
         subFolders = emptyList(),
         itemsInFolder = emptyList(),
         childVideoStats = emptyList(),
+        descendantVideoStats = emptyList(),
+        descendantFilterStats = emptyList(),
         folderHasSubDirs = emptyMap(),
         records = emptyList(),
         baseDirSet = emptySet()
@@ -210,6 +239,10 @@ class BrowseItemBuilderTest {
                 subFolders = listOf("Action"),
                 childVideoStats = listOf(
                     // A deep descendant under Movies/Action — counted into the Action subfolder.
+                    childStat(10L, "Movies/Action/fight.mp4", "fight.mp4")
+                ),
+                // U2-4a: the mosaic ids come from the descendant scan (same prefix parsing).
+                descendantVideoStats = listOf(
                     childStat(10L, "Movies/Action/fight.mp4", "fight.mp4")
                 )
             )
@@ -269,13 +302,292 @@ class BrowseItemBuilderTest {
 
     @Test
     fun `directory folder mosaic caps at nine video ids`() {
-        val stats = (1..11).map { childStat(it.toLong(), "F/v$it.mp4", "v$it.mp4") }
+        // U2-4a: mosaic ids are sourced from the descendant scan.
+        val deep = (1..11).map { childStat(it.toLong(), "F/v$it.mp4", "v$it.mp4") }
         val out = BrowseItemBuilder.build(
-            dirInput(folder = "", subFolders = listOf("F"), childVideoStats = stats)
+            dirInput(folder = "", subFolders = listOf("F"), descendantVideoStats = deep)
         )
         assertEquals(9, out.items[0].videoItemIds.size)
         // take(9) preserves the input order
         assertEquals((1L..9L).toList(), out.items[0].videoItemIds)
+    }
+
+    // ===================================================================================
+    // U2-4a: mosaic from ALL-depth descendants (folder with no direct-level videos)
+    // ===================================================================================
+
+    @Test
+    fun `directory mosaic uses deep descendants when direct level has no videos`() {
+        // childVideoStats (direct level) is empty — before U2-4a this folder rendered no mosaic.
+        val out = BrowseItemBuilder.build(
+            dirInput(
+                folder = "Library",
+                subFolders = listOf("Show"),
+                descendantVideoStats = listOf(
+                    childStat(10L, "Library/Show/s01e01.mp4", "s01e01.mp4"),
+                    childStat(11L, "Library/Show/Season 1/s01e02.mkv", "s01e02.mkv")
+                )
+            )
+        )
+        assertEquals(1, out.items.size)
+        val folder = out.items[0]
+        assertEquals("Show", folder.name)
+        assertEquals(listOf(10L, 11L), folder.videoItemIds)
+    }
+
+    @Test
+    fun `directory mosaic groups deep descendants under their direct child folder`() {
+        val out = BrowseItemBuilder.build(
+            dirInput(
+                folder = "",
+                subFolders = listOf("A", "B"),
+                descendantVideoStats = listOf(
+                    childStat(1L, "A/x/a1.mp4", "a1.mp4"),
+                    childStat(2L, "A/x/a2.mp4", "a2.mp4"),
+                    childStat(3L, "B/b.mp4", "b.mp4")
+                )
+            )
+        )
+        val byName = out.items.associateBy { it.name }
+        assertEquals(listOf(1L, 2L), byName.getValue("A").videoItemIds)
+        assertEquals(listOf(3L), byName.getValue("B").videoItemIds)
+    }
+
+    @Test
+    fun `directory mosaic caps deep descendant ids at nine`() {
+        // 11 deep ids spread over two levels under one folder.
+        val deep = (1..11).map { childStat(it.toLong(), "F/Sub/v$it.mp4", "v$it.mp4") }
+        val out = BrowseItemBuilder.build(
+            dirInput(folder = "", subFolders = listOf("F"), descendantVideoStats = deep)
+        )
+        assertEquals(9, out.items[0].videoItemIds.size)
+        assertEquals((1L..9L).toList(), out.items[0].videoItemIds)
+    }
+
+    // ===================================================================================
+    // U2-4b (root cause 1): mosaic ids must be pure video files — DAO rows include IMAGE
+    // mediaType rows, which rendered as gray cells (no video thumbnail exists for them).
+    // ===================================================================================
+
+    @Test
+    fun `directory mosaic excludes image descendants`() {
+        val out = BrowseItemBuilder.build(
+            dirInput(
+                folder = "",
+                subFolders = listOf("F"),
+                descendantVideoStats = listOf(
+                    childStat(1L, "F/v.mp4", "v.mp4"),
+                    childStat(2L, "F/poster.jpg", "poster.jpg"),
+                    childStat(3L, "F/deep/pic.png", "pic.png")
+                )
+            )
+        )
+        assertEquals(listOf(1L), out.items[0].videoItemIds)
+    }
+
+    @Test
+    fun `directory mosaic for image-only folder yields no ids`() {
+        val out = BrowseItemBuilder.build(
+            dirInput(
+                folder = "",
+                subFolders = listOf("Pics"),
+                descendantVideoStats = listOf(
+                    childStat(1L, "Pics/a.jpg", "a.jpg"),
+                    childStat(2L, "Pics/b.png", "b.png")
+                )
+            )
+        )
+        // Empty ids → FolderGridItem falls back to the folder icon (no gray mosaic cells).
+        assertTrue(out.items[0].videoItemIds.isEmpty())
+    }
+
+    // ===================================================================================
+    // U2-6: per-folder descendant counts under the current filter
+    // ===================================================================================
+
+    @Test
+    fun `directory descendant count groups per folder under ALL including non-media files`() {
+        // ALL semantics = 全部文件 (incl. non-media), mirroring the builder's ALL behavior
+        // of keeping otherFiles visible. Rows are already star/unwatched-filtered upstream.
+        val out = BrowseItemBuilder.build(
+            dirInput(
+                folder = "",
+                subFolders = listOf("A", "B"),
+                descendantFilterStats = listOf(
+                    descStat(1L, "A/top.mp4", "top.mp4"),
+                    descStat(2L, "A/sub/inner.mkv", "inner.mkv"),
+                    descStat(3L, "A/sub/note.txt", "note.txt", mediaType = "OTHER"),
+                    descStat(4L, "B/only.mp4", "only.mp4")
+                )
+            )
+        )
+        val byName = out.items.associateBy { it.name }
+        assertEquals(3, byName.getValue("A").descendantCount)
+        assertEquals(1, byName.getValue("B").descendantCount)
+    }
+
+    @Test
+    fun `directory descendant count drops non-media rows under MEDIA_ONLY`() {
+        // U2c: the DAO returns path-scope candidates WITHOUT semantics (mediaType is
+        // unreliable — sync placeholders default to "VIDEO"); the builder decides by
+        // extension, identical to the list rules.
+        val out = BrowseItemBuilder.build(
+            dirInput(
+                filter = BrowserViewModel.BrowseFilter.MEDIA_ONLY,
+                subFolders = listOf("A"),
+                descendantFilterStats = listOf(
+                    descStat(1L, "A/v1.mp4", "v1.mp4"),
+                    descStat(2L, "A/v2.mkv", "v2.mkv"),
+                    descStat(3L, "A/readme.txt", "readme.txt", mediaType = "VIDEO")
+                )
+            )
+        )
+        assertEquals(2, out.items[0].descendantCount)
+    }
+
+    @Test
+    fun `directory descendant count for folders without rows is zero`() {
+        val out = BrowseItemBuilder.build(
+            dirInput(
+                folder = "",
+                subFolders = listOf("Empty", "Has"),
+                descendantFilterStats = listOf(descStat(1L, "Has/v.mp4", "v.mp4"))
+            )
+        )
+        val byName = out.items.associateBy { it.name }
+        assertEquals(0, byName.getValue("Empty").descendantCount)
+        assertEquals(1, byName.getValue("Has").descendantCount)
+    }
+
+    @Test
+    fun `directory descendant count reflects the rows passed for the active filter`() {
+        // U2c: the DAO returns path-scope candidates; the UNWATCHED decision (media extension
+        // + zero progress/duration + not completed) is applied here by the shared predicate —
+        // both rows are unwatched media, so both count.
+        val out = BrowseItemBuilder.build(
+            dirInput(
+                filter = BrowserViewModel.BrowseFilter.UNWATCHED,
+                subFolders = listOf("A"),
+                descendantFilterStats = listOf(
+                    descStat(1L, "A/fresh.mp4", "fresh.mp4"),
+                    descStat(2L, "A/pic.jpg", "pic.jpg", mediaType = "IMAGE")
+                )
+            )
+        )
+        assertEquals(2, out.items[0].descendantCount)
+    }
+
+    // ===================================================================================
+    // U2c: candidate rows + shared-decision layering — counting and the directory list
+    // decide IDENTICALLY (同进同出). Production fact: sync placeholder rows do NOT set
+    // mediaType, so non-media files (.txt etc.) carry the entity default "VIDEO".
+    // ===================================================================================
+
+    @Test
+    fun `production-default txt is retained by count and list under ALL even with star mismatch`() {
+        // 生产常态：占位行不设 mediaType → .txt 落在默认 "VIDEO"。扩展名口径下它属非媒体：
+        // ALL 下仅过筛选轴（恒真）且豁免 star ⇒ 计数保留；目录列表 otherFiles 同样保留。
+        val out = BrowseItemBuilder.build(
+            dirInput(
+                filter = BrowserViewModel.BrowseFilter.ALL,
+                starMode = BrowserViewModel.StarFilterMode.EQ,
+                starValue = 5,
+                subFolders = listOf("A"),
+                itemsInFolder = listOf(vid(1L, "notes.txt", mediaType = "VIDEO")),
+                descendantFilterStats = listOf(
+                    descStat(1L, "A/notes.txt", "notes.txt", mediaType = "VIDEO", star = 0)
+                )
+            )
+        )
+        assertEquals(1, out.items[0].descendantCount)
+        assertTrue(out.items.map { it.name }.contains("notes.txt"))
+    }
+
+    @Test
+    fun `crossClassified txt stored as VIDEO is counted under ALL regardless of star and dropped under MEDIA_ONLY`() {
+        // .txt 存 VIDEO（生产默认，非罕见误分类）：扩展名非媒体 ⇒ ALL 计入且豁免 star；
+        // MEDIA_ONLY ⇒ 不计入（列表语义逐一对照：otherFiles 仅 ALL 保留）。
+        fun count(filter: BrowserViewModel.BrowseFilter, starMode: BrowserViewModel.StarFilterMode): Int =
+            BrowseItemBuilder.build(
+                dirInput(
+                    filter = filter,
+                    starMode = starMode,
+                    starValue = 5,
+                    subFolders = listOf("A"),
+                    descendantFilterStats = listOf(
+                        descStat(1L, "A/notes.txt", "notes.txt", mediaType = "VIDEO", star = 0)
+                    )
+                )
+            ).items[0].descendantCount
+        assertEquals(1, count(BrowserViewModel.BrowseFilter.ALL, BrowserViewModel.StarFilterMode.EQ))
+        assertEquals(0, count(BrowserViewModel.BrowseFilter.MEDIA_ONLY, BrowserViewModel.StarFilterMode.OFF))
+    }
+
+    @Test
+    fun `crossClassified mp4 stored as OTHER is star gated out of count AND list under ALL`() {
+        // .mp4 存 OTHER：扩展名是媒体 ⇒ 受 star 门。ALL + star 不匹配 ⇒ 计数 0 且列表剔除
+        // （同进同出）；star OFF ⇒ 计数 1 且列表保留。
+        fun build(starMode: BrowserViewModel.StarFilterMode): BrowseItemBuilder.Output =
+            BrowseItemBuilder.build(
+                dirInput(
+                    filter = BrowserViewModel.BrowseFilter.ALL,
+                    starMode = starMode,
+                    starValue = 5,
+                    subFolders = listOf("A"),
+                    itemsInFolder = listOf(vid(1L, "movie.mp4", mediaType = "OTHER", star = 0)),
+                    descendantFilterStats = listOf(
+                        descStat(1L, "A/movie.mp4", "movie.mp4", mediaType = "OTHER", star = 0)
+                    )
+                )
+            )
+        val mismatched = build(BrowserViewModel.StarFilterMode.EQ)
+        assertEquals(0, mismatched.items[0].descendantCount)
+        assertFalse(mismatched.items.map { it.name }.contains("movie.mp4"))
+        val unstarred = build(BrowserViewModel.StarFilterMode.OFF)
+        assertEquals(1, unstarred.items[0].descendantCount)
+        assertTrue(unstarred.items.map { it.name }.contains("movie.mp4"))
+    }
+
+    @Test
+    fun `descendant count under UNWATCHED applies extension and playback rules to candidate rows`() {
+        // 候选行不再被 SQL 预过滤：未看判定完全在 builder（与列表同源）。
+        // 已看视频(100)、未看视频、零进度已完成视频、已看图片(50)、未看图片、生产默认 .txt
+        // ⇒ 仅未看媒体计入 = 2。
+        val out = BrowseItemBuilder.build(
+            dirInput(
+                filter = BrowserViewModel.BrowseFilter.UNWATCHED,
+                subFolders = listOf("A"),
+                descendantFilterStats = listOf(
+                    descStat(1L, "A/watched.mp4", "watched.mp4", playbackPosition = 100L),
+                    descStat(2L, "A/fresh.mkv", "fresh.mkv"),
+                    descStat(3L, "A/done.mp4", "done.mp4", isCompleted = true),
+                    descStat(4L, "A/seen.jpg", "seen.jpg", mediaType = "IMAGE", playbackPosition = 50L),
+                    descStat(5L, "A/new.png", "new.png", mediaType = "IMAGE"),
+                    descStat(6L, "A/notes.txt", "notes.txt", mediaType = "VIDEO")
+                )
+            )
+        )
+        assertEquals(2, out.items[0].descendantCount)
+    }
+
+    @Test
+    fun `descendant count star axis is strict for media-extension rows only`() {
+        // star GT 2：star=2 边界剔除、star=5 计入；非媒体 .txt（生产默认 VIDEO）豁免 star，
+        // ALL 下恒计入 ⇒ 计数 = high.mkv + notes.txt = 2。
+        val out = BrowseItemBuilder.build(
+            dirInput(
+                filter = BrowserViewModel.BrowseFilter.ALL,
+                starMode = BrowserViewModel.StarFilterMode.GT,
+                starValue = 2,
+                subFolders = listOf("A"),
+                descendantFilterStats = listOf(
+                    descStat(1L, "A/boundary.mp4", "boundary.mp4", star = 2),
+                    descStat(2L, "A/high.mkv", "high.mkv", star = 5),
+                    descStat(3L, "A/notes.txt", "notes.txt", mediaType = "VIDEO", star = 0)
+                )
+            )
+        )
+        assertEquals(2, out.items[0].descendantCount)
     }
 
     @Test
@@ -813,6 +1125,8 @@ class BrowseItemBuilderTest {
                 subFolders = listOf("ignored"),
                 itemsInFolder = listOf(vid(99, "ignored.mp4")),
                 childVideoStats = listOf(childStat(99L, "ignored/x", "x")),
+                descendantVideoStats = listOf(childStat(98L, "ignored/deep/x.mp4", "x.mp4")),
+                descendantFilterStats = listOf(descStat(98L, "ignored/deep/x.mp4", "x.mp4")),
                 folderHasSubDirs = mapOf("ignored" to true),
                 records = listOf(record(videoItemId = 99)),
                 baseDirSet = setOf("ignored")
@@ -838,6 +1152,8 @@ class BrowseItemBuilderTest {
                 subFolders = emptyList(),
                 itemsInFolder = emptyList(),
                 childVideoStats = emptyList(),
+                descendantVideoStats = listOf(childStat(97L, "ignored/x.mp4", "x.mp4")),
+                descendantFilterStats = listOf(descStat(97L, "ignored/x.mp4", "x.mp4")),
                 folderHasSubDirs = emptyMap(),
                 records = emptyList(),
                 baseDirSet = emptySet()

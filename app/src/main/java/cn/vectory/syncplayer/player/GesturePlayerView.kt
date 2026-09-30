@@ -202,17 +202,16 @@ class GesturePlayerView @JvmOverloads constructor(
                     seekTargetMs = seekBasePositionMs
                     seekLastX = e2.x
                     gestureListener?.onSeekStarted(seekBasePositionMs)
-                    // The VM creates/reset the new session first; only then read its precision.
-                    seekFactor = seekPrecisionProvider?.invoke() ?: 1f
+                    seekFactor = 1f
                 }
             }
 
             if (isSeeking) {
                 // One viewport spans one duration, independent of pixel density or a 10-minute boundary.
-                // Settle this event with the OLD precision, then rebase the next event.
+                // Horizontal seek always uses the full-duration scale.
                 seekTargetMs = resolveSegmentTargetMs(seekLastX, e2.x, width.coerceAtLeast(1), videoDuration, seekTargetMs, seekFactor)
                 seekLastX = e2.x
-                seekFactor = seekPrecisionProvider?.invoke() ?: 1f
+                seekFactor = 1f
                 seekOffsetMs = seekTargetMs - seekBasePositionMs
                 gestureListener?.onSeekOverlay(seekTargetMs, videoDuration)
                 return true

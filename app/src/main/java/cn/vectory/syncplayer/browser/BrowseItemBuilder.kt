@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.browser
 
+import cn.vectory.syncplayer.data.local.dao.VideoItemDao
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao.ChildVideoStat
 import cn.vectory.syncplayer.data.local.dao.VideoItemDao.FlatItemWithPlayback
 import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
@@ -38,8 +39,8 @@ object BrowseItemBuilder {
      * - In [BrowserViewModel.BrowseMode.FILE] only [flatTotalCount] and [flatItems] are read;
      *   the directory-mode fields are ignored (pass placeholders).
      * - In [BrowserViewModel.BrowseMode.DIRECTORY] only [subFolders], [itemsInFolder],
-     *   [childVideoStats], [folderHasSubDirs], [records] and [baseDirSet] are read; the file-mode
-     *   fields are ignored.
+     *   [childVideoStats], [descendantVideoStats], [descendantFilterStats], [folderHasSubDirs],
+     *   [records] and [baseDirSet] are read; the file-mode fields are ignored.
      */
     data class Input(
         val folder: String,
@@ -58,8 +59,22 @@ object BrowseItemBuilder {
         val subFolders: List<String>,
         /** Media rows whose parentPath == [folder]. */
         val itemsInFolder: List<VideoItemEntity>,
-        /** Deep descendant stats under [folder], used to compute per-subfolder counts + mosaic ids. */
+        /** Direct-level child stats under [folder], used for per-subfolder video/played/trashed counts. */
         val childVideoStats: List<ChildVideoStat>,
+        /**
+         * U2-4a: ALL-depth descendant media rows under [folder] (single DAO scan). Source for the
+         * per-folder thumbnail mosaic, so folders with no direct-level videos but deep descendants
+         * still render thumbnails. Ignored in FILE mode.
+         */
+        val descendantVideoStats: List<ChildVideoStat>,
+        /**
+         * U2c: descendant rows under [folder] — path-scope CANDIDATES only (single DAO scan;
+         * mediaType is unreliable in production, so no SQL-side filter/star gates). The
+         * per-folder "(N)" counts apply the SAME extension-based rules as the list via the
+         * shared [passesFilterAxis]/[passesStarAxis]/[isMediaByName] predicates. Ignored in
+         * FILE mode.
+         */
+        val descendantFilterStats: List<VideoItemDao.DescendantFilterStat>,
         /** Direct-child folder name → whether it has deeper subfolders (DB-derived lookup). */
         val folderHasSubDirs: Map<String, Boolean>,
         /** Playback records for media in [folder] (joined at the ViewModel layer). */
@@ -158,20 +173,32 @@ object BrowseItemBuilder {
         // (matches the original `isVideoFile(it.fileName)` filter).
         val subFolderStatsMap = childStats
             .filter { isVideoFile(it.fileName) }
-            .groupBy { stat ->
-                val afterFolder = if (folder.isEmpty()) stat.relativePath
-                else stat.relativePath.substring(folder.length + 1)
-                afterFolder.substringBefore('/')
-            }
+            .groupBy { directChildName(folder, it.relativePath) }
 
-        // Folder thumbnail mosaic: ids of media whose parent is a direct child of [folder].
-        val folderVideoIdsMap = childStats
-            .groupBy { stat ->
-                val afterFolder = if (folder.isEmpty()) stat.relativePath
-                else stat.relativePath.substring(folder.length + 1)
-                afterFolder.substringBefore('/')
-            }
+        // U2-4a/4b: folder thumbnail mosaic from ALL-depth descendants (single DAO scan), so a
+        // folder with videos only in deeper subfolders still gets a mosaic. IDs are filtered to
+        // pure video files by extension — the DAO's mediaType gate alone admits IMAGE rows (and
+        // mis-typed rows), which rendered as permanent gray cells before the fix.
+        val folderVideoIdsMap = input.descendantVideoStats
+            .filter { isVideoFile(it.fileName) }
+            .groupBy { directChildName(folder, it.relativePath) }
             .mapValues { (_, rows) -> rows.map { it.id }.take(9) }
+
+        // U2c: per-direct-child count of descendant files matching the CURRENT filter. The DAO
+        // returns path-scope candidates without semantics (mediaType is unreliable in
+        // production: sync placeholder rows default to "VIDEO" and are never corrected), so
+        // counting applies the SAME extension-based rules as the file lists below — a row
+        // shown in the list is always counted toward its ancestor folder, and vice versa.
+        // star gates media-extension rows only; non-media rows survive only under ALL and are
+        // star-exempt (otherFiles semantics).
+        val folderDescendantCountMap = input.descendantFilterStats
+            .filter { row ->
+                val media = isMediaByName(row.fileName)
+                passesFilterAxis(filterVal, media, row.playbackPosition, row.playbackDuration, row.isCompleted) &&
+                    (!media || passesStarAxis(row.star, starMode, starValue))
+            }
+            .groupBy { directChildName(folder, it.relativePath) }
+            .mapValues { (_, rows) -> rows.size }
 
         val folders = allFolderNames.map { folderName ->
             val fullPath = if (folder.isEmpty()) folderName else "$folder/$folderName"
@@ -191,6 +218,7 @@ object BrowseItemBuilder {
                 videoCount = vidCount,
                 playedCount = playedCount,
                 trashedCount = trashedCount,
+                descendantCount = folderDescendantCountMap[folderName] ?: 0,
                 videoItemIds = childIds
             )
         }
@@ -224,33 +252,17 @@ object BrowseItemBuilder {
         val videoFiles = allVideos.filter { isVideoFile(it.name) }
         val otherFiles = allVideos.filter { !isVideoFile(it.name) && !isImageFile(it.name) }
 
-        val filteredVideos = when (filterVal) {
-            BrowserViewModel.BrowseFilter.ALL -> videoFiles
-            BrowserViewModel.BrowseFilter.MEDIA_ONLY -> videoFiles
-            BrowserViewModel.BrowseFilter.UNWATCHED -> videoFiles.filter {
-                it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
-            }
+        // U2c: list filter/star rules run through the SAME shared predicates the descendant
+        // counting uses ([passesFilterAxis]/[passesStarAxis]) — one source of truth, no drift.
+        val filteredVideos = videoFiles.filter {
+            passesFilterAxis(filterVal, isMedia = true, it.playbackPosition, it.playbackDuration, it.isCompleted)
         }
-        val filteredImages = when (filterVal) {
-            BrowserViewModel.BrowseFilter.ALL -> imageFiles
-            BrowserViewModel.BrowseFilter.MEDIA_ONLY -> imageFiles
-            BrowserViewModel.BrowseFilter.UNWATCHED -> imageFiles.filter {
-                it.playbackPosition == 0L && it.playbackDuration == 0L && !it.isCompleted
-            }
+        val filteredImages = imageFiles.filter {
+            passesFilterAxis(filterVal, isMedia = true, it.playbackPosition, it.playbackDuration, it.isCompleted)
         }
 
-        val starFilteredVideos = when (starMode) {
-            BrowserViewModel.StarFilterMode.OFF -> filteredVideos
-            BrowserViewModel.StarFilterMode.EQ -> filteredVideos.filter { it.star == starValue }
-            BrowserViewModel.StarFilterMode.GT -> filteredVideos.filter { it.star > starValue }
-            BrowserViewModel.StarFilterMode.LT -> filteredVideos.filter { it.star < starValue }
-        }
-        val starFilteredImages = when (starMode) {
-            BrowserViewModel.StarFilterMode.OFF -> filteredImages
-            BrowserViewModel.StarFilterMode.EQ -> filteredImages.filter { it.star == starValue }
-            BrowserViewModel.StarFilterMode.GT -> filteredImages.filter { it.star > starValue }
-            BrowserViewModel.StarFilterMode.LT -> filteredImages.filter { it.star < starValue }
-        }
+        val starFilteredVideos = filteredVideos.filter { passesStarAxis(it.star, starMode, starValue) }
+        val starFilteredImages = filteredImages.filter { passesStarAxis(it.star, starMode, starValue) }
 
         val sortedFolders = when (mode) {
             BrowserViewModel.SortMode.FILENAME_ASC ->
@@ -323,4 +335,48 @@ object BrowseItemBuilder {
             hiddenByFilterCount = hidden
         )
     }
+
+    /**
+     * First path segment of [relativePath] relative to [folder] — i.e. the direct child folder
+     * name a descendant row belongs to. Root ([folder] == '') uses the path as-is.
+     */
+    private fun directChildName(folder: String, relativePath: String): String {
+        val afterFolder = if (folder.isEmpty()) relativePath
+        else relativePath.substring(folder.length + 1)
+        return afterFolder.substringBefore('/')
+    }
+
+    // ===================================================================================
+    // U2c: shared filter semantics — the DIRECTORY list and the descendant "(N)" counting
+    // MUST decide identically (a row shown in the list ⇔ counted toward its ancestor
+    // folder). These predicates are the single source of truth; the DAO returns
+    // path-scope candidates without semantics because mediaType is unreliable in
+    // production (sync placeholder rows default to "VIDEO" and are never corrected).
+    // ===================================================================================
+
+    /** 扩展名媒体分类：video/image 扩展名算媒体（与列表 videoFiles/imageFiles/otherFiles 分类同源）。 */
+    private fun isMediaByName(fileName: String): Boolean = isVideoFile(fileName) || isImageFile(fileName)
+
+    /** 筛选轴判定（ALL/MEDIA_ONLY/UNWATCHED）。[isMedia] 按扩展名分类给出。 */
+    private fun passesFilterAxis(
+        filter: BrowserViewModel.BrowseFilter,
+        isMedia: Boolean,
+        playbackPosition: Long,
+        playbackDuration: Long,
+        isCompleted: Boolean
+    ): Boolean = when (filter) {
+        BrowserViewModel.BrowseFilter.ALL -> true
+        BrowserViewModel.BrowseFilter.MEDIA_ONLY -> isMedia
+        BrowserViewModel.BrowseFilter.UNWATCHED ->
+            isMedia && playbackPosition == 0L && playbackDuration == 0L && !isCompleted
+    }
+
+    /** star 轴判定：仅作用于媒体扩展名行（非媒体行由调用方豁免，otherFiles 语义）。 */
+    private fun passesStarAxis(star: Int, starMode: BrowserViewModel.StarFilterMode, starValue: Int): Boolean =
+        when (starMode) {
+            BrowserViewModel.StarFilterMode.OFF -> true
+            BrowserViewModel.StarFilterMode.EQ -> star == starValue
+            BrowserViewModel.StarFilterMode.GT -> star > starValue
+            BrowserViewModel.StarFilterMode.LT -> star < starValue
+        }
 }

@@ -64,6 +64,7 @@ import cn.vectory.syncplayer.ui.components.FolderIcon
 import cn.vectory.syncplayer.ui.components.StarRatingDisplay
 import cn.vectory.syncplayer.ui.components.Thumbnail
 import cn.vectory.syncplayer.ui.components.VideoGridItem
+import cn.vectory.syncplayer.ui.components.folderNameLabel
 import cn.vectory.syncplayer.ui.components.gridVerticalScrollbar
 import cn.vectory.syncplayer.ui.components.staggeredGridVerticalScrollbar
 import cn.vectory.syncplayer.ui.components.verticalScrollbar
@@ -270,7 +271,8 @@ private fun GridContent(
                     gridDensity = when {
                         gridColumns <= 2 -> 3
                         else -> 2
-                    }
+                    },
+                    descendantCount = item.descendantCount
                 )
             } else {
                 VideoGridItem(
@@ -354,7 +356,8 @@ private fun StaggeredContent(
                     onClick = { onFolderClick(item.relativePath) },
                     onLongClick = { onFolderLongClick(item) },
                     videoItemIds = item.videoItemIds,
-                    gridDensity = when { gridColumns <= 2 -> 3 else -> 2 }
+                    gridDensity = when { gridColumns <= 2 -> 3 else -> 2 },
+                    descendantCount = item.descendantCount
                 )
             } else {
                 VideoGridItem(
@@ -611,8 +614,10 @@ private fun FolderItem(
         Spacer(Modifier.width(12.dp))
 
         Column(modifier = Modifier.weight(1f)) {
+            // U2b-1: LIST form gets the same "(N)" descendant-count suffix as GRID/STAGGERED,
+            // via the shared [folderNameLabel] builder (zero count hidden, single-line ellipsis).
             Text(
-                text = item.name,
+                text = folderNameLabel(item.name, item.descendantCount),
                 style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis

@@ -100,6 +100,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -286,24 +289,6 @@ internal fun resolveAuroraChromeVisibility(
     )
 }
 
-internal fun stabilizedFineScrubFactor(dragDownDp: Float, previous: Float): Float = when (previous) {
-    AuroraTokens.FineScrubFactorTenth -> if (dragDownDp <= AuroraTokens.FineScrubTenthReturnDp) {
-        AuroraTokens.FineScrubFactorQuarter
-    } else {
-        AuroraTokens.FineScrubFactorTenth
-    }
-    AuroraTokens.FineScrubFactorQuarter -> when {
-        dragDownDp >= AuroraTokens.FineScrubTenthEnterDp -> AuroraTokens.FineScrubFactorTenth
-        dragDownDp <= AuroraTokens.FineScrubQuarterReturnDp -> AuroraTokens.FineScrubFactorFull
-        else -> AuroraTokens.FineScrubFactorQuarter
-    }
-    else -> when {
-        dragDownDp >= AuroraTokens.FineScrubTenthEnterDp -> AuroraTokens.FineScrubFactorTenth
-        dragDownDp >= AuroraTokens.FineScrubQuarterEnterDp -> AuroraTokens.FineScrubFactorQuarter
-        else -> AuroraTokens.FineScrubFactorFull
-    }
-}
-
 internal fun resolveSegmentTargetMs(
     segmentStartX: Float,
     currentX: Float,
@@ -323,34 +308,21 @@ internal fun resolveAbsoluteTrackTargetMs(x: Float, widthPx: Int, durationMs: Lo
     (x.toDouble() / widthPx.coerceAtLeast(1) * durationMs.coerceAtLeast(0L))
         .roundToLong().coerceIn(0L, durationMs.coerceAtLeast(0L))
 
-/** Full track movement stays absolute even beyond either edge. Relative movement
- * settles the CURRENT event using its old factor before the next event rebases. */
+/** Track movement is always absolute, even beyond either edge. */
+@Suppress("UNUSED_PARAMETER") // Preserve call compatibility without fine-seek behavior.
 internal class TrackSeekResolver(
-    private val startX: Float,
+    startX: Float,
     startTargetMs: Long,
     private val widthPx: Int,
     private val durationMs: Long,
 ) {
     var targetMs: Long = startTargetMs
         private set
-    private var segmentX = startX
-    private var factor = SeekPrecision.Full.factor
-    private var relative = false
     private var moved = false
 
     fun move(x: Float, nextPrecision: SeekPrecision, relativeRequested: Boolean): Long {
-        if (relative) {
-            targetMs = resolveSegmentTargetMs(segmentX, x, widthPx, durationMs, targetMs, factor)
-        } else if (relativeRequested && !moved) {
-            // A first downward drag starts from playback, not a jump to the touched rail point.
-            targetMs = resolveSegmentTargetMs(startX, x, widthPx, durationMs, targetMs, factor)
-        } else {
-            targetMs = resolveAbsoluteTrackTargetMs(x, widthPx, durationMs)
-        }
+        targetMs = resolveAbsoluteTrackTargetMs(x, widthPx, durationMs)
         moved = true
-        segmentX = x
-        relative = relativeRequested
-        factor = nextPrecision.factor
         return targetMs
     }
 
@@ -387,12 +359,9 @@ internal fun AuroraBands() {
 
 @Composable
 internal fun AuroraTopRow(fileName: String, visible: Boolean, onExit: () -> Unit) {
-    AnimatedVisibility(
+    AuroraChromeTransition(
         visible = visible,
-        enter = fadeIn(animationSpec = AuroraTokens.AuroraFadeIn) +
-            slideInVertically(animationSpec = AuroraTokens.AuroraTopSlideIn, initialOffsetY = { -it / 3 }),
-        exit = fadeOut(animationSpec = AuroraTokens.AuroraFadeOut) +
-            slideOutVertically(animationSpec = AuroraTokens.AuroraTopSlideOut, targetOffsetY = { -it / 4 }),
+        direction = -1,
     ) {
         Row(
             modifier = Modifier
@@ -407,7 +376,7 @@ internal fun AuroraTopRow(fileName: String, visible: Boolean, onExit: () -> Unit
                 shape = CircleShape,
                 color = AuroraTokens.AuroraControlFill,
             ) {
-                IconButton(onClick = onExit, modifier = Modifier.fillMaxSize()) {
+                IconButton(onClick = onExit, modifier = Modifier.fillMaxSize().testTag("player_aurora_exit")) {
                     Icon(
                         imageVector = Icons.Filled.Close,
                         contentDescription = stringResource(R.string.player_exit),
@@ -425,6 +394,45 @@ internal fun AuroraTopRow(fileName: String, visible: Boolean, onExit: () -> Unit
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+        }
+    }
+}
+
+@Composable
+internal fun AuroraBottomChrome(visible: Boolean, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    AuroraChromeTransition(visible, modifier, direction = 1, content = content)
+}
+
+@Composable
+private fun AuroraChromeTransition(
+    visible: Boolean,
+    modifier: Modifier = Modifier,
+    direction: Int,
+    content: @Composable () -> Unit,
+) {
+    val layer = rememberGraphicsLayer()
+    var retainedHeightPx by remember { mutableStateOf(0) }
+    val density = LocalDensity.current
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = fadeIn(animationSpec = AuroraTokens.AuroraFadeIn) +
+            slideInVertically(animationSpec = AuroraTokens.AuroraTopSlideIn, initialOffsetY = { direction * (it / 3) }),
+        exit = fadeOut(animationSpec = AuroraTokens.AuroraFadeOut) +
+            slideOutVertically(animationSpec = AuroraTokens.AuroraTopSlideOut, targetOffsetY = { direction * (it / 4) }),
+    ) {
+        // Exit draws only the last chrome layer: no buttons, semantics or pointer
+        // handlers remain above the gesture view while the image fades away.
+        Box(
+            Modifier.fillMaxWidth()
+                .then(if (visible) Modifier.onSizeChanged { retainedHeightPx = it.height }
+                    else Modifier.height(with(density) { retainedHeightPx.toDp() }))
+                .drawWithContent {
+                    if (visible) layer.record { this@drawWithContent.drawContent() }
+                    drawLayer(layer)
+                },
+        ) {
+            if (visible) content()
         }
     }
 }
@@ -672,21 +680,8 @@ internal fun AuroraProgressZone(
                         val resolver = TrackSeekResolver(down.position.x, playbackAnchor, safeWidth, safeDuration)
                         session = viewModel.onProgressScrubStarted(playbackAnchor)
                         val finished = drag(down.id) { change ->
-                            val dragDownDp = ((change.position.y - down.position.y).coerceAtLeast(0f)) / density.density
-                            val isFineMode = dragDownDp >= AuroraTokens.FineScrubActivationDp
-                            val state = viewModel.seekPresentation.value
-                            val selectedFactor = state.precision.factor
-                            val nextFactor = if (state.precisionExplicit) {
-                                selectedFactor
-                            } else if (isFineMode && !state.precisionExplicit) {
-                                stabilizedFineScrubFactor(dragDownDp, selectedFactor)
-                            } else {
-                                SeekPrecision.Full.factor
-                            }
-                            val precision = SeekPrecision.entries.minBy { abs(it.factor - nextFactor) }
-                            val relative = if (state.precisionExplicit) precision != SeekPrecision.Full else isFineMode
-                            val nextTarget = resolver.move(change.position.x, precision, relative)
-                            viewModel.onProgressScrubChanged(nextTarget, precision.factor, isFineMode, session)
+                            val nextTarget = resolver.move(change.position.x, SeekPrecision.Full, relativeRequested = false)
+                            viewModel.onProgressScrubChanged(nextTarget, SeekPrecision.Full.factor, false, session)
                             change.consume()
                         }
                         if (finished) {
@@ -961,8 +956,15 @@ internal fun AuroraSeekPreviewHost(
                     viewModel?.updateSeekFrame(session, target, SeekFrame.CurrentBucket)
                     return@collectLatest
                 }
-                previewExtractor.releaseFrame(frame?.bitmap)
-                frame = null
+                // RETAIN the previous frame while the new bucket decodes:
+                // 500 ms neighbours look visually continuous, so keep showing
+                // the last good frame (same generation + session only) until
+                // the new frame arrives (replace) or this bucket finally
+                // fails (clear). Cross-media/cross-session staleness cannot
+                // leak: a retained frame from another generation/session is
+                // rejected by the render gate below and cleared here on
+                // replacement, and the `finally` clears everything on
+                // session end.
                 viewModel?.updateSeekFrame(session, target, SeekFrame.Pending)
                 val bitmap = previewExtractor.getCachedFrame(videoUri, target)
                     ?: previewExtractor.extractFrameAtPosition(videoUri, target)
@@ -972,8 +974,16 @@ internal fun AuroraSeekPreviewHost(
                     previewExtractor.releaseFrame(bitmap)
                     return@collectLatest
                 }
+                frame?.bitmap?.let(previewExtractor::releaseFrame)
                 frame = PresentedPreviewFrame(generation, session, target, bitmap)
                 viewModel?.updateSeekFrame(session, target, if (bitmap != null) SeekFrame.CurrentBucket else SeekFrame.Failed)
+                // Rolling window: after each successful frame, warm the
+                // adjacent buckets so stepping the thumb hits cache. The
+                // facade fire-and-forgets (bounded, cache-only); it stops
+                // with the session via endSession/release.
+                if (bitmap != null) {
+                    previewExtractor.prefetchNeighbors(videoUri, target)
+                }
             }
         } finally {
             previewExtractor.releaseFrame(frame?.bitmap)
@@ -991,8 +1001,14 @@ internal fun AuroraSeekPreviewHost(
         0f
     }
     if (active) {
-        // Reject an old bitmap in the SAME composition that renders a new target.
-        val bitmap = frame?.takeIf { it.matches(generation, session, targetMs) && demand }?.bitmap
+        // Render gate: identity is (media generation, session) — a frame from
+        // another media or an older session can never show. During a drag the
+        // PREVIOUS bucket's frame stays visible as a transition until the new
+        // bucket's frame lands or fails; the bucket match is enforced by the
+        // frame holder above, not here.
+        val bitmap = frame
+            ?.takeIf { demand && it.generation == generation && it.session == session }
+            ?.bitmap
         AuroraCoarsePreview(bitmap, targetMs, durationMs, seekFraction, bottomChromeHeightPx,
             compact = compact, availableHeight = availableHeight,
             precision = unified?.precision ?: SeekPrecision.entries.minBy { abs(it.factor - scrubState.factor) },
@@ -1073,6 +1089,7 @@ internal fun resolvePreviewBottomClearancePx(
 ): Float = bottomChromeHeightPx + gapPx
 
 @Composable
+@Suppress("UNUSED_PARAMETER") // The separately owned host still passes the retired precision arguments.
 private fun AuroraCoarsePreview(
     bitmap: Bitmap?,
     positionMs: Long,
@@ -1139,7 +1156,7 @@ private fun AuroraCoarsePreview(
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.verticalScroll(rememberScrollState())) {
                 if (!compact) {
-                    val imageHeight = (availableHeight - 88.dp).coerceIn(0.dp, 96.dp)
+                    val imageHeight = (availableHeight - 40.dp).coerceIn(0.dp, 96.dp)
                     Box(Modifier.fillMaxWidth().height(imageHeight).background(AuroraTokens.AuroraTrack), contentAlignment = Alignment.Center) {
                         if (bitmap != null) Image(bitmap.asImageBitmap(), null, Modifier.fillMaxSize().testTag("player_seek_preview_bitmap"), contentScale = ContentScale.Fit)
                     }
@@ -1150,7 +1167,6 @@ private fun AuroraCoarsePreview(
                     style = AuroraTokens.AuroraNumeralStyle.copy(fontSize = AuroraTokens.AuroraAuxSize),
                     modifier = Modifier.padding(vertical = AuroraTokens.AuroraPreviewGap),
                 )
-                SeekPrecisionSelector(precision, onPrecision)
                 if (compact) Row {
                     Text(stringResource(R.string.player_seek_back_1s), Modifier.weight(1f).testTag("player_seek_compact_step_back").heightIn(min = 48.dp).clickable { onStep(-1_000L) }.padding(8.dp), color = AuroraTokens.AuroraText, textAlign = TextAlign.Center)
                     Text(stringResource(R.string.player_seek_forward_1s), Modifier.weight(1f).heightIn(min = 48.dp).clickable { onStep(1_000L) }.padding(8.dp), color = AuroraTokens.AuroraText, textAlign = TextAlign.Center)
@@ -1165,27 +1181,7 @@ internal fun FineScrubMagnifier(state: ProgressScrubUiState, bitmap: Bitmap?, du
     // Compatibility entry point for existing UI tests; no second visual presentation.
     AuroraCoarsePreview(bitmap, state.targetPositionMs, durationMs,
         if (durationMs > 0L) (state.targetPositionMs.toDouble() / durationMs).toFloat() else 0f,
-        bottomChromeHeightPx = 0,
-        precision = SeekPrecision.entries.minBy { abs(it.factor - state.factor) })
-}
-
-@Composable
-private fun SeekPrecisionSelector(precision: SeekPrecision, onSelect: (SeekPrecision) -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-        SeekPrecision.entries.forEach { option ->
-            val label = stringResource(when (option) {
-                SeekPrecision.Full -> R.string.player_seek_precision_full
-                SeekPrecision.Quarter -> R.string.player_seek_precision_quarter
-                SeekPrecision.Tenth -> R.string.player_seek_precision_tenth
-            })
-            Text(label, color = if (precision == option) AuroraTokens.AuroraBlue else AuroraTokens.AuroraTextSecondary,
-                style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.weight(1f).heightIn(min = 48.dp)
-                    .testTag("player_seek_precision_${option.name.lowercase()}")
-                    .semantics { selected = precision == option; role = Role.RadioButton }
-                    .clickable { onSelect(option) }.padding(vertical = 14.dp), textAlign = TextAlign.Center)
-        }
-    }
+        bottomChromeHeightPx = 0)
 }
 
 @Composable

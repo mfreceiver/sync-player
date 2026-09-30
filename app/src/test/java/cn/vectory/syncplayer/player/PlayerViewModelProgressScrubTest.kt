@@ -89,8 +89,8 @@ class PlayerViewModelProgressScrubTest {
         assertTrue(playerStates.isEmpty())
         assertEquals(1, scrubStates.size)
         assertEquals(25_000L, scrubStates.single().targetPositionMs)
-        assertEquals(0.25f, scrubStates.single().factor)
-        assertTrue(scrubStates.single().isFineMode)
+        assertEquals(1f, scrubStates.single().factor)
+        assertFalse(scrubStates.single().isFineMode)
         playerJob.cancel()
         scrubJob.cancel()
     }
@@ -192,7 +192,7 @@ class PlayerViewModelProgressScrubTest {
     }
 
     @Test
-    fun `precision changes preserve target and reject stale frame`() = runTest {
+    fun `legacy precision requests remain full and reject stale frame`() = runTest {
         val vm = createViewModel()
         vm.updatePlaybackProgress(10_000L, 60_000L)
         val session = vm.onProgressScrubStarted(10_000L)
@@ -202,7 +202,11 @@ class PlayerViewModelProgressScrubTest {
         vm.onProgressScrubChanged(13_000L, 0.25f, true, session)
         vm.updateSeekFrame(session, 12_000L, SeekFrame.CurrentBucket)
         assertEquals(SeekFrame.Pending, vm.seekPresentation.value.frame)
-        assertEquals(SeekPrecision.Quarter, vm.seekPresentation.value.precision)
+        assertEquals(SeekPrecision.Full, vm.seekPresentation.value.precision)
+        assertFalse(vm.seekPresentation.value.precisionExplicit)
+        assertFalse(vm.seekPresentation.value.fineActivated)
+        assertEquals(1f, vm.progressScrubState.value.factor)
+        assertFalse(vm.progressScrubState.value.isFineMode)
     }
 
     @Test
