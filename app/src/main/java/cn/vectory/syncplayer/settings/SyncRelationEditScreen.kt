@@ -27,6 +27,7 @@ import cn.vectory.syncplayer.sync.SyncOperation
 import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.ui.components.FormResultText
+import cn.vectory.syncplayer.ui.components.FullScreenError
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -56,6 +57,9 @@ fun SyncRelationEditScreen(
     val testResult by viewModel.testResult.collectAsStateWithLifecycle()
     val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
     val saveResult by viewModel.saveResult.collectAsStateWithLifecycle()
+    val loadState by viewModel.loadState.collectAsStateWithLifecycle()
+    val credentialsRequired by viewModel.credentialsRequired.collectAsStateWithLifecycle()
+    val canSelectRemotePath by viewModel.canSelectRemotePath.collectAsStateWithLifecycle()
 
     var showRemoteBrowser by remember { mutableStateOf(false) }
     var sourceExpanded by remember { mutableStateOf(false) }
@@ -99,6 +103,20 @@ fun SyncRelationEditScreen(
             )
         }
     ) { padding ->
+        if (loadState == RelationEditLoadState.FAILED) {
+            FullScreenError(
+                message = stringResource(R.string.relation_edit_load_failed),
+                onRetry = { viewModel.retryLoad() },
+                modifier = Modifier.padding(padding)
+            )
+            return@Scaffold
+        }
+        if (loadState == RelationEditLoadState.LOADING) {
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            return@Scaffold
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -300,11 +318,15 @@ fun SyncRelationEditScreen(
                     Text(stringResource(R.string.relation_current_path, currentRemotePath), style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))
                     if (currentRemotePath != "/") {
-                        TextButton(onClick = { viewModel.navigateRemoteUp() }) {
+                        TextButton(enabled = !isBrowsing && !isTesting, onClick = { viewModel.navigateRemoteUp() }) {
                             Text(stringResource(R.string.relation_parent_dir))
                         }
                     }
-                    if (isBrowsing) {
+                    if (credentialsRequired) {
+                        FormResultText(stringResource(R.string.relation_credentials_recovery), isSuccess = false)
+                    } else if (error != null) {
+                        FormResultText(error!!, isSuccess = false)
+                    } else if (isBrowsing) {
                         Box(
                             modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
                             contentAlignment = Alignment.Center
@@ -315,6 +337,7 @@ fun SyncRelationEditScreen(
                         LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
                             items(remoteDirs, key = { it.name }) { dir ->
                                 TextButton(
+                                    enabled = !isBrowsing && !isTesting && canSelectRemotePath,
                                     onClick = { viewModel.navigateRemoteInto(dir.name) },
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
@@ -330,7 +353,7 @@ fun SyncRelationEditScreen(
                                     }
                                 }
                             }
-                            if (remoteDirs.isEmpty()) {
+                            if (remoteDirs.isEmpty() && canSelectRemotePath) {
                                 item {
                                     Text(
                                         stringResource(R.string.relation_no_subdirs),
@@ -340,14 +363,18 @@ fun SyncRelationEditScreen(
                                     )
                                 }
                             }
+                            if (remoteDirs.isEmpty() && !canSelectRemotePath) {
+                                item {
+                                    FormResultText(stringResource(R.string.relation_remote_browse_failed), isSuccess = false)
+                                }
+                            }
                         }
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    viewModel.selectRemotePath()
-                    showRemoteBrowser = false
+                TextButton(enabled = canSelectRemotePath && !isBrowsing && !isTesting, onClick = {
+                    if (viewModel.selectRemotePath()) showRemoteBrowser = false
                 }) {
                     Text(stringResource(R.string.relation_select_dir))
                 }
@@ -373,6 +400,7 @@ fun SyncRelationEditScreen(
 @Composable
 private fun relationTestResultText(result: RelationTestResult, sourceHost: String?): String =
     when (result) {
+        is RelationTestResult.CredentialsRequired -> stringResource(R.string.relation_credentials_recovery)
         is RelationTestResult.DirAccessible -> stringResource(R.string.relation_dir_accessible)
         is RelationTestResult.PreconditionFailed -> when (result.reason) {
             RelationTestResult.PreconditionFailed.Reason.NO_SOURCE ->

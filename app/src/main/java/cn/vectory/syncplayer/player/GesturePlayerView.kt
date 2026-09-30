@@ -7,6 +7,7 @@ import android.media.AudioManager
 import android.util.AttributeSet
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.widget.FrameLayout
 import androidx.media3.ui.PlayerView
 import kotlin.math.abs
@@ -20,7 +21,6 @@ class GesturePlayerView @JvmOverloads constructor(
 
     private companion object {
         const val VERTICAL_GESTURE_THRESHOLD = 20f
-        const val HORIZONTAL_GESTURE_THRESHOLD = 30f
         const val EDGE_BACK_WIDTH_DP = 24f
         const val EDGE_BACK_THRESHOLD_DP = 48f
     }
@@ -35,10 +35,17 @@ class GesturePlayerView @JvmOverloads constructor(
     var speedMultiplier: Float = 2.0f
     var videoDuration: Long = 0L
     var currentPosition: Long = 0L
+    var positionProvider: (() -> Long)? = null
+    var durationProvider: (() -> Long)? = null
+    var seekPrecisionProvider: (() -> Float)? = null
     private var isLongPressing = false
     private var isSeeking = false
     private var seekOffsetMs = 0L
     private var seekBasePositionMs = 0L
+    private var seekLastX = 0f
+    private var seekTargetMs = 0L
+    private var seekFactor = 1f
+    private var seekCancelledUntilDown = false
     private var touchStartX = 0f
     private var touchStartY = 0f
     private var isInLeftHalf = false
@@ -69,6 +76,8 @@ class GesturePlayerView @JvmOverloads constructor(
          * `basePositionMs + offsetMs` — never from the live player position.
          */
         fun onSeekTo(offsetMs: Long, basePositionMs: Long)
+        fun onSeekStarted(anchorMs: Long) {}
+        fun onSeekCancelled() {}
         fun onVolumeGestureStart()
         fun onVolumeChanged(totalDelta: Float)
         fun onBrightnessChanged(delta: Float)
@@ -91,6 +100,7 @@ class GesturePlayerView @JvmOverloads constructor(
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        if (changed) cancelSeekGesture()
         super.onLayout(changed, left, top, right, bottom)
 
         updateSystemGestureExclusionRects()
@@ -117,6 +127,13 @@ class GesturePlayerView @JvmOverloads constructor(
 
     fun getPlayerView(): PlayerView = playerView
 
+    fun cancelSeekGesture() {
+        if (isSeeking) gestureListener?.onSeekCancelled()
+        seekCancelledUntilDown = true
+        isSeeking = false
+        seekOffsetMs = 0L
+    }
+
     private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onLongPress(e: MotionEvent) {
             if (edgeBackStart != null) return
@@ -132,6 +149,7 @@ class GesturePlayerView @JvmOverloads constructor(
             distanceY: Float
         ): Boolean {
             if (e1 == null) return false
+            if (seekCancelledUntilDown) return false
             if (isLongPressing) return false
 
             val dxFromStart = e2.x - touchStartX
@@ -174,19 +192,27 @@ class GesturePlayerView @JvmOverloads constructor(
                     } else {
                         gestureListener?.onVolumeGestureStart()
                     }
-                } else if (absDxFromStart > absDyFromStart && absDxFromStart > HORIZONTAL_GESTURE_THRESHOLD) {
+                } else if (absDxFromStart > absDyFromStart && absDxFromStart > ViewConfiguration.get(context).scaledTouchSlop) {
+                    videoDuration = durationProvider?.invoke()?.coerceAtLeast(0L) ?: videoDuration
                     isSeeking = true
                     seekOffsetMs = 0L
-                    seekBasePositionMs = currentPosition
+                    seekBasePositionMs = positionProvider?.invoke() ?: currentPosition
+                    seekTargetMs = seekBasePositionMs
+                    seekLastX = e2.x
+                    gestureListener?.onSeekStarted(seekBasePositionMs)
+                    // The VM creates/reset the new session first; only then read its precision.
+                    seekFactor = seekPrecisionProvider?.invoke() ?: 1f
                 }
             }
 
             if (isSeeking) {
-                val sensitivity = if (videoDuration < 600_000L) 100f else 300f
-                seekOffsetMs = (dxFromStart * sensitivity).toLong()
-                val targetMs = (seekBasePositionMs + seekOffsetMs)
-                    .coerceIn(0, videoDuration.coerceAtLeast(0))
-                gestureListener?.onSeekOverlay(targetMs, videoDuration)
+                // One viewport spans one duration, independent of pixel density or a 10-minute boundary.
+                // Settle this event with the OLD precision, then rebase the next event.
+                seekTargetMs = resolveSegmentTargetMs(seekLastX, e2.x, width.coerceAtLeast(1), videoDuration, seekTargetMs, seekFactor)
+                seekLastX = e2.x
+                seekFactor = seekPrecisionProvider?.invoke() ?: 1f
+                seekOffsetMs = seekTargetMs - seekBasePositionMs
+                gestureListener?.onSeekOverlay(seekTargetMs, videoDuration)
                 return true
             }
 
@@ -244,6 +270,7 @@ class GesturePlayerView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
+                seekCancelledUntilDown = false
                 touchStartX = event.x
                 touchStartY = event.y
                 isAdjustingVertical = false
@@ -274,7 +301,11 @@ class GesturePlayerView @JvmOverloads constructor(
                     } else {
                         seekOffsetMs
                     }
-                    gestureListener?.onSeekTo(clampedOffset, seekBasePositionMs)
+                    if (event.action == MotionEvent.ACTION_UP) {
+                        gestureListener?.onSeekTo(clampedOffset, seekBasePositionMs)
+                    } else {
+                        gestureListener?.onSeekCancelled()
+                    }
                     isSeeking = false
                     seekOffsetMs = 0L
                     gestureListener?.onHideOverlay()

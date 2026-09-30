@@ -156,6 +156,9 @@ class SyncOutcomePersistenceTest {
         val sink = mockk<OutputStream>(relaxed = true)
         coEvery { mediaFileStore.openWriteSink(assignedId, any()) } returns sink
         coEvery { mediaFileStore.finalize(assignedId) } returns true
+        // A2 (rev-gpt migration): success path commits sync columns only — this scenario
+        // hits a live row, so the column UPDATE reports 1 row. Scoped to this assignedId.
+        coEvery { videoRepository.updateSyncMetadata(assignedId, any(), any(), any()) } returns 1
     }
 
     private fun stubFailedDownload(relativePath: String, assignedId: Long) {

@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
@@ -40,6 +41,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -88,14 +91,16 @@ internal fun VideoGridItem(
         Modifier.fillMaxWidth().aspectRatio(4f / 3f)
     }
 
-    Box(
+    Column(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
             )
+            .semantics { contentDescription = fileName }
     ) {
+      Box(modifier = Modifier.fillMaxWidth()) {
         if (isImage) {
             Box(
                 modifier = thumbnailModifier.background(Color(0xFF1A1A1A)),
@@ -164,7 +169,6 @@ internal fun VideoGridItem(
         }
 
         val showDuration = duration != null && duration > 0 && isVideoFile(fileName)
-        val showFileName = !showDuration
 
         if (showDuration) {
             Text(
@@ -173,25 +177,6 @@ internal fun VideoGridItem(
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 4.dp, bottom = 6.dp)
-                    .background(
-                        color = Color.Black.copy(alpha = 0.6f),
-                        shape = RoundedCornerShape(3.dp)
-                    )
-                    .padding(horizontal = 4.dp, vertical = 1.dp)
-            )
-        }
-
-        if (showFileName) {
-            Text(
-                text = truncateFileName(fileName, headChars = 5, tailChars = 5),
-                color = Color.White,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Clip,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .padding(start = 4.dp, bottom = 6.dp)
@@ -244,6 +229,15 @@ internal fun VideoGridItem(
                 }
             }
         }
+      }
+      Text(
+          text = fileName,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurface,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp)
+      )
     }
 }
 
@@ -287,13 +281,4 @@ private fun GridThumbnail(
             }
         }
     }
-}
-
-private fun truncateFileName(fileName: String, headChars: Int = 5, tailChars: Int = 5): String {
-    val nameWithoutExt = fileName.substringBeforeLast('.')
-    val ext = fileName.substringAfterLast('.', "")
-    if (nameWithoutExt.length <= headChars + tailChars + 3) return nameWithoutExt
-    val head = nameWithoutExt.take(headChars)
-    val tail = nameWithoutExt.takeLast(tailChars)
-    return if (ext.isNotEmpty()) "$head…$tail" else "$head…$tail"
 }

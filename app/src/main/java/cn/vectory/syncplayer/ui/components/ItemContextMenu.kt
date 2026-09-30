@@ -215,7 +215,13 @@ fun FileContextMenuDialog(
                             dispatchFileDeleteAction(delId, onDeleted, actions)
                             onDismiss()
                         }) {
-                            Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error)
+                            Text(
+                                stringResource(
+                                    if (onDeleted != null) R.string.context_delete_with_undo
+                                    else R.string.common_delete
+                                ),
+                                color = MaterialTheme.colorScheme.error
+                            )
                         }
                     }
                     TextButton(onClick = onDismiss) {

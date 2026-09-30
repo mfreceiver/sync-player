@@ -118,10 +118,24 @@ class PlayerViewModelGestureSeekTest {
         vm.updatePlaybackProgress(0L, 60_000L)
 
         // A committed target beyond the media duration must clamp to the end.
+        vm.onGestureSeekStarted(0L)
         vm.onGestureSeekFinished(90_000L)
         advanceUntilIdle()
 
         assertEquals(60_000L, vm.currentPosition.value)
         assertEquals(60_000L, vm.uiState.value.seekTarget)
+    }
+
+    @Test
+    fun `cancelled gesture does not commit and next input wins`() = runTest {
+        val vm = createVm()
+        loadVideo42(vm)
+        vm.updatePlaybackProgress(10_000L, 60_000L)
+        val gesture = vm.onGestureSeekStarted(10_000L)
+        vm.onGestureSeekChanged(20_000L, 60_000L, gesture)
+        vm.onGestureSeekCancelled(gesture)
+        assertEquals(null, vm.onGestureSeekFinished(20_000L, gesture))
+        assertEquals(10_000L, vm.currentPosition.value)
+        assertEquals(-1L, vm.uiState.value.seekTarget)
     }
 }

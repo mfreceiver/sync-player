@@ -1,6 +1,5 @@
 package cn.vectory.syncplayer.ui.components
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -19,16 +18,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import cn.vectory.syncplayer.provider.MediaUris
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -44,13 +39,14 @@ internal fun FolderGridItem(
     videoItemIds: List<Long> = emptyList(),
     gridDensity: Int = 2
 ) {
-    Box(
+    Column(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
             )
+            .semantics { contentDescription = folderName }
     ) {
         Box(
             modifier = Modifier
@@ -72,39 +68,13 @@ internal fun FolderGridItem(
             }
         }
 
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(4f / 3f)
-                .align(Alignment.TopStart)
-        ) {
-            val gradientHeight = size.height * 0.35f
-            drawRect(
-                brush = Brush.verticalGradient(
-                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)),
-                    startY = size.height - gradientHeight,
-                    endY = size.height
-                ),
-                topLeft = Offset(0f, size.height - gradientHeight),
-                size = Size(size.width, gradientHeight)
-            )
-        }
-
         Text(
             text = folderName,
-            color = Color.White,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Medium,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 4.dp, bottom = 4.dp)
-                .background(
-                    color = Color.Black.copy(alpha = 0.6f),
-                    shape = RoundedCornerShape(3.dp)
-                )
-                .padding(horizontal = 4.dp, vertical = 1.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp)
         )
     }
 }

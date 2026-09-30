@@ -7,12 +7,15 @@ import cn.vectory.syncplayer.data.model.SyncActionType
 import cn.vectory.syncplayer.data.model.SyncProgress
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncPhase
+import cn.vectory.syncplayer.data.local.entity.SyncLogEntity
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.debug.DebugLogger
+import cn.vectory.syncplayer.storage.MediaFinalProbe
+import cn.vectory.syncplayer.storage.MediaProbeState
 import cn.vectory.syncplayer.storage.StoragePaths
 import kotlinx.coroutines.CancellationException
 
@@ -43,7 +46,15 @@ internal class SyncRemoteScanner(
     private val remoteFileClientFactory: RemoteFileClientFactory,
     private val storagePaths: StoragePaths,
     private val context: Context,
-    private val progressPublisher: SyncProgressPublisher
+    private val progressPublisher: SyncProgressPublisher,
+    /**
+     * A8 起为**必填**依赖契约（不留 null 遗留形态）：任何已有本地行在进入
+     * SKIP/下载覆盖决策前必须先过本地 final 完整性探测。生产接线为
+     * `MediaFinalProbe { id, size -> mediaFileStoreLazy.get().probeFinalized(id, size) }`。
+     * 契约：IO_ERROR ⇒ 整次扫描 fail-closed（清空两计划 + FAILED，绝不伪装
+     * NoChanges，也绝不带着未知本地状态进入覆盖写）。
+     */
+    private val localFinalProbe: MediaFinalProbe
 ) {
 
     private fun getClient(protocol: SyncProtocol): RemoteFileClient = remoteFileClientFactory.create(protocol)
@@ -72,6 +83,30 @@ internal class SyncRemoteScanner(
         // P1-1: 扫描异常时记录归一化后的根因，随 DryRunResult 带回调用方。
         var scanError: SyncException? = null
 
+        // P2 扫描日志批量缓冲：行内容/顺序与原逐条 insert 完全一致（同一
+        // SyncLogEntity 形状，timestamp 在入缓冲时打点），仅传输批量化。
+        // 满 [LOG_BATCH_SIZE] 或阶段边界（CONFIRMING 前）经 insertAll 落库；
+        // 取消/异常路径未 flush 的缓冲行直接丢弃（不做 NonCancellable 大
+        // flush、不重试不确定提交——审计行靠 SCAN FAILED 汇总行兜底）。
+        val logBuffer = ArrayDeque<SyncLogEntity>()
+
+        suspend fun flushScanLogs() {
+            if (logBuffer.isEmpty()) return
+            val batch = logBuffer.toList()
+            logBuffer.clear()
+            syncLogRepository.logAll(batch)
+        }
+
+        fun bufferScanLog(action: String, relativePath: String, status: String, fileSize: Long?) {
+            logBuffer.addLast(SyncLogEntity(
+                dryRun = true,
+                action = action,
+                relativePath = relativePath,
+                fileSize = fileSize,
+                status = status
+            ))
+        }
+
         try {
             client.connect(source, relation.remotePath)
             val remoteFiles = client.listFiles(relation.remotePath)
@@ -87,12 +122,26 @@ internal class SyncRemoteScanner(
                 val actionType = if (local != null) {
                     // E6: SMB/SFTP 协议报告的 mtime 精度为秒，本地以毫秒存储，
                     // 直接比较会出现亚秒差异导致的「假不等」→ 反复重下。统一截断到秒比较。
+                    // A7: null DB mtime ≠ 有效 epoch0——不再 `?: 0L` 造假相等，陈旧行必须修复。
                     val remoteMtimeSec = remoteFile.lastModified / 1000L
-                    val localMtimeSec = (local.remoteModifiedTime ?: 0L) / 1000L
-                    if (remoteFile.size != local.fileSize || remoteMtimeSec != localMtimeSec) {
-                        SyncActionType.DOWNLOAD
-                    } else {
-                        null
+                    val localMtimeSec = local.remoteModifiedTime?.let { it / 1000L }
+                    val metadataDiffers =
+                        remoteFile.size != local.fileSize || remoteMtimeSec != localMtimeSec
+
+                    // A8 覆盖范围（安全契约）：已有本地行无论将被 SKIP 还是被下载覆盖，
+                    // 都必须先探测本地 final——IO_ERROR 一律 fail-closed 抛入 E8 catch
+                    // （清空两计划 + FAILED），绝不绕过未知本地状态。CE 由探针挂起调用
+                    // 自然传播（CE-first catch）。探测为本地单次属性读取（预览只读，
+                    // 不写 DB/文件，不新增远端交互）。
+                    when (localFinalProbe.probe(local.id, local.fileSize)) {
+                        MediaProbeState.IO_ERROR -> throw SyncException(
+                            SyncErrorCode.STORAGE_ERROR,
+                            SyncOperation.SCAN
+                        )
+                        // final 确实完好：仅当元数据也相等才 SKIP，否则覆盖重下。
+                        MediaProbeState.VALID -> if (metadataDiffers) SyncActionType.DOWNLOAD else null
+                        // final 缺失/截断：DOWNLOAD 本身就是同 id 修复候选。
+                        MediaProbeState.MISSING, MediaProbeState.SIZE_MISMATCH -> SyncActionType.DOWNLOAD
                     }
                 } else {
                     SyncActionType.DOWNLOAD
@@ -107,22 +156,22 @@ internal class SyncRemoteScanner(
                             remoteModifiedTime = remoteFile.lastModified
                         )
                         toDownload.add(action)
-                        syncLogRepository.log(
+                        bufferScanLog(
                             action = "DOWNLOAD",
                             relativePath = localRelPath,
                             status = "PENDING",
-                            dryRun = true,
                             fileSize = remoteFile.size
                         )
+                        if (logBuffer.size >= LOG_BATCH_SIZE) flushScanLogs()
                     }
                     null -> {
-                        syncLogRepository.log(
+                        bufferScanLog(
                             action = "SKIP",
                             relativePath = localRelPath,
                             status = "SKIPPED",
-                            dryRun = true,
                             fileSize = remoteFile.size
                         )
+                        if (logBuffer.size >= LOG_BATCH_SIZE) flushScanLogs()
                     }
                     else -> {}
                 }
@@ -139,15 +188,20 @@ internal class SyncRemoteScanner(
                         fileSize = localVideo.fileSize
                     )
                     toDelete.add(action)
-                    syncLogRepository.log(
+                    bufferScanLog(
                         action = "DELETE_LOCAL",
                         relativePath = localVideo.relativePath,
                         status = "PENDING",
-                        dryRun = true,
                         fileSize = localVideo.fileSize
                     )
+                    if (logBuffer.size >= LOG_BATCH_SIZE) flushScanLogs()
                 }
             }
+
+            // P2: CONFIRMING 边界——先把缓冲整批落库成功，再进入确认相位。
+            // flush 抛异常 ⇒ 走下方既有 E8 失败路径（清空两计划 + SCAN FAILED
+            // 汇总行），审计语义不弱化：已 flush 批次保留，未 flush 行丢弃。
+            flushScanLogs()
 
             progressPublisher.value = SyncProgress(phase = SyncPhase.CONFIRMING, relationId = relationId, relationName = relation.name, localBasePath = relation.localBasePath)
         } catch (e: CancellationException) {
@@ -233,5 +287,7 @@ internal class SyncRemoteScanner(
 
     companion object {
         private const val TAG = "SyncEngine"
+        /** P2: 扫描日志批量落库阈值（满 128 行或 CONFIRMING 边界 flush）。 */
+        private const val LOG_BATCH_SIZE = 128
     }
 }

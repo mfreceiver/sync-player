@@ -114,6 +114,17 @@ class SyncDownloadPipelineRetryTest {
                 e.id
             }
         }
+        // A1: fake 列提交——行存在改 3 列返回 1；行消失返回 0（不复活）
+        coEvery { videoRepository.updateSyncMetadata(any(), any(), any(), any()) } coAnswers {
+            val id = firstArg<Long>()
+            val row = rows[id] ?: return@coAnswers 0
+            rows[id] = row.copy(
+                fileSize = secondArg(),
+                remoteModifiedTime = thirdArg(),
+                dateSynced = arg(3),
+            )
+            1
+        }
         coEvery { videoRepository.deleteById(any()) } coAnswers { rows.remove(firstArg<Long>()) }
     }
 

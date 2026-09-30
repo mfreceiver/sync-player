@@ -21,6 +21,16 @@ class SyncLogRepository @Inject constructor(
         ))
     }
 
+    /**
+     * P2 扫描日志批量通道：透传既有 [SyncLogDao.insertAll]。
+     * 行内容/字段与 [log] 完全一致（同一 [SyncLogEntity] 形状），
+     * 仅传输批量化；列表顺序即落库顺序。空列表 no-op。
+     */
+    suspend fun logAll(entries: List<SyncLogEntity>) {
+        if (entries.isEmpty()) return
+        syncLogDao.insertAll(entries)
+    }
+
     fun getRecentFlow(limit: Int = 200): Flow<List<SyncLogEntity>> = syncLogDao.getRecentFlow(limit)
 
     suspend fun clearOldLogs() {

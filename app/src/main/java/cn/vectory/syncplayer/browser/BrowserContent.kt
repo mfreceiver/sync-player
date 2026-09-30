@@ -15,27 +15,37 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridState
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.FilterAltOff
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.vectory.syncplayer.R
@@ -69,10 +80,31 @@ import cn.vectory.syncplayer.ui.util.isVideoFile
  * Callbacks are kept as stable primitives / lambdas so this composable can be
  * skipped when only the scroll state changes.
  *
- * Note (preserved behavior): the staggered branch intentionally does NOT save
- * scroll-on-click (matching the legacy implementation) and renders no filter
- * footer / empty state. Only the previously-missing scrollbar was added.
+ * The staggered branch intentionally does not save scroll-on-click (matching
+ * the legacy implementation). Non-content states are shared by all three layouts.
  */
+internal enum class BrowserContentState { Loading, Content, EmptyLibrary, EmptyFolder, FilteredEmpty, Error }
+
+internal fun resolveBrowserContentState(
+    folder: String,
+    browseItemsFolder: String,
+    itemCount: Int,
+    firstRunState: FirstRunState?,
+    filterActive: Boolean,
+    hiddenByFilterCount: Int,
+    hasError: Boolean,
+): BrowserContentState = when {
+    itemCount > 0 && browseItemsFolder == folder -> BrowserContentState.Content
+    hasError -> BrowserContentState.Error
+    firstRunState == null || browseItemsFolder != folder -> BrowserContentState.Loading
+    filterActive && hiddenByFilterCount > 0 -> BrowserContentState.FilteredEmpty
+    folder.isEmpty() && firstRunState != FirstRunState.READY -> BrowserContentState.EmptyLibrary
+    // The root's initial folder stamp is already "". READY proves media exists but
+    // does not prove the debounced browse query has delivered its first result.
+    folder.isEmpty() && hiddenByFilterCount == 0 -> BrowserContentState.Loading
+    else -> BrowserContentState.EmptyFolder
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun BrowserContent(
@@ -92,10 +124,51 @@ internal fun BrowserContent(
     onFileLongClick: (BrowseItem) -> Unit,
     onSaveScrollPosition: (String, Int, Int) -> Unit,
     onGetScrollPosition: (String) -> Pair<Int, Int>?,
+    contentState: BrowserContentState = BrowserContentState.Content,
+    onClearFilters: () -> Unit = {},
+    onRetry: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    // Keep the scroll tracker alive while a status replaces the list. Otherwise
+    // navigating into an empty/loading folder disposes it before it can save the
+    // previous folder's offset.
+    val gridState = rememberLazyGridState()
+    val staggeredState = rememberLazyStaggeredGridState()
+    val listState = rememberLazyListState()
+    key(viewMode) {
+        when (viewMode) {
+            BrowserViewModel.ViewMode.GRID -> BrowseScrollTracker(
+                folder, browseItemsFolder, browseItems.isNotEmpty(),
+                { gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset },
+                onSaveScrollPosition, onGetScrollPosition,
+                { i, o -> gridState.scrollToItem(i, o) }
+            )
+            BrowserViewModel.ViewMode.STAGGERED_GRID -> BrowseScrollTracker(
+                folder, browseItemsFolder, browseItems.isNotEmpty(),
+                { staggeredState.firstVisibleItemIndex to staggeredState.firstVisibleItemScrollOffset },
+                onSaveScrollPosition, onGetScrollPosition,
+                { i, o -> staggeredState.scrollToItem(i, o) }
+            )
+            BrowserViewModel.ViewMode.LIST -> BrowseScrollTracker(
+                folder, browseItemsFolder, browseItems.isNotEmpty(),
+                { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset },
+                onSaveScrollPosition, onGetScrollPosition,
+                { i, o -> listState.scrollToItem(i, o) }
+            )
+        }
+    }
+    if (contentState != BrowserContentState.Content) {
+        Box(
+            modifier = modifier.fillMaxSize().padding(contentPadding).padding(horizontal = 24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            BrowserStatusContent(contentState, onClearFilters, onRetry)
+        }
+        return
+    }
     when (viewMode) {
         BrowserViewModel.ViewMode.GRID -> GridContent(
+            gridState = gridState,
             browseItems = browseItems,
             folder = folder,
             browseItemsFolder = browseItemsFolder,
@@ -114,6 +187,7 @@ internal fun BrowserContent(
             modifier = modifier
         )
         BrowserViewModel.ViewMode.STAGGERED_GRID -> StaggeredContent(
+            staggeredState = staggeredState,
             browseItems = browseItems,
             folder = folder,
             browseItemsFolder = browseItemsFolder,
@@ -130,6 +204,7 @@ internal fun BrowserContent(
             modifier = modifier
         )
         BrowserViewModel.ViewMode.LIST -> ListContent(
+            listState = listState,
             browseItems = browseItems,
             folder = folder,
             browseItemsFolder = browseItemsFolder,
@@ -152,6 +227,7 @@ internal fun BrowserContent(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GridContent(
+    gridState: LazyGridState,
     browseItems: List<BrowseItem>,
     folder: String,
     browseItemsFolder: String,
@@ -169,16 +245,6 @@ private fun GridContent(
     onGetScrollPosition: (String) -> Pair<Int, Int>?,
     modifier: Modifier
 ) {
-    val gridState = rememberLazyGridState()
-    BrowseScrollTracker(
-        folder = folder,
-        browseItemsFolder = browseItemsFolder,
-        browseItemsNotEmpty = browseItems.isNotEmpty(),
-        currentScrollPosition = { gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset },
-        saveScrollPosition = onSaveScrollPosition,
-        getSavedScrollPosition = onGetScrollPosition,
-        scrollToPosition = { i, o -> gridState.scrollToItem(i, o) }
-    )
     LazyVerticalGrid(
         columns = GridCells.Fixed(gridColumns),
         state = gridState,
@@ -244,24 +310,13 @@ private fun GridContent(
             }
         }
 
-        if (browseItems.isEmpty()) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(200.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    EmptyBrowseContent(filter, hiddenByFilterCount)
-                }
-            }
-        }
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun StaggeredContent(
+    staggeredState: LazyStaggeredGridState,
     browseItems: List<BrowseItem>,
     folder: String,
     browseItemsFolder: String,
@@ -277,16 +332,6 @@ private fun StaggeredContent(
     onGetScrollPosition: (String) -> Pair<Int, Int>?,
     modifier: Modifier
 ) {
-    val staggeredState = rememberLazyStaggeredGridState()
-    BrowseScrollTracker(
-        folder = folder,
-        browseItemsFolder = browseItemsFolder,
-        browseItemsNotEmpty = browseItems.isNotEmpty(),
-        currentScrollPosition = { staggeredState.firstVisibleItemIndex to staggeredState.firstVisibleItemScrollOffset },
-        saveScrollPosition = onSaveScrollPosition,
-        getSavedScrollPosition = onGetScrollPosition,
-        scrollToPosition = { i, o -> staggeredState.scrollToItem(i, o) }
-    )
     LazyVerticalStaggeredGrid(
         columns = StaggeredGridCells.Fixed(gridColumns),
         state = staggeredState,
@@ -343,6 +388,7 @@ private fun StaggeredContent(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ListContent(
+    listState: LazyListState,
     browseItems: List<BrowseItem>,
     folder: String,
     browseItemsFolder: String,
@@ -359,16 +405,6 @@ private fun ListContent(
     onGetScrollPosition: (String) -> Pair<Int, Int>?,
     modifier: Modifier
 ) {
-    val listState = rememberLazyListState()
-    BrowseScrollTracker(
-        folder = folder,
-        browseItemsFolder = browseItemsFolder,
-        browseItemsNotEmpty = browseItems.isNotEmpty(),
-        currentScrollPosition = { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset },
-        saveScrollPosition = onSaveScrollPosition,
-        getSavedScrollPosition = onGetScrollPosition,
-        scrollToPosition = { i, o -> listState.scrollToItem(i, o) }
-    )
     LazyColumn(
         state = listState,
         modifier = modifier
@@ -413,34 +449,55 @@ private fun ListContent(
             }
         }
 
-        if (browseItems.isEmpty()) {
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fillParentMaxHeight()
-                        .padding(vertical = 64.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    EmptyBrowseContent(filter, hiddenByFilterCount)
-                }
-            }
-        }
     }
 }
 
 /**
  * Tracks scroll position across folder navigations.
  *
- * Saves the previous folder's scroll offset when [folder] changes, and restores
- * the saved scroll offset once the matching [browseItemsFolder] is loaded.
- *
- * Uses [rememberSaveable] (instead of plain `remember`) for [previousFolder] so
- * the previous-folder pointer survives configuration changes / process death
- * and is never stale relative to a recomposed `folder` parameter. The restore
- * effect is keyed on both [browseItemsFolder] and [folder] so the captured
- * `folder` is always current.
+ * Only saves coordinates after the list has displayed content for that folder.
+ * Loading and empty states leave the LazyState at its previous coordinates;
+ * those coordinates must never overwrite the new folder's saved position.
  */
+internal class BrowseScrollOwnership(
+    var previousFolder: String,
+    var coordinateOwner: String? = null,
+) {
+    fun enterFolder(
+        folder: String,
+        currentPosition: () -> Pair<Int, Int>,
+        save: (String, Int, Int) -> Unit,
+    ) {
+        if (previousFolder == folder) return
+        if (coordinateOwner == previousFolder) {
+            val (index, offset) = currentPosition()
+            save(previousFolder, index, offset)
+        }
+        previousFolder = folder
+        coordinateOwner = null
+    }
+
+    suspend fun showContent(
+        folder: String,
+        browseItemsFolder: String,
+        hasItems: Boolean,
+        savedPosition: (String) -> Pair<Int, Int>?,
+        scrollToPosition: suspend (Int, Int) -> Unit,
+    ) {
+        if (browseItemsFolder != folder || !hasItems || coordinateOwner == folder) return
+        // Even with no saved position, the LazyState can still contain the previous
+        // folder's offset. Reset before claiming ownership of this folder.
+        val (index, offset) = savedPosition(folder) ?: (0 to 0)
+        scrollToPosition(index, offset)
+        coordinateOwner = folder
+    }
+}
+
+private val browseScrollOwnershipSaver = listSaver<BrowseScrollOwnership, String>(
+    save = { listOf(it.previousFolder, it.coordinateOwner ?: "\u0000") },
+    restore = { BrowseScrollOwnership(it[0], it[1].takeUnless { value -> value == "\u0000" }) },
+)
+
 @Composable
 private fun BrowseScrollTracker(
     folder: String,
@@ -451,46 +508,67 @@ private fun BrowseScrollTracker(
     getSavedScrollPosition: (String) -> Pair<Int, Int>?,
     scrollToPosition: suspend (Int, Int) -> Unit
 ) {
-    var previousFolder by rememberSaveable { mutableStateOf(folder) }
-    LaunchedEffect(folder) {
-        if (previousFolder != folder) {
-            val (index, offset) = currentScrollPosition()
-            saveScrollPosition(previousFolder, index, offset)
-        }
-        previousFolder = folder
+    val ownership = rememberSaveable(saver = browseScrollOwnershipSaver) {
+        BrowseScrollOwnership(folder)
     }
-    LaunchedEffect(browseItemsFolder, folder) {
-        if (browseItemsFolder == folder && browseItemsNotEmpty) {
-            val saved = getSavedScrollPosition(folder)
-            if (saved != null) {
-                scrollToPosition(saved.first, saved.second)
-            }
-        }
+    LaunchedEffect(folder, browseItemsFolder, browseItemsNotEmpty) {
+        ownership.enterFolder(folder, currentScrollPosition, saveScrollPosition)
+        ownership.showContent(
+            folder, browseItemsFolder, browseItemsNotEmpty,
+            getSavedScrollPosition, scrollToPosition
+        )
     }
 }
 
 @Composable
-private fun EmptyBrowseContent(
-    filter: BrowserViewModel.BrowseFilter,
-    hiddenByFilterCount: Int
+private fun BrowserStatusContent(
+    state: BrowserContentState,
+    onClearFilters: () -> Unit,
+    onRetry: () -> Unit,
 ) {
+    if (state == BrowserContentState.Loading) {
+        CircularProgressIndicator(modifier = Modifier.size(40.dp))
+        return
+    }
+    val (icon, title, description) = when (state) {
+        BrowserContentState.EmptyLibrary -> Triple(Icons.Default.VideoLibrary, R.string.browser_empty_library, R.string.browser_empty_library_detail)
+        BrowserContentState.EmptyFolder -> Triple(Icons.Default.FolderOpen, R.string.browser_empty_folder, R.string.browser_empty_folder_detail)
+        BrowserContentState.FilteredEmpty -> Triple(Icons.Default.FilterAltOff, R.string.browser_empty_filtered, R.string.browser_empty_filtered_detail)
+        BrowserContentState.Error -> Triple(Icons.Default.ErrorOutline, R.string.browser_empty_error, R.string.browser_empty_error_detail)
+        else -> return
+    }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxWidth()
     ) {
         Icon(
-            imageVector = Icons.Default.FolderOpen,
+            imageVector = icon,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
             modifier = Modifier.size(48.dp)
         )
         Text(
-            text = if (filter != BrowserViewModel.BrowseFilter.ALL && hiddenByFilterCount > 0)
-                stringResource(R.string.browser_hidden_by_filter, hiddenByFilterCount)
-            else stringResource(R.string.browser_empty_dir),
+            text = stringResource(title),
             style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
         )
+        Text(
+            text = stringResource(description),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        when (state) {
+            BrowserContentState.FilteredEmpty -> TextButton(onClick = onClearFilters) {
+                Text(stringResource(R.string.browser_empty_clear_filters))
+            }
+            BrowserContentState.Error -> TextButton(onClick = onRetry) {
+                Text(stringResource(R.string.browser_empty_retry))
+            }
+            else -> Unit
+        }
     }
 }
 

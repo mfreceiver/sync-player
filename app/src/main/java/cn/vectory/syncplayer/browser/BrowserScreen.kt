@@ -91,6 +91,13 @@ fun BrowserScreen(
     val currentRelationId by viewModel.currentRelationId.collectAsStateWithLifecycle()
     val viewMode by viewModel.viewMode.collectAsStateWithLifecycle()
     val gridColumns by viewModel.gridColumns.collectAsStateWithLifecycle()
+    var emptyContentError by remember(folder) { mutableStateOf(false) }
+    LaunchedEffect(error?.seq, folder) {
+        if (error != null && browseItems.isEmpty()) emptyContentError = true
+    }
+    LaunchedEffect(browseItemsFolder, browseItems.isNotEmpty()) {
+        if (browseItems.isNotEmpty() && browseItemsFolder == folder) emptyContentError = false
+    }
 
     var showContextMenu by remember { mutableStateOf<BrowseItem?>(null) }
     var showSortMenu by remember { mutableStateOf(false) }
@@ -213,8 +220,17 @@ fun BrowserScreen(
         // and not previously dismissed. Replaces the plain EmptyBrowseContent so a new
         // user can discover the source → relation → sync path without hunting in settings.
         val resolvedState = firstRunState
-        val showOnboardingCard = folder.isEmpty()
-                && browseItems.isEmpty()
+        val contentState = resolveBrowserContentState(
+            folder = folder,
+            browseItemsFolder = browseItemsFolder,
+            itemCount = browseItems.size,
+            firstRunState = resolvedState,
+            filterActive = filter != BrowserViewModel.BrowseFilter.ALL ||
+                starFilterMode != BrowserViewModel.StarFilterMode.OFF,
+            hiddenByFilterCount = hiddenByFilterCount,
+            hasError = emptyContentError || (error != null && browseItems.isEmpty()),
+        )
+        val showOnboardingCard = contentState == BrowserContentState.EmptyLibrary
                 && libraryEmpty
                 && !onboardingDismissed
                 && resolvedState != null
@@ -247,7 +263,21 @@ fun BrowserScreen(
                 onCannotPlay = onCannotPlay,
                 onFileLongClick = { showContextMenu = it },
                 onSaveScrollPosition = viewModel::saveScrollPosition,
-                onGetScrollPosition = viewModel::getScrollPosition
+                onGetScrollPosition = viewModel::getScrollPosition,
+                contentState = contentState,
+                onClearFilters = {
+                    viewModel.setFilter(BrowserViewModel.BrowseFilter.ALL)
+                    viewModel.setStarFilterMode(BrowserViewModel.StarFilterMode.OFF)
+                    viewModel.setStarFilterValue(0)
+                },
+                onRetry = {
+                    emptyContentError = false
+                    // F1: refreshCurrentFolder clears the error AND forces a real re-query
+                    // even when the folder value is unchanged (the previous clearError +
+                    // setFolder(same path) retry was a no-op for the current folder).
+                    // Keep this a UI-only retry; no destructive action repeats.
+                    viewModel.refreshCurrentFolder()
+                }
             )
         }
     }

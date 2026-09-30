@@ -22,6 +22,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -111,6 +112,8 @@ class SyncDownloadPipelineTest {
         coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns null
         coEvery { store.openWriteSink(any(), any()) } returns mockk<OutputStream>(relaxed = true)
         coEvery { store.finalize(any()) } returns true
+        // A1: 成功路径列提交默认命中（行存在）；用例覆写此 stub 注入 CE/异常/0 行形态。
+        coEvery { videoRepository.updateSyncMetadata(any(), any(), any(), any()) } returns 1
         val client = mockk<RemoteFileClient>(relaxed = true)
         every { clientFactory.create(SyncProtocol.SMB) } returns client
         coEvery { client.downloadTo(any(), any(), any()) } returns true
@@ -214,12 +217,12 @@ class SyncDownloadPipelineTest {
         coVerify(exactly = 1) { store.verifyReadable(42L, 1000L) }
     }
 
-    /** 计划 #5（红）：元数据读取窗口（getById）取消——外层 CE 补偿经 cleanUpAttempt(COMMITTED) 回滚已提交产物。 */
+    /** 计划 #5（A1 迁移）：同步元数据列提交（updateSyncMetadata）自身取消——外层 CE 补偿经 cleanUpAttempt(COMMITTED) 回滚已提交产物。 */
     @Test
-    fun `cancellation during metadata read after finalize triggers outer rollback`() = runTest {
+    fun `cancellation during sync metadata commit triggers outer rollback`() = runTest {
         stubDownloadRun()
         coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns existingRow(42L)
-        coEvery { videoRepository.getById(42L) } throws CancellationException("bug007-meta-read-cancel")
+        coEvery { videoRepository.updateSyncMetadata(any(), any(), any(), any()) } throws CancellationException("bug007-meta-commit-cancel")
 
         val thrown = catchExecute()
 
@@ -229,35 +232,78 @@ class SyncDownloadPipelineTest {
         coVerify(exactly = 0) { store.cancel(any()) }
     }
 
-    /** 计划 #6（红）：最终元数据 upsert 本身取消（成功侧清零点之前）——同样走外层补偿回滚。 */
+    /** 计划 #6（A1 迁移）：列提交抛普通异常——同一 NonCancellable 入口回滚 + 失败计费。 */
     @Test
-    fun `cancellation during final metadata upsert itself triggers outer rollback`() = runTest {
+    fun `sync metadata commit throwing normal exception rolls back and counts failure`() = runTest {
         stubDownloadRun()
         coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns existingRow(42L)
-        coEvery { videoRepository.getById(42L) } returns finalizedEntity(42L)
-        coEvery { videoRepository.upsert(any()) } throws CancellationException("bug007-meta-upsert-cancel")
+        coEvery { videoRepository.updateSyncMetadata(any(), any(), any(), any()) } throws IOException("meta-commit-boom")
 
-        val thrown = catchExecute()
+        assertFalse(sut.executeSyncLocked(1L, listOf(dlAction()), emptyList()))
 
-        assertTrue(thrown is CancellationException)
         coVerify(exactly = 1) { store.delete(42L) }
         coVerify(exactly = 1) { videoRepository.deleteById(42L) }
+        coVerify(exactly = 0) { store.cancel(any()) }
+        assertEquals(1, publisher.value.failedFiles)
+        assertEquals(0, publisher.value.completedFiles)
+        coVerify(exactly = 0) { syncLogRepository.log("DOWNLOAD", any(), "SUCCESS", any(), any(), any()) }
     }
 
-    /** 计划 #7（回归锁）：元数据 upsert 成功后取消——清零点已过，干净中断不回滚（与 #6 对照）。 */
+    /**
+     * 计划 #7（回归锁，A1 迁移）：列提交成功后取消——清零点已过，干净中断不回滚（与 #6 对照）。
+     * 本用例**必须进入 video 提取器恰一次**（与两个 AttemptGate 屏障用例的零进入要求相反）。
+     *
+     * A6（rev-gpt 根因修正，替代 A5 归因）：旧失败非调度缺陷——旧用例
+     * getByRelativePathAndRelationId 返回 existingRow()（**仅 stub id 的严格 mock**），
+     * 而 extractMetadata 分发先读 entity.fileName（isImageFile）⇒ MockK「missing
+     * answer」异常被提取段 best-effort catch(Exception) 吞掉 ⇒ CE stub 从未触发 ⇒
+     * 正常 SUCCESS 返回 ⇒ thrown==null。修复：换真实完整实体 finalizedEntity(42L)
+     * （fileName=f.mp4），不以 relaxed 掩盖字段缺失。
+     */
     @Test
-    fun `cancellation after metadata upsert success performs no rollback`() = runTest {
+    fun `cancellation after sync metadata commit success performs no rollback`() = runTest {
         stubDownloadRun()
-        coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns existingRow(42L)
-        coEvery { videoRepository.getById(42L) } returns finalizedEntity(42L)
-        coEvery { videoMetadataExtractor.extractAndSave(any()) } throws CancellationException("bug007-extract-cancel")
+        coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns finalizedEntity(42L)
+        val expectedCe = CancellationException("bug007-extract-cancel")
+        coEvery { videoMetadataExtractor.extractAndSave(any()) } throws expectedCe
+        // lane 注入 testScheduler 仅为取消链确定性；不构成根因断言（见上）
+        val localSut = SyncDownloadPipeline(
+            syncRelationRepository, syncSourceRepository, videoRepository, playbackRepository,
+            syncLogRepository, videoMetadataExtractor, imageMetadataExtractor,
+            clientFactory, storagePaths, storeLazy, context, publisher, deleteExecutor,
+            StandardTestDispatcher(testScheduler)
+        )
+        var returnedNormally: Boolean? = null
+        val thrown = try {
+            returnedNormally = localSut.executeSyncLocked(1L, listOf(dlAction()), emptyList())
+            null
+        } catch (t: Throwable) {
+            t
+        }
+        // 强诊断（XML 只给断言行）：实际类型/null、正常返回值、phase——避免盲点
+        println(
+            "A6 diag: thrown=${thrown?.javaClass?.name}(${thrown?.message}) " +
+                "returnedNormally=$returnedNormally phase=${publisher.value.phase}"
+        )
 
-        val thrown = catchExecute()
-
-        assertTrue(thrown is CancellationException)
+        assertTrue(
+            "expected CancellationException but see A6 diag above",
+            thrown is CancellationException
+        )
+        // 列提交恰一次（42 行）后才发生提取取消
+        coVerify(exactly = 1) { videoRepository.updateSyncMetadata(42L, any(), any(), any()) }
+        // 进入 video 提取器恰一次（id=42、f.mp4 分支）；image 分支零调用
+        coVerify(exactly = 1) { videoMetadataExtractor.extractAndSave(match { it.id == 42L }) }
+        coVerify(exactly = 0) { imageMetadataExtractor.extractAndSave(any()) }
+        // 不回滚：已提交产物保留
         coVerify(exactly = 0) { store.delete(any()) }
         coVerify(exactly = 0) { videoRepository.deleteById(any()) }
         assertEquals(SyncPhase.CANCELLED, publisher.value.phase)
+        // 干净中断：不计普通失败、无 FAILED 下载日志
+        assertEquals(0, publisher.value.failedFiles)
+        coVerify(exactly = 0) {
+            syncLogRepository.log("DOWNLOAD", any(), "FAILED", any(), any(), any())
+        }
     }
 
     /** 计划 #8（红）：finalize 边界 CE + 探测 ABSENT ⇒ 按「已提交」处理（existing 变体）。 */
@@ -415,6 +461,17 @@ class SyncDownloadPipelineTest {
                 e.id
             }
         }
+        // A1: fake 列提交——行存在改 3 列返回 1；行消失返回 0（不复活）
+        coEvery { videoRepository.updateSyncMetadata(any(), any(), any(), any()) } coAnswers {
+            val id = firstArg<Long>()
+            val row = rows[id] ?: return@coAnswers 0
+            rows[id] = row.copy(
+                fileSize = secondArg(),
+                remoteModifiedTime = thirdArg(),
+                dateSynced = arg(3),
+            )
+            1
+        }
         coEvery { videoRepository.deleteById(any()) } coAnswers { rows.remove(firstArg<Long>()) }
 
         // fake store：有序调用记录
@@ -469,53 +526,31 @@ class SyncDownloadPipelineTest {
     }
 
     // ------------------------------------------------------------------
-    // 复审阻断（BUG-007 后续·普通异常/null）：finalize 成功后的元数据窗口——
-    // getById 抛普通异常 / upsert 抛普通异常 / getById 返回 null。
-    // 三者都须经同一 NonCancellable 清理入口（COMMITTED 回滚）收束并计失败，
-    // 绝不留「密文已更新 + 旧行仍旧 IV」或「孤儿密文 + SUCCESS 计数」。
+    // 复审阻断（BUG-007 后续·A1 迁移）：finalize 成功后的元数据提交窗口——
+    // 列提交（updateSyncMetadata）抛普通异常 / 返回 0 行 / 成功路径列参数。
+    // 异常与 0 行都须经同一 NonCancellable 清理入口（COMMITTED 回滚）收束并计失败，
+    // 绝不留「密文已更新 + 旧行仍旧」或「孤儿密文 + SUCCESS 计数」。
     // ------------------------------------------------------------------
 
     @Test
-    fun `metadata read throwing normal exception after finalize rolls back and counts failure`() = runTest {
+    fun `success path commits sync metadata via column update only`() = runTest {
         stubDownloadRun()
         coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns existingRow(42L)
-        coEvery { videoRepository.getById(42L) } throws IOException("meta-read-boom")
 
-        assertFalse(sut.executeSyncLocked(1L, listOf(dlAction()), emptyList()))
+        assertTrue(sut.executeSyncLocked(1L, listOf(dlAction()), emptyList()))
 
-        // 密文/索引一致性：COMMITTED 回滚——密文删除 + 行删除（下次 dryRun 重下）
-        coVerify(exactly = 1) { store.delete(42L) }
-        coVerify(exactly = 1) { videoRepository.deleteById(42L) }
-        coVerify(exactly = 0) { store.cancel(any()) }
-        assertEquals(1, publisher.value.failedFiles)
-        assertEquals(0, publisher.value.completedFiles)
-        coVerify(exactly = 1) { syncLogRepository.log("DOWNLOAD", any(), "FAILED", any(), any(), any()) }
-        coVerify(exactly = 0) { syncLogRepository.log("DOWNLOAD", any(), "SUCCESS", any(), any(), any()) }
+        // dlAction: fileSize=1000, remoteModifiedTime=0 —— 参数原样进入列提交
+        coVerify(exactly = 1) { videoRepository.updateSyncMetadata(42L, 1000L, 0L, any()) }
+        // existing 行场景绝无整行 upsert（不覆盖 star/audioGainDb、不复活）
+        coVerify(exactly = 0) { videoRepository.upsert(any()) }
+        coVerify(exactly = 1) { syncLogRepository.log("DOWNLOAD", any(), "SUCCESS", any(), any(), any()) }
     }
 
     @Test
-    fun `final metadata upsert throwing normal exception rolls back and counts failure`() = runTest {
+    fun `zero-row sync metadata commit is explicit failure with cleanup not success`() = runTest {
         stubDownloadRun()
         coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns existingRow(42L)
-        coEvery { videoRepository.getById(42L) } returns finalizedEntity(42L)
-        coEvery { videoRepository.upsert(any()) } throws IOException("meta-upsert-boom")
-
-        assertFalse(sut.executeSyncLocked(1L, listOf(dlAction()), emptyList()))
-
-        // 旧行不再以旧 IV 存活（行已删——索引/密文一致），密文回滚
-        coVerify(exactly = 1) { store.delete(42L) }
-        coVerify(exactly = 1) { videoRepository.deleteById(42L) }
-        coVerify(exactly = 0) { store.cancel(any()) }
-        assertEquals(1, publisher.value.failedFiles)
-        assertEquals(0, publisher.value.completedFiles)
-        coVerify(exactly = 0) { syncLogRepository.log("DOWNLOAD", any(), "SUCCESS", any(), any(), any()) }
-    }
-
-    @Test
-    fun `null metadata row after finalize is explicit failure with cleanup not success`() = runTest {
-        stubDownloadRun()
-        coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns existingRow(42L)
-        coEvery { videoRepository.getById(42L) } returns null
+        coEvery { videoRepository.updateSyncMetadata(any(), any(), any(), any()) } returns 0
 
         // 行在 finalize 提交后消失：孤儿密文 → 明确失败 + 清理，绝不 SUCCESS 计数
         assertFalse(sut.executeSyncLocked(1L, listOf(dlAction()), emptyList()))

@@ -16,11 +16,15 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.concurrent.CancellationException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @RunWith(AndroidJUnit4::class)
 class AuroraSeekLifecycleTest {
@@ -35,10 +39,22 @@ class AuroraSeekLifecycleTest {
             dispatcher = Dispatchers.Unconfined,
         )
 
-        extractor.beginSession(Uri.parse("content://cn.vectory.syncplayer.test/preview"))
-        extractor.endSession()
+        try {
+            extractor.beginSession(Uri.parse("content://cn.vectory.syncplayer.test/preview"))
+            extractor.endSession()
 
-        assertEquals(1, retriever.releaseCount)
+            // Close is asynchronous — the retriever must still be released exactly once.
+            assertTrue(
+                "session retriever must be released after endSession",
+                retriever.released.await(10, TimeUnit.SECONDS),
+            )
+            assertEquals(1, retriever.releaseCount)
+        } finally {
+            // Return the shared lane capacity and wait for full drain so this
+            // test cannot pollute the shared pool for later tests.
+            extractor.release()
+            withTimeout(10_000) { extractor.shutdownResult.await() }
+        }
     }
 
     @Test
@@ -54,12 +70,25 @@ class AuroraSeekLifecycleTest {
         )
 
         try {
-            extractor.extractFrameAtPosition("content://cn.vectory.syncplayer.test/preview", 1_000L)
-            fail("CancellationException must propagate")
-        } catch (_: CancellationException) {
-            // Expected: cancellation is never converted to a missing preview.
+            try {
+                extractor.extractFrameAtPosition("content://cn.vectory.syncplayer.test/preview", 1_000L)
+                fail("CancellationException must propagate")
+            } catch (_: CancellationException) {
+                // Expected: cancellation is never converted to a missing preview.
+            }
+            assertTrue(
+                "ephemeral retriever must be released after failed open",
+                retriever.released.await(10, TimeUnit.SECONDS),
+            )
+            assertEquals(1, retriever.releaseCount)
+        } finally {
+            // Whole-body cleanup: the finally covers the entire test body so
+            // ANY failure above still returns the shared lane capacity and
+            // waits for full drain — this test cannot pollute the shared
+            // pool for later tests.
+            extractor.release()
+            withTimeout(10_000) { extractor.shutdownResult.await() }
         }
-        assertEquals(1, retriever.releaseCount)
     }
 
     @Test
@@ -93,11 +122,15 @@ private class RecordingRetriever(
     var releaseCount: Int = 0,
     private val onSetDataSource: () -> Unit = {},
 ) : MediaMetadataRetriever() {
+    /** Fires after release() — lets tests await async close deterministically. */
+    val released = CountDownLatch(1)
+
     override fun setDataSource(context: Context, uri: Uri) = onSetDataSource()
 
     override fun getFrameAtTime(microseconds: Long, option: Int): android.graphics.Bitmap? = null
 
     override fun release() {
         releaseCount++
+        released.countDown()
     }
 }

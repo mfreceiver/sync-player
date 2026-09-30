@@ -80,7 +80,7 @@ class SyncRelationEditViewModelRemotePathTest {
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         // init loadStorageInfo() must not suspend on the real repo (harness rule ①).
-        coEvery { syncSourceRepository.getAllWithCredentials() } returns listOf(smbSource, sftpSource)
+        coEvery { syncSourceRepository.getAll() } returns listOf(smbSource, sftpSource)
         every { storagePaths.normalizeAndValidateRelativePath(any()) } returns "base"
         coEvery { syncRelationRepository.checkBasePathConflict(any(), any()) } returns emptyList()
         // Distinct constant per resource so tests assert WHICH resource was fetched.

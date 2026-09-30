@@ -12,6 +12,7 @@ import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.storage.MediaFileStore
+import cn.vectory.syncplayer.storage.MediaFinalProbe
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -85,9 +86,13 @@ class SyncEngine @Inject constructor(
     )
 
     // 远端扫描域已迁入 SyncRemoteScanner（Task 6）；E8 守卫随迁，进度走共享 progressPublisher。
+    // A8 接线：本地 final 完整性探针（必填契约）——延迟取 store，与下载管线同一单内部卷。
     private val remoteScanner = SyncRemoteScanner(
         syncRelationRepository, syncSourceRepository, videoRepository, playbackRepository,
-        syncLogRepository, remoteFileClientFactory, storagePaths, context, progressPublisher
+        syncLogRepository, remoteFileClientFactory, storagePaths, context, progressPublisher,
+        localFinalProbe = MediaFinalProbe { id, size ->
+            mediaFileStoreLazy.get().probeFinalized(id, size)
+        }
     )
 
     // 下载主管线已迁入 SyncDownloadPipeline（Task 7）；复用同一 deleteExecutor 与 progressPublisher。

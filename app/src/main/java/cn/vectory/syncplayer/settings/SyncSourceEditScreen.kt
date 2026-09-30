@@ -14,6 +14,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import cn.vectory.syncplayer.ui.theme.LocalExtendedColors
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -28,6 +30,7 @@ import cn.vectory.syncplayer.sync.SyncException
 import cn.vectory.syncplayer.sync.SyncOperation
 import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.ui.components.FormResultText
+import cn.vectory.syncplayer.ui.components.FullScreenError
 
 
 
@@ -49,6 +52,11 @@ fun SyncSourceEditScreen(
     val testResult by viewModel.testResult.collectAsStateWithLifecycle()
     val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
     val saveResult by viewModel.saveResult.collectAsStateWithLifecycle()
+    val loadState by viewModel.loadState.collectAsStateWithLifecycle()
+    val emptyPasswordConfirmed by viewModel.emptyPasswordConfirmed.collectAsStateWithLifecycle()
+    val recovery = loadState == SourceEditLoadState.CREDENTIAL_RECOVERY
+    val credentialInputReady = !recovery || password.isNotEmpty() || emptyPasswordConfirmed
+    val emptyPasswordLabel = stringResource(R.string.source_confirm_empty_password)
 
     val sourceId = viewModel.sourceId
     var passwordVisible by remember { mutableStateOf(false) }
@@ -75,6 +83,20 @@ fun SyncSourceEditScreen(
             )
         }
     ) { padding ->
+        if (loadState == SourceEditLoadState.FAILED) {
+            FullScreenError(
+                message = stringResource(R.string.source_edit_load_failed),
+                onRetry = { viewModel.retryLoad() },
+                modifier = Modifier.padding(padding)
+            )
+            return@Scaffold
+        }
+        if (loadState == SourceEditLoadState.LOADING) {
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            return@Scaffold
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -85,8 +107,13 @@ fun SyncSourceEditScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    if (recovery) {
+                        FormResultText(stringResource(R.string.source_credentials_recovery), isSuccess = false)
+                        Spacer(Modifier.height(12.dp))
+                    }
                     OutlinedTextField(
                         value = name,
+                        enabled = !isSaving,
                         onValueChange = { viewModel.setName(it) },
                         label = { Text(stringResource(R.string.source_name)) },
                         placeholder = { Text(stringResource(R.string.source_name_placeholder), color = extendedColors.placeholderGrey) },
@@ -98,11 +125,13 @@ fun SyncSourceEditScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = protocol == SyncProtocol.SMB,
+                            enabled = !isSaving,
                             onClick = { viewModel.setProtocol(SyncProtocol.SMB) },
                             label = { Text("SMB") }
                         )
                         FilterChip(
                             selected = protocol == SyncProtocol.SFTP,
+                            enabled = !isSaving,
                             onClick = { viewModel.setProtocol(SyncProtocol.SFTP) },
                             label = { Text("SFTP") }
                         )
@@ -111,6 +140,7 @@ fun SyncSourceEditScreen(
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = host,
+                        enabled = !isSaving,
                         onValueChange = { viewModel.setHost(it) },
                         label = { Text(stringResource(R.string.source_server)) },
                         placeholder = { Text(stringResource(R.string.source_server_placeholder), color = extendedColors.placeholderGrey) },
@@ -121,6 +151,7 @@ fun SyncSourceEditScreen(
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = port,
+                        enabled = !isSaving,
                         onValueChange = { viewModel.setPort(it) },
                         label = { Text(stringResource(R.string.source_port)) },
                         modifier = Modifier.fillMaxWidth(),
@@ -131,6 +162,7 @@ fun SyncSourceEditScreen(
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = username,
+                        enabled = !isSaving,
                         onValueChange = { viewModel.setUsername(it) },
                         label = { Text(stringResource(R.string.source_username)) },
                         modifier = Modifier.fillMaxWidth(),
@@ -140,12 +172,13 @@ fun SyncSourceEditScreen(
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = password,
+                        enabled = !isSaving,
                         onValueChange = { viewModel.setPassword(it) },
                         label = { Text(stringResource(R.string.source_password)) },
                         singleLine = true,
                         visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                         trailingIcon = {
-                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                            IconButton(enabled = !isSaving, onClick = { passwordVisible = !passwordVisible }) {
                                 Icon(
                                     imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                                     contentDescription = if (passwordVisible) stringResource(R.string.source_hide_password) else stringResource(R.string.source_show_password)
@@ -156,20 +189,33 @@ fun SyncSourceEditScreen(
                     )
 
                     Spacer(Modifier.height(12.dp))
+                    if (recovery && password.isEmpty()) {
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = emptyPasswordConfirmed,
+                                enabled = !isSaving,
+                                onCheckedChange = viewModel::confirmEmptyPassword,
+                                modifier = Modifier.semantics {
+                                    contentDescription = emptyPasswordLabel
+                                }
+                            )
+                            Text(stringResource(R.string.source_confirm_empty_password))
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         OutlinedButton(
                             onClick = viewModel::testConnection,
-                            enabled = !isTesting && host.isNotBlank(),
+                            enabled = !isTesting && !isSaving && credentialInputReady && host.isNotBlank(),
                             modifier = Modifier.weight(1f)
                         ) {
                             Text(if (isTesting) stringResource(R.string.source_testing) else stringResource(R.string.source_test_connection))
                         }
                         Button(
                             onClick = viewModel::save,
-                            enabled = !isSaving && name.isNotBlank() && host.isNotBlank(),
+                            enabled = !isSaving && credentialInputReady && name.isNotBlank() && host.isNotBlank(),
                             modifier = Modifier.weight(1f)
                         ) {
                             Text(if (isSaving) stringResource(R.string.common_saving) else stringResource(R.string.common_save))
@@ -180,6 +226,7 @@ fun SyncSourceEditScreen(
                         Spacer(Modifier.height(8.dp))
                         OutlinedButton(
                             onClick = { showDeleteDialog = true },
+                            enabled = !isSaving,
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -222,7 +269,7 @@ fun SyncSourceEditScreen(
             title = { Text(stringResource(R.string.source_delete_confirm_title)) },
             text = { Text(stringResource(R.string.source_delete_confirm_text)) },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(enabled = !isSaving, onClick = {
                     viewModel.deleteSource()
                     showDeleteDialog = false
                 }) {

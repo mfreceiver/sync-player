@@ -5,8 +5,10 @@ import androidx.lifecycle.SavedStateHandle
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncSource
+import cn.vectory.syncplayer.data.model.RemoteFile
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
+import cn.vectory.syncplayer.data.repository.SyncSourceCredentialUncertainException
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.RemoteFileClient
@@ -20,6 +22,10 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.unmockkAll
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -31,6 +37,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.net.SocketTimeoutException
@@ -65,14 +72,30 @@ class SyncRelationEditViewModelResultTest {
 
     private lateinit var vm: SyncRelationEditViewModel
 
+    private fun createVm() = SyncRelationEditViewModel(
+        syncRelationRepository, syncSourceRepository, remoteFileClientFactory,
+        storagePaths, context, UnconfinedTestDispatcher(), SavedStateHandle()
+    )
+
+    private suspend fun <T> CompletableDeferred<T>.lateResult(): T = suspendCoroutine { continuation ->
+        invokeOnCompletion { failure ->
+            if (failure == null) continuation.resume(getCompleted())
+            else continuation.resumeWithException(failure)
+        }
+    }
+
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        coEvery { syncSourceRepository.getAllWithCredentials() } returns listOf(
+        coEvery { syncSourceRepository.getAll() } returns listOf(
             SyncSource(
                 id = 1L, name = "smb", protocol = SyncProtocol.SMB,
-                host = "h", port = 1, username = "u", password = "p"
+                host = "h", port = 1, username = "u", password = ""
             )
+        )
+        coEvery { syncSourceRepository.getById(1L) } returns SyncSource(
+            id = 1L, name = "smb", protocol = SyncProtocol.SMB,
+            host = "h", port = 1, username = "u", password = "fresh"
         )
         every { storagePaths.normalizeAndValidateRelativePath(any()) } returns "base"
         coEvery { syncRelationRepository.checkBasePathConflict(any(), any()) } returns emptyList()
@@ -98,6 +121,194 @@ class SyncRelationEditViewModelResultTest {
     }
 
     // --- testRemotePath typed emissions ---
+
+    @Test
+    fun `list needs no credentials and probes read only selected source`() = runTest {
+        coVerify(exactly = 0) { syncSourceRepository.getAllWithCredentials() }
+        coVerify(exactly = 0) { syncSourceRepository.getById(any()) }
+        assertEquals(1, vm.availableSources.value.size)
+        vm.selectSource(1L)
+        vm.setRemotePath("media")
+        vm.testRemotePath()
+        coVerify(exactly = 1) { syncSourceRepository.getById(1L) }
+        coVerify(exactly = 1) { client.connect(match { it.password == "fresh" }, "media") }
+    }
+
+    @Test
+    fun `uncertain selected credentials show recovery and never connect`() = runTest {
+        coEvery { syncSourceRepository.getById(1L) } throws SyncSourceCredentialUncertainException(1L)
+        vm.selectSource(1L)
+        vm.setRemotePath("media")
+        vm.testRemotePath()
+        assertEquals(RelationTestResult.CredentialsRequired, vm.testResult.value)
+        vm.browseRemote()
+        assertEquals(true, vm.credentialsRequired.value)
+        assertFalse(vm.isBrowsing.value)
+        coVerify(exactly = 0) { client.connect(any(), any()) }
+    }
+
+    @Test
+    fun `metadata load failure can retry and cancellation stays cancellation`() = runTest {
+        coEvery { syncSourceRepository.getAll() } throws IllegalStateException("private detail")
+        vm = createVm()
+        assertEquals(RelationEditLoadState.FAILED, vm.loadState.value)
+        coEvery { syncSourceRepository.getAll() } throws CancellationException()
+        val job = vm.retryLoad()
+        job.join()
+        assertTrue(job.isCancelled)
+        assertEquals(RelationEditLoadState.LOADING, vm.loadState.value)
+        coEvery { syncSourceRepository.getAll() } returns emptyList()
+        vm.retryLoad().join()
+        assertEquals(RelationEditLoadState.READY, vm.loadState.value)
+        coVerify(exactly = 0) { syncSourceRepository.getAllWithCredentials() }
+    }
+
+    @Test
+    fun `old metadata success or failure cannot replace newer load and edit`() = runTest {
+        for (failOld in listOf(false, true)) {
+            val old = CompletableDeferred<List<SyncSource>>()
+            val fresh = CompletableDeferred<List<SyncSource>>()
+            var calls = 0
+            coEvery { syncSourceRepository.getAll() } coAnswers {
+                if (calls++ == 0) old.lateResult() else fresh.await()
+            }
+            try {
+                val edit = createVm()
+                edit.retryLoad()
+                fresh.complete(listOf(SyncSource(2L, "fresh", SyncProtocol.SFTP, "h", 22, "u", "")))
+                edit.setName("user edit")
+                if (failOld) old.completeExceptionally(IllegalStateException()) else old.complete(emptyList())
+                advanceUntilIdle()
+                assertEquals(RelationEditLoadState.READY, edit.loadState.value)
+                assertEquals("user edit", edit.name.value)
+                assertEquals(listOf(2L), edit.availableSources.value.map { it.id })
+                edit.retryLoad().join()
+                assertEquals(2, calls)
+            } finally {
+                old.complete(emptyList())
+                fresh.complete(emptyList())
+                advanceUntilIdle()
+            }
+        }
+    }
+
+    @Test
+    fun `switching source isolates late browse success uncertain and ordinary failure`() = runTest {
+        val b = SyncSource(2L, "b", SyncProtocol.SFTP, "b", 22, "u", "fresh-b")
+        val a = SyncSource(1L, "a", SyncProtocol.SMB, "a", 445, "u", "")
+        coEvery { syncSourceRepository.getAll() } returns listOf(a, b.copy(password = ""))
+        coEvery { syncSourceRepository.getById(2L) } returns b
+        for (outcome in 0..2) {
+            val old = CompletableDeferred<List<RemoteFile>>()
+            val fresh = CompletableDeferred<List<RemoteFile>>()
+            coEvery { client.listDirectories("/a/b") } coAnswers { old.lateResult() }
+            coEvery { client.listDirectories("/b") } coAnswers { fresh.await() }
+            try {
+            val edit = createVm()
+            edit.selectSource(1L)
+            edit.setRemotePath("/a/b")
+            edit.browseRemote()
+            edit.navigateRemoteUp()
+            assertEquals("/a/b", edit.currentRemoteBrowsePath.value)
+            assertFalse(edit.canSelectRemotePath.value)
+            edit.selectSource(2L)
+            edit.setRemotePath("/b")
+            edit.browseRemote()
+            if (outcome != 0) {
+                fresh.complete(emptyList())
+                assertTrue(edit.canSelectRemotePath.value)
+            }
+            when (outcome) {
+                0 -> old.complete(listOf(RemoteFile("/a/b/stale", "stale", true)))
+                1 -> old.completeExceptionally(SyncSourceCredentialUncertainException(1L))
+                else -> old.completeExceptionally(IllegalStateException())
+            }
+            advanceUntilIdle()
+            if (outcome == 0) {
+                assertTrue(edit.isBrowsing.value)
+                assertFalse(edit.canSelectRemotePath.value)
+                fresh.complete(emptyList())
+                advanceUntilIdle()
+            }
+            assertEquals("/b", edit.currentRemoteBrowsePath.value)
+            assertFalse(edit.credentialsRequired.value)
+            assertNull(edit.browseError.value)
+            assertFalse(edit.isBrowsing.value)
+            assertTrue(edit.remoteDirectories.value.isEmpty())
+            assertTrue(edit.canSelectRemotePath.value)
+            assertTrue(edit.selectRemotePath())
+            coVerify { client.connect(match { it.id == 1L }, "/a/b") }
+            coVerify(exactly = 0) { client.listDirectories("/a") }
+            } finally {
+                old.complete(emptyList())
+                fresh.complete(emptyList())
+                advanceUntilIdle()
+            }
+        }
+    }
+
+    @Test
+    fun `directory selection requires current successful listing including empty directory`() = runTest {
+        coEvery { client.listDirectories(any()) } returns emptyList()
+        vm.selectSource(1L)
+        vm.setRemotePath("/valid")
+        vm.browseRemote()
+        assertTrue(vm.canSelectRemotePath.value)
+        assertTrue(vm.selectRemotePath())
+        for (failure in listOf(IllegalStateException(), SyncSourceCredentialUncertainException(1L))) {
+            coEvery { syncSourceRepository.getById(1L) } throws failure
+            vm.browseRemote()
+            assertFalse(vm.canSelectRemotePath.value)
+            assertFalse(vm.selectRemotePath())
+        }
+        vm.selectSource(99L)
+        vm.browseRemote()
+        assertFalse(vm.canSelectRemotePath.value)
+        assertFalse(vm.selectRemotePath())
+    }
+
+    @Test
+    fun `late probe cannot replace newer source result or its busy flag`() = runTest {
+        val old = CompletableDeferred<List<RemoteFile>>()
+        val fresh = CompletableDeferred<List<RemoteFile>>()
+        coEvery { client.listDirectories("/old") } coAnswers { old.lateResult() }
+        coEvery { client.listDirectories("/new") } coAnswers { fresh.await() }
+        try {
+        vm.selectSource(1L)
+        vm.setRemotePath("/old")
+        vm.testRemotePath()
+        vm.setRemotePath("/new")
+        vm.testRemotePath()
+        old.completeExceptionally(SyncSourceCredentialUncertainException(1L))
+        advanceUntilIdle()
+        assertTrue(vm.isTesting.value)
+        assertNull(vm.testResult.value)
+        fresh.complete(emptyList())
+        advanceUntilIdle()
+        assertEquals(RelationTestResult.DirAccessible, vm.testResult.value)
+        assertFalse(vm.credentialsRequired.value)
+        assertFalse(vm.isTesting.value)
+        } finally {
+            old.complete(emptyList())
+            fresh.complete(emptyList())
+            advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `credential read ordinary failure is structured and cancellation produces no result`() = runTest {
+        vm.selectSource(1L)
+        vm.setRemotePath("media")
+        coEvery { syncSourceRepository.getById(1L) } throws IllegalStateException("private detail")
+        vm.testRemotePath()
+        assertEquals(RelationTestResult.AccessFailed(SyncErrorCode.UNKNOWN), vm.testResult.value)
+        coEvery { syncSourceRepository.getById(1L) } throws CancellationException()
+        vm.testRemotePath()
+        assertNull(vm.testResult.value)
+        assertFalse(vm.isTesting.value)
+        assertFalse(vm.credentialsRequired.value)
+        coVerify(exactly = 0) { client.connect(any(), any()) }
+    }
 
     @Test
     fun `test without selected source emits PreconditionFailed NO_SOURCE and never connects`() = runTest {

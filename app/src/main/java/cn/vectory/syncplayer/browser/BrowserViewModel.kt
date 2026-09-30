@@ -223,6 +223,21 @@ class BrowserViewModel @Inject constructor(
         _error.value = null
     }
 
+    /**
+     * Error-state retry entry: clears the transient error AND forces a real re-query of
+     * the current folder.
+     *
+     * Unlike [setFolder] — a StateFlow assignment that is a no-op when the folder value
+     * is unchanged, which made an error retry on the same folder silently do nothing —
+     * this bumps the coordinator's refresh trigger, re-running every query tied to the
+     * current folder through the existing loading pipeline (same state machine, same
+     * guards as any content rebuild). UI wiring only; no destructive action repeats.
+     */
+    fun refreshCurrentFolder() {
+        clearError()
+        coordinator.refresh()
+    }
+
     fun getFolderVideoIds(includeItem: BrowseItem? = null, includeId: Long = -1L): List<Long> {
         return browseItems.value
             .filter { !it.isDirectory && isVideoFile(it.name) }

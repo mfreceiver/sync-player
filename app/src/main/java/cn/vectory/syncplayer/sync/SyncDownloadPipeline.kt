@@ -29,7 +29,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
@@ -223,8 +225,14 @@ internal class SyncDownloadPipeline(
                                         // BUG-007：声明提升至 per-action try 之外——attempt 级清理与
                                         // 外层 CE 补偿 catch（见下）均需读取 existing/assignedId；
                                         // uncleanFinalizedId 是「已提交未登记」登记簿，两处清零点：
-                                        // ① 元数据 upsert 成功后（成功侧提交点）② cleanUpAttempt 末尾（清理侧）。
+                                        // ① 元数据列提交成功后（A1-01：与 UPDATE 同处 NonCancellable
+                                        //    临界段内——suspend 提交的返回恢复点可抛 CE，清零必须在保护区内）
+                                        // ② cleanUpAttempt 末尾（清理侧）。
+                                        // A1-02: placeholderEntity 记录占位行实体（existing==null 时），
+                                        // 在每次 upsert 分配后以真实主键刷新——供元数据提取阶段取 id/fileName，
+                                        // 列提交后不再整行回读/回写。
                                         var existing: VideoItemEntity? = null
+                                        var placeholderEntity: VideoItemEntity? = null
                                         var assignedId = 0L
                                         var uncleanFinalizedId = 0L
 
@@ -351,7 +359,7 @@ internal class SyncDownloadPipeline(
                                                 // 进程崩溃后 dryRun 必然重下（size/mtime 不匹配远端）。
                                                 // existing 复用 id，下载前不改动 DB，失败时旧记录与旧文件保持一致（避免数据损坏）。
                                                 if (assignedId == 0L) {
-                                                    assignedId = videoRepository.upsert(VideoItemEntity(
+                                                    val placeholder = VideoItemEntity(
                                                         syncRelationId = relationId,
                                                         relativePath = localRelPath,
                                                         parentPath = extractParentPath(localRelPath),
@@ -359,13 +367,24 @@ internal class SyncDownloadPipeline(
                                                         fileSize = 0,
                                                         remoteModifiedTime = null,
                                                         dateSynced = System.currentTimeMillis()
-                                                    ))
+                                                    )
+                                                    assignedId = videoRepository.upsert(placeholder)
+                                                    // A1-02：占位快照必须携带真实分配主键。cleanUpAttempt 在行删除后
+                                                    // 会清零 assignedId ⇒ 重试重新 upsert 分配新 id ⇒ 每次分配后
+                                                    // 都要刷新快照；否则提取阶段拿到 id=0 的快照，按列提交永远
+                                                    // 0 行（元数据静默丢失）。
+                                                    placeholderEntity = placeholder.copy(id = assignedId)
                                                 }
                                                 // 明文长度 = 远端源文件大小 = action.fileSize，sink close 时校验写入长度。
                                                 var sink: java.io.OutputStream? = null
                                                 try {
                                                     sink = store.openWriteSink(assignedId, action.fileSize)
-                                                    downloadSuccess = client.downloadTo(action.relativePath, sink) { transferred, total ->
+                                                    // A1-1: downloadTo 返回 true 只是传输层收尾——不得据此退出
+                                                    // 重试循环。sink.close() 的长度校验（截断→IOException）、
+                                                    // finalize、verifyReadable 全部成功后才置 downloadSuccess；
+                                                    // 否则 close IOException 会因提前置位而「带毒退出」循环
+                                                    //（tmp 已 cancel、磁盘仍旧 final，却按成功路径提交元数据）。
+                                                    val transferred = client.downloadTo(action.relativePath, sink) { transferred, total ->
                                                         // onProgress 是普通（非 suspend）lambda，沿用 publisher 内的 tryLock/unlock 节流写入。
                                                         progressPublisher.reportDownloadProgress(
                                                             relativePath = action.relativePath,
@@ -380,7 +399,7 @@ internal class SyncDownloadPipeline(
                                                         )
                                                     }
                                                     sink.close()
-                                                    if (!downloadSuccess) throw SyncException(
+                                                    if (!transferred) throw SyncException(
                                                         SyncErrorCode.DOWNLOAD_FAILED,
                                                         SyncOperation.DOWNLOAD,
                                                         path = action.relativePath
@@ -421,6 +440,9 @@ internal class SyncDownloadPipeline(
                                                 } catch (e: Exception) {
                                                     throw SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DOWNLOAD, path = action.relativePath, cause = e)
                                                 }
+                                                    // A1-1: close/finalize/verify 全部成功的唯一退出点——
+                                                    // 此前置位会使 close IOException 逃过重试（带毒成功）。
+                                                    downloadSuccess = true
                                                 } catch (e: CancellationException) {
                                                     try { sink?.close() } catch (_: Exception) {}
                                                     withContext(NonCancellable) { cleanUpAttempt(attemptPhase, assignedId) }
@@ -443,30 +465,59 @@ internal class SyncDownloadPipeline(
                                             totalBytesTransferred.addAndGet(action.fileSize)
                                             // finalize 成功后才写入最终元数据（fileSize/remoteModifiedTime），
                                             // 保证 DB 与磁盘文件一致；此前 placeholder/existing 不持有误导性 final 值。
-                                            // 复审阻断（BUG-007 后续）：行在 finalize 提交后
-                                            // 消失（并发删除等）＝孤儿文件——明确失败 + 同一
-                                            // NonCancellable 清理入口收束，绝不 SUCCESS 计数。
-                                            val finalized = videoRepository.getById(assignedId)
-                                            if (finalized == null) {
-                                                withContext(NonCancellable) {
-                                                    cleanUpAttempt(AttemptPhase.COMMITTED, assignedId)
-                                                }
-                                                throw SyncException(
-                                                    SyncErrorCode.STORAGE_ERROR,
-                                                    SyncOperation.DOWNLOAD
+                                            // A1-2 列所有权：按列提交替代 getById+copy+整行 upsert——
+                                            //  - 整行 upsert 会用下载前快照覆盖用户列（star/audioGainDb）；
+                                            //  - @Upsert 带已知 id 会复活并发删除（回收站）的行；
+                                            //  - 返回行数 0 = 行在 finalize 提交后消失（并发删除等）＝孤儿文件
+                                            //    ——明确失败 + 同一 NonCancellable 清理入口收束，绝不 SUCCESS 计数。
+                                            // A1-01 提交临界段（rev-gpt FAIL 修复）：suspend 列提交即使 DB 副作用
+                                            // 已完成，返回恢复点仍可能抛 CE——若「登记清零」在保护区外，外层 CE
+                                            // 补偿（下方 catch）会误删已提交的行+final。故 UPDATE+行数判定+成功
+                                            // 清零必须在同一窄 NonCancellable 保护区；网络/提取/日志不得进入。
+                                            // 0 行判定后的 STORAGE_ERROR 在保护区外抛出（普通失败路径交付）。
+                                            var commitFailed = false
+                                            withContext(NonCancellable) {
+                                                val committedRows = videoRepository.updateSyncMetadata(
+                                                    id = assignedId,
+                                                    fileSize = action.fileSize,
+                                                    remoteModifiedTime = action.remoteModifiedTime,
+                                                    dateSynced = System.currentTimeMillis()
                                                 )
+                                                if (committedRows == 0) {
+                                                    // 孤儿密文回滚走同一清理入口（cleanUpAttempt 末尾清零 ⇒ 恰一次）
+                                                    cleanUpAttempt(AttemptPhase.COMMITTED, assignedId)
+                                                    commitFailed = true
+                                                } else {
+                                                    // A1-3 成功侧清零点：与 DB 副作用同处一个保护区——
+                                                    // 其后的取消是干净中断（CE 在保护区外下一挂起点交付），
+                                                    // 不回滚已提交产物。
+                                                    uncleanFinalizedId = 0L
+                                                }
                                             }
-                                            val withMeta = finalized.copy(
-                                                fileSize = action.fileSize,
-                                                remoteModifiedTime = action.remoteModifiedTime,
-                                                dateSynced = System.currentTimeMillis()
+                                            // A3（rev-gpt）：NonCancellable 只改保护区内的 Job——
+                                            // 退出保护区后若外层 Job 已带取消标志，不会自动抛 CE。
+                                            // 在 commitFailed 分类与元数据提取之前显式检查：
+                                            //  - 提交成功后被取消 ⇒ 此处交付 CE，绝不进入提取器；
+                                            //  - 0 行清理（已在保护区内完整收束、登记已清零）期间被取消
+                                            //    ⇒ 此处交付 CE，清理恰一次，不重复补偿。
+                                            currentCoroutineContext().ensureActive()
+                                            if (commitFailed) throw SyncException(
+                                                SyncErrorCode.STORAGE_ERROR,
+                                                SyncOperation.DOWNLOAD
                                             )
-                                            videoRepository.upsert(withMeta)
-                                            // BUG-007 成功侧清零点：upsert 成功即行/文件一致，其后的取消是
-                                            // 干净中断，不回滚。
-                                            uncleanFinalizedId = 0L
+                                            // A1-02: 提取阶段只需 id/fileName——existing/占位快照均携带真实
+                                            // 分配主键（见上 placeholder.copy(id=assignedId)）；返回值仅作展示，
+                                            // 绝不再作为整行写回依据（提取器内部同为列提交）。
+                                            val entityForMeta = existing ?: placeholderEntity ?: VideoItemEntity(
+                                                id = assignedId,
+                                                syncRelationId = relationId,
+                                                relativePath = localRelPath,
+                                                parentPath = extractParentPath(localRelPath),
+                                                fileName = fileName,
+                                                fileSize = action.fileSize
+                                            )
                                             try {
-                                                extractMetadata(withMeta)
+                                                extractMetadata(entityForMeta)
                                             } catch (e: CancellationException) {
                                                 throw e
                                             } catch (e: Exception) {

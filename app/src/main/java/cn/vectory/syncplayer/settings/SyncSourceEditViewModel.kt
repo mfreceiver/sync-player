@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
+import cn.vectory.syncplayer.data.repository.SyncSourceCredentialUncertainException
 import cn.vectory.syncplayer.sync.RemoteFileClientFactory
 import cn.vectory.syncplayer.sync.SyncErrorCode
 import cn.vectory.syncplayer.sync.SyncException
@@ -14,6 +15,8 @@ import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,6 +44,8 @@ sealed interface SourceSaveResult {
     data class DeleteFailed(val code: SyncErrorCode) : SourceSaveResult
 }
 
+enum class SourceEditLoadState { LOADING, READY, CREDENTIAL_RECOVERY, FAILED }
+
 /**
  * F09: 失败码归一（file-private，仅本页类型化结果使用）。对 SyncException 直接取 code；
  * 对非 SyncException 的回退分类镜像 [cn.vectory.syncplayer.sync.syncErrorMessage]
@@ -66,30 +71,65 @@ class SyncSourceEditViewModel @Inject constructor(
 
     private val _name = MutableStateFlow("")
     val name: StateFlow<String> = _name.asStateFlow()
-    fun setName(value: String) { _name.value = value }
+    fun setName(value: String) { if (canEdit()) _name.value = value }
 
     private val _protocol = MutableStateFlow(SyncProtocol.SMB)
     val protocol: StateFlow<SyncProtocol> = _protocol.asStateFlow()
     fun setProtocol(p: SyncProtocol) {
+        if (!canEdit() || _protocol.value == p) return
+        identityChanged()
         _protocol.value = p
         _port.value = if (p == SyncProtocol.SMB) "445" else "22"
     }
 
     private val _host = MutableStateFlow("")
     val host: StateFlow<String> = _host.asStateFlow()
-    fun setHost(value: String) { _host.value = value }
+    fun setHost(value: String) {
+        if (!canEdit() || _host.value == value) return
+        identityChanged()
+        _host.value = value
+    }
 
     private val _port = MutableStateFlow("445")
     val port: StateFlow<String> = _port.asStateFlow()
-    fun setPort(value: String) { _port.value = value }
+    fun setPort(value: String) {
+        if (!canEdit() || _port.value == value) return
+        identityChanged()
+        _port.value = value
+    }
 
     private val _username = MutableStateFlow("")
     val username: StateFlow<String> = _username.asStateFlow()
-    fun setUsername(value: String) { _username.value = value }
+    fun setUsername(value: String) {
+        if (!canEdit() || _username.value == value) return
+        identityChanged()
+        _username.value = value
+    }
 
     private val _password = MutableStateFlow("")
     val password: StateFlow<String> = _password.asStateFlow()
-    fun setPassword(value: String) { _password.value = value }
+    fun setPassword(value: String) {
+        if (!canEdit()) return
+        identityChanged()
+        _password.value = value
+        _emptyPasswordConfirmed.value = false
+    }
+    private val _emptyPasswordConfirmed = MutableStateFlow(false)
+    val emptyPasswordConfirmed = _emptyPasswordConfirmed.asStateFlow()
+    fun confirmEmptyPassword(confirmed: Boolean) {
+        if (canEdit()) _emptyPasswordConfirmed.value = confirmed
+    }
+    private val _loadState = MutableStateFlow(
+        if (sourceId > 0L) SourceEditLoadState.LOADING else SourceEditLoadState.READY
+    )
+    val loadState = _loadState.asStateFlow()
+
+    private fun canUseForm(): Boolean = when (_loadState.value) {
+        SourceEditLoadState.READY -> true
+        SourceEditLoadState.CREDENTIAL_RECOVERY ->
+            _password.value.isNotEmpty() || _emptyPasswordConfirmed.value
+        else -> false
+    }
     private val _isTesting = MutableStateFlow(false)
     val isTesting: StateFlow<Boolean> = _isTesting.asStateFlow()
 
@@ -101,48 +141,118 @@ class SyncSourceEditViewModel @Inject constructor(
 
     private val _saveResult = MutableStateFlow<SourceSaveResult?>(null)
     val saveResult: StateFlow<SourceSaveResult?> = _saveResult.asStateFlow()
+    private var loadGeneration = 0L
+    private var loadJob: Job? = null
+    private var testGeneration = 0L
+    private var testJob: Job? = null
+
+    private fun canEdit() = !_isSaving.value &&
+        (_loadState.value == SourceEditLoadState.READY ||
+            _loadState.value == SourceEditLoadState.CREDENTIAL_RECOVERY)
+
+    private fun identityChanged() {
+        _emptyPasswordConfirmed.value = false
+        invalidateTest()
+    }
+
+    private fun invalidateTest() {
+        testGeneration++
+        testJob?.cancel()
+        _isTesting.value = false
+        _testResult.value = null
+    }
 
     init {
-        if (sourceId > 0L) {
-            viewModelScope.launch {
-                val existing = syncSourceRepository.getById(sourceId)
-                if (existing != null) {
-                    _name.value = existing.name
-                    _protocol.value = existing.protocol
-                    _host.value = existing.host
-                    _port.value = existing.port.toString()
-                    _username.value = existing.username
-                    _password.value = existing.password
+        if (sourceId > 0L) retryLoad()
+    }
+
+    fun retryLoad(): Job {
+        // A retry is recovery, not a refresh of an editable form. Generation changes
+        // before cancel so even non-cooperative old completions cannot publish.
+        if (_isSaving.value || (_loadState.value != SourceEditLoadState.LOADING &&
+                _loadState.value != SourceEditLoadState.FAILED)) return Job().apply { complete() }
+        val generation = ++loadGeneration
+        loadJob?.cancel()
+        invalidateTest()
+        _loadState.value = SourceEditLoadState.LOADING
+        _password.value = ""
+        _emptyPasswordConfirmed.value = false
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                val existing = try {
+                    syncSourceRepository.getById(sourceId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: SyncSourceCredentialUncertainException) {
+                    if (generation != loadGeneration) return@launch
+                    val sources = syncSourceRepository.getAll()
+                    if (generation != loadGeneration) return@launch
+                    val info = sources.firstOrNull { it.id == sourceId }
+                        ?: error("Source metadata missing")
+                    populate(info, includePassword = false)
+                    _loadState.value = SourceEditLoadState.CREDENTIAL_RECOVERY
+                    return@launch
                 }
+                if (generation != loadGeneration) return@launch
+                checkNotNull(existing) { "Source missing" }
+                populate(existing, includePassword = true)
+                _loadState.value = SourceEditLoadState.READY
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                if (generation == loadGeneration) _loadState.value = SourceEditLoadState.FAILED
             }
         }
+        loadJob = job
+        job.start()
+        return job
+    }
+
+    private fun populate(source: SyncSource, includePassword: Boolean) {
+        _name.value = source.name
+        _protocol.value = source.protocol
+        _host.value = source.host
+        _port.value = source.port.toString()
+        _username.value = source.username
+        _password.value = if (includePassword) source.password else ""
     }
 
     fun testConnection() {
-        viewModelScope.launch {
-            _isTesting.value = true
-            _testResult.value = null
+        if (!canUseForm() || _isTesting.value || _isSaving.value) return
+        val generation = ++testGeneration
+        val source = buildSource()
+        _isTesting.value = true
+        _testResult.value = null
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
-                val source = buildSource()
                 val client = remoteFileClientFactory.create(source.protocol)
                 client.testConnection(source, "/")
-                _testResult.value = SourceTestResult.Connected
+                if (generation == testGeneration) _testResult.value = SourceTestResult.Connected
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _testResult.value = SourceTestResult.TestFailed(resolveFailureCode(e))
+                if (generation == testGeneration) _testResult.value = SourceTestResult.TestFailed(resolveFailureCode(e))
             } finally {
-                _isTesting.value = false
+                if (generation == testGeneration) _isTesting.value = false
             }
         }
+        testJob = job
+        job.start()
     }
 
     fun save() {
+        if (!canUseForm() || _isSaving.value) return
+        if (_loadState.value == SourceEditLoadState.CREDENTIAL_RECOVERY &&
+            (_name.value.isBlank() || _host.value.isBlank())) return
+        val source = buildSource()
+        _isSaving.value = true
+        _saveResult.value = null
+        invalidateTest()
         viewModelScope.launch {
-            _isSaving.value = true
-            _saveResult.value = null
             try {
-                syncSourceRepository.save(buildSource())
+                syncSourceRepository.save(source)
+                _loadState.value = SourceEditLoadState.READY
+                _emptyPasswordConfirmed.value = false
                 _saveResult.value = SourceSaveResult.Saved
             } catch (e: CancellationException) {
                 throw e
@@ -155,8 +265,10 @@ class SyncSourceEditViewModel @Inject constructor(
     }
 
     fun deleteSource() {
+        if (_isSaving.value) return
+        _isSaving.value = true
+        invalidateTest()
         viewModelScope.launch {
-            _isSaving.value = true
             _saveResult.value = null
             try {
                 val count = syncSourceRepository.getRelationCount(sourceId)

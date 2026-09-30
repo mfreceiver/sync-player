@@ -134,6 +134,35 @@ class VideoRepository @Inject constructor(
     suspend fun updateAudioGain(id: Long, audioGainDb: Float?) =
         videoItemDao.updateAudioGain(id, audioGainDb)
 
+    // ------------------------------------------------------------------ A1 按列更新（列所有权）
+
+    /**
+     * A1: 下载管线最终元数据列提交（fileSize/remoteModifiedTime/dateSynced）。
+     * 返回受影响行数：0 = 行不存在（含并发删除）——调用方按孤儿文件处理，
+     * 绝不整行 upsert（会覆盖 star/audioGainDb 或复活被删行）。
+     */
+    suspend fun updateSyncMetadata(id: Long, fileSize: Long, remoteModifiedTime: Long?, dateSynced: Long): Int =
+        videoItemDao.updateSyncMetadata(id, fileSize, remoteModifiedTime, dateSynced)
+
+    /**
+     * A1: 视频提取器列提交（duration/width/height/bitrate/frameRate 全列，
+     * 显式 null = 清除陈旧值）。返回受影响行数：0 = 行已消失，不复活。
+     */
+    suspend fun updateVideoMetadata(
+        id: Long,
+        duration: Long?,
+        width: Int?,
+        height: Int?,
+        bitrate: Long?,
+        frameRate: Float?
+    ): Int = videoItemDao.updateVideoMetadata(id, duration, width, height, bitrate, frameRate)
+
+    /**
+     * A1: 图片提取器列提交（width/height/dateTaken）。返回受影响行数：0 = 行已消失，不复活。
+     */
+    suspend fun updateImageMetadata(id: Long, width: Int?, height: Int?, dateTaken: Long?): Int =
+        videoItemDao.updateImageMetadata(id, width, height, dateTaken)
+
     fun getFlatItemsFlow(): Flow<List<VideoItemEntity>> = videoItemDao.getFlatItemsFlow()
 
     suspend fun getFlatItemsFiltered(

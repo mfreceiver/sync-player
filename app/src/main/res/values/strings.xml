@@ -461,4 +461,51 @@
     <string name="player_a11y_next_video">下一个视频</string>
     <string name="relation_delete_failed">删除失败</string>
     <string name="media_write_not_supported">不支持写入访问</string>
+    <string name="source_edit_load_failed">无法读取数据源，请重试或返回。</string>
+    <string name="relation_edit_load_failed">无法读取同步配置，请重试或返回。</string>
+    <string name="source_credentials_recovery">无法确认已保存密码是否正确。为安全起见，密码输入框已清空。请重新输入密码并保存；如果此连接不使用密码，请明确确认。</string>
+    <string name="source_confirm_empty_password">确认此连接不使用密码</string>
+    <string name="relation_credentials_recovery">此数据源的密码需要重新确认。请返回设置，编辑对应数据源，重新输入密码并保存后再试。</string>
+
+    <!-- D1 同步预览终态语义（ora-2）：失败/取消不再显示「已完成」；按类型映射文案，不暴露底层 message。 -->
+    <string name="sync_preview_result_partial_failed">同步部分完成：%1$d 个文件未成功，%2$d 个已完成</string>
+    <string name="sync_preview_result_failed">同步失败，可重新扫描后重试</string>
+    <string name="sync_preview_result_cancelled">同步已取消，已完成的内容保持不变</string>
+    <string name="sync_preview_issue_auth">认证失败，请检查同步源账号与权限</string>
+    <string name="sync_preview_issue_path">远端路径不存在或不可访问</string>
+    <string name="sync_preview_issue_network">网络连接失败，请检查网络后重试</string>
+    <string name="sync_preview_issue_scan_incomplete">扫描不完整，请重试</string>
+    <string name="sync_preview_issue_storage">本地存储异常，请检查存储空间</string>
+    <string name="sync_preview_issue_unknown">同步检查失败，请重试</string>
+    <string name="sync_preview_deleting">正在删除…</string>
+    <string name="sync_preview_stopping">正在停止…</string>
+    <string name="sync_preview_confirm_dialog_title">确认执行</string>
+    <string name="sync_preview_confirm_dialog_delete_message">将下载 %1$d 个文件，删除 %2$d 个文件。删除操作不可恢复。</string>
+    <string name="sync_preview_confirm_dialog_delete_only_message">将删除 %1$d 个文件。删除操作不可恢复。</string>
+    <!-- D3 同步预览运行归属：其它 relation 占用引擎时拒绝提交并如实告知。 -->
+    <string name="sync_preview_another_sync_running">另一同步任务正在进行，请等待其完成后再试</string>
+
+    <!-- 播放器（des-3）：进度条 seek 精度切换与秒级 seek -->
+    <string name="player_seek_precision_full">1×</string>
+    <string name="player_seek_precision_quarter">¼×</string>
+    <string name="player_seek_precision_tenth">¹⁄₁₀×</string>
+    <string name="player_seek_back_1s">后退1秒</string>
+    <string name="player_seek_forward_1s">前进1秒</string>
+    <!-- F1 浏览器空态与可撤销删除入口 -->
+    <string name="browser_empty_library">资料库还没有文件</string>
+    <string name="browser_empty_library_detail">添加同步源并同步后，文件会显示在这里</string>
+    <string name="browser_empty_folder">这个文件夹是空的</string>
+    <string name="browser_empty_folder_detail">这里暂时没有可浏览的文件</string>
+    <string name="browser_empty_filtered">没有符合条件的文件</string>
+    <string name="browser_empty_filtered_detail">试试清除筛选条件</string>
+    <string name="browser_empty_clear_filters">清除筛选</string>
+    <string name="browser_empty_error">无法显示文件</string>
+    <string name="browser_empty_error_detail">请稍后重试</string>
+    <string name="browser_empty_retry">重试</string>
+    <string name="context_delete_with_undo">删除（可撤销）</string>
+    <!-- 搜索旧结果归属提示：旧结果保留展示但禁止操作 -->
+    <string name="search_results_updating">更新中，当前结果暂不可操作</string>
+    <string name="search_failed_change_query">搜索失败，请修改关键词后重试</string>
+    <string name="search_retry">重试搜索</string>
+    <string name="search_delete_failed">操作失败，请重试</string>
 </resources>

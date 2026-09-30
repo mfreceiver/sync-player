@@ -96,6 +96,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -108,6 +109,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -138,11 +141,13 @@ import androidx.media3.exoplayer.ExoPlayer
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.ui.util.formatDuration
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -312,6 +317,44 @@ internal fun resolveSegmentTargetMs(
     val raw = segmentStartTargetMs.toDouble() +
         ((currentX - segmentStartX).toDouble() / safeWidth) * safeDuration.toDouble() * factor.toDouble()
     return raw.roundToLong().coerceIn(0L, safeDuration)
+}
+
+internal fun resolveAbsoluteTrackTargetMs(x: Float, widthPx: Int, durationMs: Long): Long =
+    (x.toDouble() / widthPx.coerceAtLeast(1) * durationMs.coerceAtLeast(0L))
+        .roundToLong().coerceIn(0L, durationMs.coerceAtLeast(0L))
+
+/** Full track movement stays absolute even beyond either edge. Relative movement
+ * settles the CURRENT event using its old factor before the next event rebases. */
+internal class TrackSeekResolver(
+    private val startX: Float,
+    startTargetMs: Long,
+    private val widthPx: Int,
+    private val durationMs: Long,
+) {
+    var targetMs: Long = startTargetMs
+        private set
+    private var segmentX = startX
+    private var factor = SeekPrecision.Full.factor
+    private var relative = false
+    private var moved = false
+
+    fun move(x: Float, nextPrecision: SeekPrecision, relativeRequested: Boolean): Long {
+        if (relative) {
+            targetMs = resolveSegmentTargetMs(segmentX, x, widthPx, durationMs, targetMs, factor)
+        } else if (relativeRequested && !moved) {
+            // A first downward drag starts from playback, not a jump to the touched rail point.
+            targetMs = resolveSegmentTargetMs(startX, x, widthPx, durationMs, targetMs, factor)
+        } else {
+            targetMs = resolveAbsoluteTrackTargetMs(x, widthPx, durationMs)
+        }
+        moved = true
+        segmentX = x
+        relative = relativeRequested
+        factor = nextPrecision.factor
+        return targetMs
+    }
+
+    fun finish(tapX: Float): Long = if (moved) targetMs else resolveAbsoluteTrackTargetMs(tapX, widthPx, durationMs)
 }
 
 @Composable
@@ -587,21 +630,20 @@ internal fun AuroraProgressZone(
 ) {
     val scrubState by viewModel.progressScrubState.collectAsStateWithLifecycle()
     val currentPosition by viewModel.currentPosition.collectAsStateWithLifecycle()
+    val presentation by viewModel.seekPresentation.collectAsStateWithLifecycle()
+    var trackSize by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
     val safeDuration = durationMs.coerceAtLeast(0L)
     val progressDescription = stringResource(R.string.player_a11y_fine_scrub_progress)
-    val displayedPosition = when (seekSource) {
-        SeekSource.PROGRESS_BAR -> scrubState.targetPositionMs
-        SeekSource.GESTURE -> gesturePositionMs.coerceIn(0L, safeDuration)
-        SeekSource.NONE -> currentPosition.coerceIn(0L, safeDuration)
-    }
+    val displayedPosition = if (presentation.phase == SeekPhase.Dragging) {
+        presentation.targetMs.coerceIn(0L, safeDuration)
+    } else currentPosition.coerceIn(0L, safeDuration)
     val progress = if (safeDuration > 0) displayedPosition.toFloat() / safeDuration.toFloat() else 0f
     val progressStateDescription = "${formatDuration(displayedPosition)} / ${formatDuration(safeDuration)}"
     fun commitBy(delta: Long) {
         val target = (currentPosition + delta).coerceIn(0L, safeDuration)
-        viewModel.onProgressScrubStarted(target)
-        viewModel.onProgressScrubFinished(target)
-        exoPlayer.seekTo(target)
+        val session = viewModel.onProgressScrubStarted(target)
+        viewModel.onProgressScrubFinished(target, session)?.let { performPresentedSeek(viewModel, exoPlayer, it) }
     }
     val actions = listOf(
         CustomAccessibilityAction(stringResource(R.string.player_a11y_seek_backward_10s)) { commitBy(-10_000L); true },
@@ -618,55 +660,43 @@ internal fun AuroraProgressZone(
                 stateDescription = progressStateDescription
                 customActions = actions
             }
-            .pointerInput(safeDuration) {
+            .onSizeChanged { trackSize = it }
+            .pointerInput(safeDuration, presentation.mediaGeneration, trackSize) {
+                var session = -1L
                 try {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         down.consume()
                         val safeWidth = size.width.coerceAtLeast(1)
-                        val anchor = ((down.position.x / safeWidth.toFloat()) * safeDuration.toDouble())
-                            .roundToLong()
-                            .coerceIn(0L, safeDuration)
-                        var segmentStartX = down.position.x
-                        var segmentStartTarget = anchor
-                        var lastTarget = anchor
-                        var factor = AuroraTokens.FineScrubFactorFull
-                        var isFineMode = false
-                        viewModel.onProgressScrubStarted(anchor)
+                        val playbackAnchor = viewModel.currentPosition.value.coerceIn(0L, safeDuration)
+                        val resolver = TrackSeekResolver(down.position.x, playbackAnchor, safeWidth, safeDuration)
+                        session = viewModel.onProgressScrubStarted(playbackAnchor)
                         val finished = drag(down.id) { change ->
                             val dragDownDp = ((change.position.y - down.position.y).coerceAtLeast(0f)) / density.density
-                            if (dragDownDp >= AuroraTokens.FineScrubActivationDp) isFineMode = true
-                            val nextFactor = if (isFineMode) {
-                                stabilizedFineScrubFactor(dragDownDp, factor)
+                            val isFineMode = dragDownDp >= AuroraTokens.FineScrubActivationDp
+                            val state = viewModel.seekPresentation.value
+                            val selectedFactor = state.precision.factor
+                            val nextFactor = if (state.precisionExplicit) {
+                                selectedFactor
+                            } else if (isFineMode && !state.precisionExplicit) {
+                                stabilizedFineScrubFactor(dragDownDp, selectedFactor)
                             } else {
-                                AuroraTokens.FineScrubFactorFull
+                                SeekPrecision.Full.factor
                             }
-                            if (nextFactor != factor) {
-                                factor = nextFactor
-                                segmentStartX = change.position.x
-                                segmentStartTarget = lastTarget
-                            } else {
-                                lastTarget = resolveSegmentTargetMs(
-                                    segmentStartX = segmentStartX,
-                                    currentX = change.position.x,
-                                    widthPx = safeWidth,
-                                    durationMs = safeDuration,
-                                    segmentStartTargetMs = segmentStartTarget,
-                                    factor = factor,
-                                )
-                            }
-                            viewModel.onProgressScrubChanged(lastTarget, factor, isFineMode)
+                            val precision = SeekPrecision.entries.minBy { abs(it.factor - nextFactor) }
+                            val relative = if (state.precisionExplicit) precision != SeekPrecision.Full else isFineMode
+                            val nextTarget = resolver.move(change.position.x, precision, relative)
+                            viewModel.onProgressScrubChanged(nextTarget, precision.factor, isFineMode, session)
                             change.consume()
                         }
                         if (finished) {
-                            viewModel.onProgressScrubFinished(lastTarget)
-                            exoPlayer.seekTo(lastTarget)
+                            viewModel.onProgressScrubFinished(resolver.finish(down.position.x), session)?.let { performPresentedSeek(viewModel, exoPlayer, it) }
                         } else {
-                            viewModel.onProgressScrubCancelled()
+                            viewModel.onProgressScrubCancelled(session)
                         }
                     }
                 } catch (e: CancellationException) {
-                    viewModel.onProgressScrubCancelled()
+                    viewModel.onProgressScrubCancelled(session)
                     throw e
                 }
             },
@@ -883,8 +913,11 @@ internal fun AuroraSeekPreviewHost(
     bottomChromeHeightPx: Int,
     videoUri: String?,
     previewExtractor: SeekPreviewExtractor,
+    viewModel: PlayerViewModel? = null,
+    onStep: (Long) -> Unit = {},
 ) {
     val scrubState by progressScrubState.collectAsStateWithLifecycle()
+    val unified = viewModel?.seekPresentation?.collectAsStateWithLifecycle()?.value
     val hostView = LocalView.current
     var lastHapticFactor by remember { mutableStateOf(AuroraTokens.FineScrubFactorFull) }
     LaunchedEffect(seekSource, scrubState.isActive, scrubState.factor) {
@@ -897,36 +930,54 @@ internal fun AuroraSeekPreviewHost(
         }
         lastHapticFactor = scrubState.factor
     }
-    val latestTarget by rememberUpdatedState(
-        when (seekSource) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+    val targetMs = unified?.targetMs ?: when (seekSource) {
             SeekSource.PROGRESS_BAR -> scrubState.targetPositionMs
             SeekSource.GESTURE -> gesturePositionMs
             SeekSource.NONE -> 0L
-        },
-    )
-    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var previewPosition by remember { mutableStateOf(0L) }
-    var lastExtractedPosition by remember { mutableStateOf(Long.MIN_VALUE) }
-    LaunchedEffect(seekSource, videoUri) {
-        if (seekSource == SeekSource.NONE || videoUri == null) {
-            delay(100L)
-            bitmap = null
-            lastExtractedPosition = Long.MIN_VALUE
+        }
+    val latestTarget by rememberUpdatedState(targetMs)
+    val density = LocalDensity.current
+    val availableHeight = (maxHeight - with(density) { bottomChromeHeightPx.toDp() } - 24.dp).coerceAtLeast(0.dp)
+    val compact = seekPreviewCompact(with(density) { maxHeight.toPx() }, bottomChromeHeightPx,
+        with(density) { 24.dp.toPx() }, with(density) { 80.dp.toPx() })
+    val active = unified?.let { it.phase == SeekPhase.Dragging } ?: (seekSource != SeekSource.NONE)
+    val session = unified?.session ?: 0L
+    val generation = unified?.mediaGeneration ?: 0L
+    val demand = seekPreviewDemand(active, compact, videoUri != null)
+    var frame by remember { mutableStateOf<PresentedPreviewFrame?>(null) }
+    LaunchedEffect(demand, videoUri, generation, session) {
+        if (!demand || videoUri == null) {
+            viewModel?.updateSeekFrame(session, latestTarget, SeekFrame.Suppressed)
             return@LaunchedEffect
         }
         try {
             previewExtractor.beginSession(android.net.Uri.parse(videoUri))
-            while (isActive) {
+            snapshotFlow { latestTarget }.collectLatest {
                 val target = latestTarget.coerceIn(0L, durationMs.coerceAtLeast(0L))
-                previewPosition = target
-                if (target != lastExtractedPosition) {
-                    val cached = previewExtractor.getCachedFrame(videoUri, target)
-                    bitmap = cached ?: previewExtractor.extractFrameAtPosition(videoUri, target)
-                    lastExtractedPosition = target
+                val previous = frame
+                if (previous?.bitmap != null && previous.matches(generation, session, target)) {
+                    frame = previous.copy(targetMs = target)
+                    viewModel?.updateSeekFrame(session, target, SeekFrame.CurrentBucket)
+                    return@collectLatest
                 }
-                delay(if (scrubState.isFineMode) 50L else 100L)
+                previewExtractor.releaseFrame(frame?.bitmap)
+                frame = null
+                viewModel?.updateSeekFrame(session, target, SeekFrame.Pending)
+                val bitmap = previewExtractor.getCachedFrame(videoUri, target)
+                    ?: previewExtractor.extractFrameAtPosition(videoUri, target)
+                // Native extraction may ignore coroutine cancellation. Never publish
+                // that late frame or mark a compact/retired target as current.
+                if (!currentCoroutineContext().isActive || target != latestTarget) {
+                    previewExtractor.releaseFrame(bitmap)
+                    return@collectLatest
+                }
+                frame = PresentedPreviewFrame(generation, session, target, bitmap)
+                viewModel?.updateSeekFrame(session, target, if (bitmap != null) SeekFrame.CurrentBucket else SeekFrame.Failed)
             }
         } finally {
+            previewExtractor.releaseFrame(frame?.bitmap)
+            frame = null
             withContext(NonCancellable) { previewExtractor.endSession() }
         }
     }
@@ -939,15 +990,24 @@ internal fun AuroraSeekPreviewHost(
     } else {
         0f
     }
-    when (seekSource) {
-        SeekSource.PROGRESS_BAR -> if (scrubState.isFineMode) {
-            FineScrubMagnifier(scrubState, bitmap, durationMs)
-        } else {
-            AuroraCoarsePreview(bitmap, previewPosition, durationMs, seekFraction, bottomChromeHeightPx)
-        }
-        SeekSource.GESTURE -> AuroraCoarsePreview(bitmap, previewPosition, durationMs, seekFraction, bottomChromeHeightPx)
-        SeekSource.NONE -> Unit
+    if (active) {
+        // Reject an old bitmap in the SAME composition that renders a new target.
+        val bitmap = frame?.takeIf { it.matches(generation, session, targetMs) && demand }?.bitmap
+        AuroraCoarsePreview(bitmap, targetMs, durationMs, seekFraction, bottomChromeHeightPx,
+            compact = compact, availableHeight = availableHeight,
+            precision = unified?.precision ?: SeekPrecision.entries.minBy { abs(it.factor - scrubState.factor) },
+            onPrecision = { viewModel?.selectSeekPrecision(it) }, onStep = onStep)
     }
+    }
+}
+
+internal fun seekPreviewDemand(active: Boolean, compact: Boolean, hasMedia: Boolean): Boolean = active && !compact && hasMedia
+internal fun seekPreviewCompact(containerHeightPx: Float, bottomChromeHeightPx: Int, safetyPx: Float, thresholdPx: Float): Boolean =
+    containerHeightPx - bottomChromeHeightPx - safetyPx < thresholdPx
+
+internal data class PresentedPreviewFrame(val generation: Long, val session: Long, val targetMs: Long, val bitmap: Bitmap?) {
+    fun matches(generation: Long, session: Long, targetMs: Long): Boolean =
+        this.generation == generation && this.session == session && this.targetMs / 500L == targetMs / 500L
 }
 
 /**
@@ -964,8 +1024,8 @@ internal data class PreviewGeometry(
  * Pure geometry for the coarse seek preview, in the preview container's coordinate
  * space (the player root box).
  *
- * - Safe viewport (clamping range): [navigationLeftPx] .. rootWidthPx - [navigationRightPx]
- *   — the nav-inset-safe area, matching where the bottom progress area lives.
+ * - Safe viewport (clamping range): [navigationLeftPx] + [safetyPaddingPx] ..
+ *   rootWidthPx - [navigationRightPx] - [safetyPaddingPx]. Production reserves 16dp.
  * - Track span (mirrors AuroraBottomArea: navigationBarsPadding() then
  *   AuroraEdgePadding): trackLeft = navLeft + [edgePaddingPx],
  *   trackRight = root - navRight - [edgePaddingPx]; a degenerate track
@@ -983,13 +1043,14 @@ internal fun resolvePreviewGeometry(
     edgePaddingPx: Float,
     fraction: Float,
     nominalPreviewWidthPx: Float,
+    safetyPaddingPx: Float = 0f,
 ): PreviewGeometry {
     val safeFraction = if (fraction.isFinite()) fraction.coerceIn(0f, 1f) else 0f
-    val safeLeft = navigationLeftPx
-    val safeRight = rootWidthPx - navigationRightPx
+    val safeLeft = navigationLeftPx + safetyPaddingPx
+    val safeRight = rootWidthPx - navigationRightPx - safetyPaddingPx
     val effectiveWidth = min(nominalPreviewWidthPx, (safeRight - safeLeft).coerceAtLeast(0f))
     val trackLeft = navigationLeftPx + edgePaddingPx
-    val trackRight = max(safeRight - edgePaddingPx, trackLeft)
+    val trackRight = max(rootWidthPx - navigationRightPx - edgePaddingPx, trackLeft)
     val thumbX = trackLeft + (trackRight - trackLeft) * safeFraction
     val maxLeft = max(safeLeft, safeRight - effectiveWidth)
     val offset = (thumbX - effectiveWidth / 2f).coerceIn(safeLeft, maxLeft)
@@ -1018,6 +1079,11 @@ private fun AuroraCoarsePreview(
     durationMs: Long,
     seekFraction: Float,
     bottomChromeHeightPx: Int,
+    compact: Boolean = false,
+    availableHeight: Dp = Dp.Infinity,
+    precision: SeekPrecision = SeekPrecision.Full,
+    onPrecision: (SeekPrecision) -> Unit = {},
+    onStep: (Long) -> Unit = {},
 ) {
     // Horizontal follow: the preview tracks the progress thumb instead of staying
     // pinned to the horizontal center. The preview host fills the same player root
@@ -1047,7 +1113,8 @@ private fun AuroraCoarsePreview(
             navigationRightPx = navigationBars.getRight(density, LayoutDirection.Ltr).toFloat(),
             edgePaddingPx = with(density) { AuroraTokens.AuroraEdgePadding.toPx() },
             fraction = seekFraction,
-            nominalPreviewWidthPx = with(density) { AuroraTokens.AuroraPreviewWidth.toPx() },
+            nominalPreviewWidthPx = with(density) { 184.dp.toPx() },
+            safetyPaddingPx = with(density) { 16.dp.toPx() },
         )
         // Bottom clearance: measured chrome height + gap ONLY. The chrome's measured
         // height already includes AuroraBottomArea's navigationBarsPadding()
@@ -1066,15 +1133,16 @@ private fun AuroraCoarsePreview(
                 .absoluteOffset { IntOffset(geometry.offsetXPx.roundToInt(), -bottomClearancePx.roundToInt()) }
                 .testTag("player_aurora_coarse_preview")
                 .width(with(density) { geometry.effectiveWidthPx.toDp() })
-                .heightIn(max = AuroraTokens.AuroraPreviewMaxHeight),
+                .heightIn(max = availableHeight),
             color = AuroraTokens.AuroraPanelFill,
             shape = RoundedCornerShape(AuroraTokens.AuroraPanelRadius),
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (bitmap != null) {
-                    Image(bitmap.asImageBitmap(), null, Modifier.fillMaxWidth().weight(1f, fill = false))
-                } else {
-                    Box(Modifier.fillMaxWidth().height(AuroraTokens.AuroraPreviewMaxHeight))
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.verticalScroll(rememberScrollState())) {
+                if (!compact) {
+                    val imageHeight = (availableHeight - 88.dp).coerceIn(0.dp, 96.dp)
+                    Box(Modifier.fillMaxWidth().height(imageHeight).background(AuroraTokens.AuroraTrack), contentAlignment = Alignment.Center) {
+                        if (bitmap != null) Image(bitmap.asImageBitmap(), null, Modifier.fillMaxSize().testTag("player_seek_preview_bitmap"), contentScale = ContentScale.Fit)
+                    }
                 }
                 Text(
                     text = "${formatDuration(positionMs)} / ${formatDuration(durationMs)}",
@@ -1082,57 +1150,10 @@ private fun AuroraCoarsePreview(
                     style = AuroraTokens.AuroraNumeralStyle.copy(fontSize = AuroraTokens.AuroraAuxSize),
                     modifier = Modifier.padding(vertical = AuroraTokens.AuroraPreviewGap),
                 )
-            }
-        }
-    }
-}
-
-@Composable
-internal fun FineScrubMagnifier(state: ProgressScrubUiState, bitmap: Bitmap?, durationMs: Long) {
-    val deltaLabel = stringResource(R.string.player_fine_scrub_delta, state.deltaSeconds)
-    val speedLabel = when (state.factor) {
-        AuroraTokens.FineScrubFactorTenth -> stringResource(R.string.player_a11y_fine_scrub_speed_tenth)
-        AuroraTokens.FineScrubFactorQuarter -> stringResource(R.string.player_a11y_fine_scrub_speed_quarter)
-        else -> stringResource(R.string.player_a11y_fine_scrub_speed_full)
-    }
-    val magnifierDescription = stringResource(
-        R.string.player_a11y_fine_scrub_magnifier,
-        formatDuration(state.targetPositionMs),
-        deltaLabel,
-        speedLabel,
-    )
-    AnimatedVisibility(
-        visible = state.isFineMode,
-        enter = expandVertically(expandFrom = Alignment.Bottom, animationSpec = AuroraTokens.AuroraMagnifierExpandSpring) +
-            scaleIn(animationSpec = AuroraTokens.AuroraMagnifierScaleSpring, initialScale = 0.96f) + fadeIn(animationSpec = AuroraTokens.AuroraFadeIn),
-        exit = shrinkVertically(animationSpec = AuroraTokens.AuroraMagnifierShrink) + fadeOut(animationSpec = AuroraTokens.AuroraFadeOut),
-    ) {
-        BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
-            val compact = maxHeight < AuroraTokens.AuroraCompactHeightThreshold
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = AuroraTokens.AuroraEdgePadding)
-                    .semantics(mergeDescendants = true) {
-                        contentDescription = magnifierDescription
-                    }
-                    .testTag("player_aurora_fine_magnifier"),
-                shape = RoundedCornerShape(AuroraTokens.AuroraPanelRadius),
-                color = AuroraTokens.AuroraPanelFill,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(AuroraTokens.AuroraEdgePadding)) {
-                    Text(
-                        formatDuration(state.targetPositionMs),
-                        color = AuroraTokens.AuroraText,
-                        style = AuroraTokens.AuroraNumeralStyle.copy(fontSize = AuroraTokens.AuroraDisplayTimeSize),
-                    )
-                    Text(deltaLabel, color = AuroraTokens.AuroraBlue, fontSize = AuroraTokens.AuroraAuxSize)
-                    if (!compact && bitmap != null) {
-                        Spacer(Modifier.height(AuroraTokens.AuroraPreviewGap))
-                        Image(bitmap.asImageBitmap(), null, Modifier.width(AuroraTokens.AuroraPreviewWidth).heightIn(max = AuroraTokens.AuroraPreviewMaxHeight))
-                    }
-                    Spacer(Modifier.height(AuroraTokens.AuroraPreviewGap))
-                    AuroraFineRuler(state.deltaSeconds)
+                SeekPrecisionSelector(precision, onPrecision)
+                if (compact) Row {
+                    Text(stringResource(R.string.player_seek_back_1s), Modifier.weight(1f).testTag("player_seek_compact_step_back").heightIn(min = 48.dp).clickable { onStep(-1_000L) }.padding(8.dp), color = AuroraTokens.AuroraText, textAlign = TextAlign.Center)
+                    Text(stringResource(R.string.player_seek_forward_1s), Modifier.weight(1f).heightIn(min = 48.dp).clickable { onStep(1_000L) }.padding(8.dp), color = AuroraTokens.AuroraText, textAlign = TextAlign.Center)
                 }
             }
         }
@@ -1140,18 +1161,30 @@ internal fun FineScrubMagnifier(state: ProgressScrubUiState, bitmap: Bitmap?, du
 }
 
 @Composable
-private fun AuroraFineRuler(deltaSeconds: Int) {
-    Canvas(Modifier.fillMaxWidth().height(AuroraTokens.AuroraMagnifierHeight)) {
-        val centerY = size.height / 2f
-        for (seconds in -AuroraTokens.FineScrubTickRangeSeconds..AuroraTokens.FineScrubTickRangeSeconds step 5) {
-            val x = ((seconds + AuroraTokens.FineScrubTickRangeSeconds).toFloat() /
-                (AuroraTokens.FineScrubTickRangeSeconds * 2).toFloat()) * size.width
-            val tickHeight = if (seconds % 10 == 0) AuroraTokens.AuroraTickMajorHeight.toPx() else AuroraTokens.AuroraTickMinorHeight.toPx()
-            drawLine(AuroraTokens.AuroraTextSecondary, Offset(x, centerY - tickHeight / 2f), Offset(x, centerY + tickHeight / 2f), cap = StrokeCap.Round)
+internal fun FineScrubMagnifier(state: ProgressScrubUiState, bitmap: Bitmap?, durationMs: Long) {
+    // Compatibility entry point for existing UI tests; no second visual presentation.
+    AuroraCoarsePreview(bitmap, state.targetPositionMs, durationMs,
+        if (durationMs > 0L) (state.targetPositionMs.toDouble() / durationMs).toFloat() else 0f,
+        bottomChromeHeightPx = 0,
+        precision = SeekPrecision.entries.minBy { abs(it.factor - state.factor) })
+}
+
+@Composable
+private fun SeekPrecisionSelector(precision: SeekPrecision, onSelect: (SeekPrecision) -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+        SeekPrecision.entries.forEach { option ->
+            val label = stringResource(when (option) {
+                SeekPrecision.Full -> R.string.player_seek_precision_full
+                SeekPrecision.Quarter -> R.string.player_seek_precision_quarter
+                SeekPrecision.Tenth -> R.string.player_seek_precision_tenth
+            })
+            Text(label, color = if (precision == option) AuroraTokens.AuroraBlue else AuroraTokens.AuroraTextSecondary,
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                    .testTag("player_seek_precision_${option.name.lowercase()}")
+                    .semantics { selected = precision == option; role = Role.RadioButton }
+                    .clickable { onSelect(option) }.padding(vertical = 14.dp), textAlign = TextAlign.Center)
         }
-        val needleX = ((deltaSeconds + AuroraTokens.FineScrubTickRangeSeconds).toFloat() /
-            (AuroraTokens.FineScrubTickRangeSeconds * 2).toFloat() * size.width).coerceIn(0f, size.width)
-        drawLine(AuroraTokens.AuroraBlue, Offset(needleX, 0f), Offset(needleX, size.height), strokeWidth = AuroraTokens.AuroraMagnifierNeedleWidth.toPx(), cap = StrokeCap.Round)
     }
 }
 

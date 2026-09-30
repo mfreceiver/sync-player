@@ -38,7 +38,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 
 @Composable
 fun AppNavHost(navController: NavHostController = rememberNavController()) {
-    val navHelper: NavigationHelper = hiltViewModel()
+    // P3：队列快照协调层 —— 导航前完成快照写入；进程恢复时在目标 ViewModel
+    // 构造之前同步回填内存队列。
+    val queueNav: QueueNavigationCoordinator = hiltViewModel()
 
     NavHost(
         navController = navController,
@@ -65,25 +67,29 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                 currentFolder = folder,
                 onNavigateToPlayer = { videoItemId, videoIds ->
                     val currentFolder = viewModel.currentFolder.value
-                    navHelper.videoQueue.setIds(videoIds)
-                    navController.navigate(Route.Player.create(videoItemId, currentFolder, "browser")) {
-                        launchSingleTop = true
+                    // P3：SavedStateHandle 只写小 token；完整 id 列表经快照文件
+                    // 持久化，且写入必须在导航发生前完成（onReady 延续里导航）。
+                    queueNav.navigateToPlayer(videoItemId, videoIds) { token ->
+                        navController.navigate(Route.Player.create(videoItemId, currentFolder, "browser")) {
+                            launchSingleTop = true
+                        }
+                        navController.currentBackStackEntry?.savedStateHandle?.set(
+                            QUEUE_VIDEO_TOKEN_KEY,
+                            token,
+                        )
                     }
-                    navController.currentBackStackEntry?.savedStateHandle?.set(
-                        SAVED_VIDEO_IDS_KEY,
-                        videoIds.joinToString(","),
-                    )
                 },
                 onNavigateToImageViewer = { imageItemId, imageIds ->
                     val currentFolder = viewModel.currentFolder.value
-                    navHelper.imageQueue.setIds(imageIds)
-                    navController.navigate(Route.ImageViewer.create(imageItemId, currentFolder, "browser")) {
-                        launchSingleTop = true
+                    queueNav.navigateToImageViewer(imageItemId, imageIds) { token ->
+                        navController.navigate(Route.ImageViewer.create(imageItemId, currentFolder, "browser")) {
+                            launchSingleTop = true
+                        }
+                        navController.currentBackStackEntry?.savedStateHandle?.set(
+                            QUEUE_IMAGE_TOKEN_KEY,
+                            token,
+                        )
                     }
-                    navController.currentBackStackEntry?.savedStateHandle?.set(
-                        SAVED_IMAGE_IDS_KEY,
-                        imageIds.joinToString(","),
-                    )
                 },
                 onNavigateToSearch = {
                     val currentFolder = viewModel.currentFolder.value
@@ -116,7 +122,10 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             popEnterTransition = { fadeIn(tween(0)) },
             popExitTransition = { fadeOut(tween(0)) }
         ) { backStackEntry ->
+            // P3：进程恢复时在 PlayerViewModel 构造之前同步回填队列（含快照
+            // 缺失/损坏时降级为仅当前单项），保证 consumeIds() 必然命中。
             val videoItemId = backStackEntry.arguments?.getLong("videoItemId") ?: return@composable
+            queueNav.restoreVideoQueue(backStackEntry.savedStateHandle, videoItemId)
             val fromRoute = backStackEntry.arguments?.getString("fromRoute") ?: "browser"
             val viewModel: PlayerViewModel = hiltViewModel()
             PlayerScreen(
@@ -144,7 +153,9 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             popEnterTransition = { fadeIn(tween(0)) },
             popExitTransition = { fadeOut(tween(0)) }
         ) { backStackEntry ->
+            // P3：同 Player —— 目标 ViewModel 构造前同步回填图片队列。
             val imageItemId = backStackEntry.arguments?.getLong("imageItemId") ?: return@composable
+            queueNav.restoreImageQueue(backStackEntry.savedStateHandle, imageItemId)
             val fromRoute = backStackEntry.arguments?.getString("fromRoute") ?: "browser"
             val viewModel: ImageViewerViewModel = hiltViewModel()
             ImageViewerScreen(
@@ -250,24 +261,27 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
                     navController.navigate(Route.Browser.create(folderPath))
                 },
                 onNavigateToPlayer = { videoItemId, videoIds ->
-                    navHelper.videoQueue.setIds(videoIds)
-                    navController.navigate(Route.Player.create(videoItemId, "", "search")) {
-                        launchSingleTop = true
+                    // P3：同 Browser 入口 —— token + 快照文件替代完整 id CSV。
+                    queueNav.navigateToPlayer(videoItemId, videoIds) { token ->
+                        navController.navigate(Route.Player.create(videoItemId, "", "search")) {
+                            launchSingleTop = true
+                        }
+                        navController.currentBackStackEntry?.savedStateHandle?.set(
+                            QUEUE_VIDEO_TOKEN_KEY,
+                            token,
+                        )
                     }
-                    navController.currentBackStackEntry?.savedStateHandle?.set(
-                        SAVED_VIDEO_IDS_KEY,
-                        videoIds.joinToString(","),
-                    )
                 },
                 onNavigateToImageViewer = { imageItemId, imageIds ->
-                    navHelper.imageQueue.setIds(imageIds)
-                    navController.navigate(Route.ImageViewer.create(imageItemId, "", "search")) {
-                        launchSingleTop = true
+                    queueNav.navigateToImageViewer(imageItemId, imageIds) { token ->
+                        navController.navigate(Route.ImageViewer.create(imageItemId, "", "search")) {
+                            launchSingleTop = true
+                        }
+                        navController.currentBackStackEntry?.savedStateHandle?.set(
+                            QUEUE_IMAGE_TOKEN_KEY,
+                            token,
+                        )
                     }
-                    navController.currentBackStackEntry?.savedStateHandle?.set(
-                        SAVED_IMAGE_IDS_KEY,
-                        imageIds.joinToString(","),
-                    )
                 },
                 onBack = { navController.popBackStack() }
             )

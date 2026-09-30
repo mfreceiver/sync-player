@@ -80,6 +80,36 @@ data class PlayerUiState(
 data class GestureSeekUiState(
     val isSeeking: Boolean = false,
     val seekPositionFraction: Float = 0f,
+    val targetMs: Long = 0L,
+)
+
+enum class SeekPhase { Idle, Dragging, Settling }
+enum class SeekPrecision(val factor: Float) { Full(1f), Quarter(0.25f), Tenth(0.1f) }
+enum class SeekFrame { CurrentBucket, Pending, Failed, Suppressed }
+enum class SeekInput { Track, Gesture }
+
+/** All positions are milliseconds; CurrentBucket means an approximate 500ms bucket, not a PTS. */
+data class SeekPresentation(
+    val mediaGeneration: Long = 0L,
+    val session: Long = 0L,
+    val phase: SeekPhase = SeekPhase.Idle,
+    val input: SeekInput? = null,
+    val targetMs: Long = 0L,
+    val durationMs: Long = 0L,
+    val anchorMs: Long = 0L,
+    val precision: SeekPrecision = SeekPrecision.Full,
+    val precisionExplicit: Boolean = false,
+    val fineActivated: Boolean = false,
+    val frame: SeekFrame = SeekFrame.Suppressed,
+    val commitId: Long? = null,
+)
+
+/** Captured at seekTo dispatch, never reconstructed from mutable state in a callback. */
+data class SeekCommitRecord(
+    val mediaGeneration: Long,
+    val session: Long,
+    val commitId: Long,
+    val targetMs: Long,
 )
 
 data class PlayerOverlayUiState(
@@ -169,6 +199,16 @@ class PlayerViewModel @Inject constructor(
     val currentPosition: StateFlow<Long> = _currentPosition.asStateFlow()
 
     private val _progressScrubState = MutableStateFlow(ProgressScrubUiState())
+    private val _seekPresentation = MutableStateFlow(SeekPresentation())
+    val seekPresentation: StateFlow<SeekPresentation> = _seekPresentation.asStateFlow()
+    private var seekSequence = 0L
+    private var commitSequence = 0L
+    val pendingSeekCommit: SeekCommitRecord?
+        get() = _seekPresentation.value.let { state ->
+            state.commitId?.takeIf { state.phase == SeekPhase.Settling }?.let {
+                SeekCommitRecord(state.mediaGeneration, state.session, it, state.targetMs)
+            }
+        }
     val progressScrubState: StateFlow<ProgressScrubUiState> = _progressScrubState.asStateFlow()
 
     private val _gestureSeekState = MutableStateFlow(GestureSeekUiState())
@@ -288,6 +328,8 @@ class PlayerViewModel @Inject constructor(
         val isSameVideo = (videoItemId == _uiState.value.videoItem?.id && _uiState.value.videoItem != null)
 
         if (!isSameVideo) {
+            cancelSeek()
+            _seekPresentation.update { it.copy(mediaGeneration = generation) }
             inFlightSwitchGeneration = generation
             _currentPosition.value = 0L
             _pendingRestore.value = null
@@ -398,7 +440,7 @@ class PlayerViewModel @Inject constructor(
         if (inFlightSwitchGeneration != null) {
             return
         }
-        _currentPosition.value = position
+        if (_seekPresentation.value.phase != SeekPhase.Settling) _currentPosition.value = position
         if (_uiState.value.duration != duration) {
             _uiState.update { it.copy(duration = duration) }
         }
@@ -559,7 +601,25 @@ class PlayerViewModel @Inject constructor(
         _uiState.update { it.copy(isLongPressing = longPressing) }
     }
 
-    fun onProgressScrubStarted(anchorPositionMs: Long) {
+    private fun beginSeek(input: SeekInput, positionMs: Long): Long {
+        val duration = _uiState.value.duration.coerceAtLeast(0L)
+        val anchor = positionMs.coerceIn(0L, duration)
+        _seekPresentation.value = SeekPresentation(
+            mediaGeneration = _seekPresentation.value.mediaGeneration,
+            session = ++seekSequence, phase = SeekPhase.Dragging, input = input,
+            targetMs = anchor, anchorMs = anchor, durationMs = duration,
+        )
+        _progressScrubState.value = ProgressScrubUiState()
+        _gestureSeekState.value = GestureSeekUiState()
+        _uiState.update { it.copy(isUserSeeking = input == SeekInput.Track, seekTarget = -1L) }
+        return seekSequence
+    }
+
+    private fun ownsSeek(input: SeekInput, session: Long): Boolean =
+        _seekPresentation.value.let { it.phase == SeekPhase.Dragging && it.input == input && it.session == session }
+
+    fun onProgressScrubStarted(anchorPositionMs: Long): Long {
+        val session = beginSeek(SeekInput.Track, anchorPositionMs)
         val duration = _uiState.value.duration.coerceAtLeast(0L)
         val anchor = anchorPositionMs.coerceIn(0L, duration)
         _progressScrubState.value = ProgressScrubUiState(
@@ -568,6 +628,7 @@ class PlayerViewModel @Inject constructor(
             targetPositionMs = anchor,
         )
         _uiState.update { it.copy(isUserSeeking = true) }
+        return session
     }
 
     /** MOVE deliberately updates only the narrow progress state. */
@@ -575,9 +636,16 @@ class PlayerViewModel @Inject constructor(
         targetPositionMs: Long,
         factor: Float,
         isFineMode: Boolean,
+        session: Long = _seekPresentation.value.session,
     ) {
-        if (!_progressScrubState.value.isActive) return
+        if (!ownsSeek(SeekInput.Track, session)) return
         val duration = _uiState.value.duration.coerceAtLeast(0L)
+        _seekPresentation.update { it.copy(
+            targetMs = targetPositionMs.coerceIn(0L, duration),
+            precision = SeekPrecision.entries.minBy { precision -> kotlin.math.abs(precision.factor - factor) },
+            fineActivated = it.fineActivated || isFineMode,
+            frame = SeekFrame.Pending,
+        ) }
         _progressScrubState.update {
             it.copy(
                 targetPositionMs = targetPositionMs.coerceIn(0L, duration),
@@ -588,27 +656,38 @@ class PlayerViewModel @Inject constructor(
     }
 
     /** FINISH is the sole progress-bar path that commits playback position. */
-    fun onProgressScrubFinished(targetPositionMs: Long) {
-        val target = targetPositionMs.coerceIn(0L, _uiState.value.duration.coerceAtLeast(0L))
-        _currentPosition.value = target
-        _progressScrubState.value = ProgressScrubUiState()
-        _uiState.update { it.copy(isUserSeeking = false, seekTarget = target) }
+    fun onProgressScrubFinished(targetPositionMs: Long, session: Long = _seekPresentation.value.session): Long? {
+        if (!ownsSeek(SeekInput.Track, session)) return null
+        onProgressScrubChanged(targetPositionMs, _seekPresentation.value.precision.factor, _seekPresentation.value.fineActivated, session)
+        return commitSeek()
     }
 
     /** CANCEL rolls back the UI session without seeking or changing position. */
-    fun onProgressScrubCancelled() {
+    fun onProgressScrubCancelled(session: Long = _seekPresentation.value.session) {
+        if (!ownsSeek(SeekInput.Track, session)) return
+        cancelSeek()
+    }
+
+    fun cancelSeek() {
+        _seekPresentation.update { it.copy(phase = SeekPhase.Idle, frame = SeekFrame.Suppressed, commitId = null) }
         _progressScrubState.value = ProgressScrubUiState()
-        _uiState.update { it.copy(isUserSeeking = false) }
+        _gestureSeekState.value = GestureSeekUiState()
+        _uiState.update { it.copy(isUserSeeking = false, seekTarget = -1L) }
     }
 
-    fun onGestureSeekStarted() {
+    fun onGestureSeekStarted(anchorMs: Long = _currentPosition.value): Long {
+        val session = beginSeek(SeekInput.Gesture, anchorMs)
         _gestureSeekState.update { it.copy(isSeeking = true) }
+        return session
     }
 
-    fun onGestureSeekChanged(positionMs: Long, durationMs: Long) {
+    fun onGestureSeekChanged(positionMs: Long, durationMs: Long, session: Long = _seekPresentation.value.session) {
+        if (!ownsSeek(SeekInput.Gesture, session)) return
         if (durationMs > 0) {
-            val pos = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-            _gestureSeekState.update { it.copy(isSeeking = true, seekPositionFraction = pos) }
+            val target = positionMs.coerceIn(0L, _seekPresentation.value.durationMs)
+            _seekPresentation.update { it.copy(targetMs = target, frame = SeekFrame.Pending) }
+            val pos = (target.toDouble() / durationMs).toFloat().coerceIn(0f, 1f)
+            _gestureSeekState.update { it.copy(isSeeking = true, seekPositionFraction = pos, targetMs = target) }
         }
     }
 
@@ -619,12 +698,54 @@ class PlayerViewModel @Inject constructor(
      * advancing during the gesture and would skew the committed target away
      * from what the overlay previewed.
      */
-    fun onGestureSeekFinished(targetMs: Long) {
-        _gestureSeekState.update { it.copy(isSeeking = false) }
-        val duration = _uiState.value.duration
-        val target = targetMs.coerceIn(0, duration.coerceAtLeast(0))
+    fun onGestureSeekFinished(targetMs: Long, session: Long = _seekPresentation.value.session): Long? {
+        if (!ownsSeek(SeekInput.Gesture, session)) return null
+        onGestureSeekChanged(targetMs, _seekPresentation.value.durationMs, session)
+        return commitSeek()
+    }
+
+    fun onGestureSeekCancelled(session: Long) {
+        if (ownsSeek(SeekInput.Gesture, session)) cancelSeek()
+    }
+
+    private fun commitSeek(): Long {
+        val target = _seekPresentation.value.targetMs
+        _seekPresentation.update { it.copy(phase = SeekPhase.Settling, commitId = ++commitSequence, frame = SeekFrame.Suppressed) }
+        _progressScrubState.value = ProgressScrubUiState()
+        _gestureSeekState.value = GestureSeekUiState(targetMs = target)
         _currentPosition.value = target
-        _uiState.update { it.copy(seekTarget = target) }
+        _uiState.update { it.copy(isUserSeeking = false, seekTarget = target) }
+        return target
+    }
+
+    fun acknowledgeSeek(record: SeekCommitRecord, positionMs: Long) {
+        val state = _seekPresentation.value
+        if (pendingSeekCommit != record) return
+        _currentPosition.value = positionMs.coerceIn(0L, state.durationMs)
+        _seekPresentation.value = state.copy(phase = SeekPhase.Idle, targetMs = _currentPosition.value, commitId = null)
+        clearSeekTarget()
+    }
+
+    fun terminateSeek(record: SeekCommitRecord, actualPositionMs: Long) {
+        if (pendingSeekCommit != record) return
+        cancelSeek()
+        clearSeekTarget()
+        _currentPosition.value = actualPositionMs.coerceAtLeast(0L)
+    }
+
+    /** A discontinuity without reliable commit identity still reports the actual head. */
+    fun observeSeekPosition(positionMs: Long) {
+        _currentPosition.value = positionMs.coerceAtLeast(0L)
+    }
+
+    fun selectSeekPrecision(precision: SeekPrecision) {
+        _seekPresentation.update { if (it.phase == SeekPhase.Dragging) it.copy(precision = precision, precisionExplicit = true) else it }
+    }
+
+    fun updateSeekFrame(session: Long, targetMs: Long, frame: SeekFrame) {
+        _seekPresentation.update {
+            if (it.session == session && it.targetMs == targetMs && it.phase == SeekPhase.Dragging) it.copy(frame = frame) else it
+        }
     }
 
     fun updateAutoSwitchTime() {

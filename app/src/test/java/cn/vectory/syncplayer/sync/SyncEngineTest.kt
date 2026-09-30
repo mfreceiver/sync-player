@@ -203,6 +203,8 @@ class SyncEngineTest {
         )
         coEvery { videoRepository.getById(100L) } returns savedEntity
         coEvery { videoMetadataExtractor.extractAndSave(any()) } returns savedEntity
+        // A2（rev-gpt 迁移）：成功路径的最终元数据走按列提交——本场景命中 1 行
+        coEvery { videoRepository.updateSyncMetadata(100L, 1000L, any(), any()) } returns 1
 
         val sink = mockk<OutputStream>(relaxed = true)
         // AEAD v2: sink 需要明文长度以写入 header，故为三参重载。

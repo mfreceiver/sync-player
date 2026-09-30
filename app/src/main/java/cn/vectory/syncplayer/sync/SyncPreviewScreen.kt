@@ -13,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -26,6 +27,14 @@ import cn.vectory.syncplayer.data.model.SyncAction
 import cn.vectory.syncplayer.ui.components.ErrorBanner
 import cn.vectory.syncplayer.ui.components.FullScreenError
 
+/**
+ * D1（ora-2）：终态语义修正 ——
+ *  - 移除误导性「同步已完成」卡：Finished 按 outcome 分卡，失败/取消绝不显示成功。
+ *  - 失败与部分失败提供「重新扫描」恢复入口；dismiss 错误不复活旧计划。
+ *  - 含删除项的计划（两模式）先弹确认对话框，列明下载数/删除数。
+ *  - 删除警告卡在两种模式均显示（旧版仅 DOWNLOAD 模式）。
+ *  - 仅状态驱动适配 + 确认对话框；复用既有组件与样式，不做视觉重设计。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SyncPreviewScreen(
@@ -33,15 +42,12 @@ fun SyncPreviewScreen(
     onBack: () -> Unit,
     onNavigateToRelation: (relationId: Long, initialTab: String) -> Unit = { _, _ -> }
 ) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
     val toDownload by viewModel.toDownload.collectAsStateWithLifecycle()
     val toDelete by viewModel.toDelete.collectAsStateWithLifecycle()
-    val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
-    val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
-    val isDeleting by viewModel.isDeleting.collectAsStateWithLifecycle()
+    val pendingExecuteConfirm by viewModel.pendingExecuteConfirm.collectAsStateWithLifecycle()
     val syncMode by viewModel.syncMode.collectAsStateWithLifecycle()
-    val previewLoaded by viewModel.previewLoaded.collectAsStateWithLifecycle()
-    val syncComplete by viewModel.syncComplete.collectAsStateWithLifecycle()
     val progress by viewModel.progress.collectAsStateWithLifecycle()
     val allRelations by viewModel.allRelations.collectAsStateWithLifecycle()
     val currentRelationName by viewModel.currentRelationName.collectAsStateWithLifecycle()
@@ -53,6 +59,11 @@ fun SyncPreviewScreen(
             onBack()
         }
     }
+
+    val isRunning = state is SyncPreviewState.Running || state is SyncPreviewState.Cancelling
+
+    // D3: Submitting 亦为忙态 —— Tab 切换与重新预览按钮禁用（VM 同步拒绝，双层守卫）。
+    val busy = isRunning || state is SyncPreviewState.Submitting
 
     // Keep system and app-bar back behavior identical. A running sync is stopped only by
     // the explicit Stop control so leaving this preview is never a destructive side effect.
@@ -113,11 +124,13 @@ fun SyncPreviewScreen(
                 PrimaryTabRow(selectedTabIndex = if (syncMode == SyncMode.DOWNLOAD) 0 else 1) {
                     Tab(
                         selected = syncMode == SyncMode.DOWNLOAD,
+                        enabled = !busy,
                         onClick = { viewModel.setSyncMode(SyncMode.DOWNLOAD) },
                         text = { Text(stringResource(R.string.sync_preview_download)) }
                     )
                     Tab(
                         selected = syncMode == SyncMode.DELETE,
+                        enabled = !busy,
                         onClick = { viewModel.setSyncMode(SyncMode.DELETE) },
                         text = { Text(stringResource(R.string.sync_preview_delete_label)) }
                     )
@@ -133,21 +146,27 @@ fun SyncPreviewScreen(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = {
-                        if (isSyncing || isDeleting) {
-                            viewModel.cancelSync()
-                        } else {
-                            onBack()
-                        }
-                    }) {
-                        Text(if (isSyncing || isDeleting) stringResource(R.string.common_stop) else stringResource(R.string.common_cancel))
+                    TextButton(
+                        onClick = {
+                            if (state is SyncPreviewState.Running) {
+                                viewModel.cancelSync()
+                            } else {
+                                onBack()
+                            }
+                        },
+                        enabled = state !is SyncPreviewState.Cancelling
+                    ) {
+                        Text(
+                            if (isRunning) stringResource(R.string.common_stop)
+                            else stringResource(R.string.common_cancel)
+                        )
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = { viewModel.loadPreview() },
-                        enabled = !isLoading && !isSyncing && !isDeleting
+                        enabled = state !is SyncPreviewState.Scanning && !busy
                     ) {
-                        if (isLoading) {
+                        if (state is SyncPreviewState.Scanning) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
                                 strokeWidth = 2.dp,
@@ -159,15 +178,8 @@ fun SyncPreviewScreen(
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
-                        onClick = {
-                            if (syncMode == SyncMode.DOWNLOAD) {
-                                viewModel.startSync()
-                            } else {
-                                viewModel.startDelete()
-                            }
-                        },
-                        enabled = previewLoaded && !isSyncing && !isDeleting &&
-                            (syncMode == SyncMode.DOWNLOAD && (toDownload.isNotEmpty() || toDelete.isNotEmpty()) || syncMode == SyncMode.DELETE && toDelete.isNotEmpty()),
+                        onClick = { viewModel.requestExecute() },
+                        enabled = state is SyncPreviewState.Ready,
                         colors = if (syncMode == SyncMode.DELETE) {
                             ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.error
@@ -176,7 +188,7 @@ fun SyncPreviewScreen(
                             ButtonDefaults.buttonColors()
                         }
                     ) {
-                        if (isSyncing || isDeleting) {
+                        if (isRunning) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
                                 strokeWidth = 2.dp,
@@ -199,8 +211,8 @@ fun SyncPreviewScreen(
             }
         },
     ) { paddingValues ->
-        when {
-            isLoading -> {
+        when (val s = state) {
+            is SyncPreviewState.Scanning -> {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -210,14 +222,14 @@ fun SyncPreviewScreen(
                     CircularProgressIndicator()
                 }
             }
-            error != null && !previewLoaded -> {
+            is SyncPreviewState.ScanFailed -> {
                 FullScreenError(
-                    message = error ?: stringResource(R.string.unknown_error),
+                    message = scanIssueMessage(s.issue.kind),
                     onRetry = { viewModel.loadPreview() },
                     modifier = Modifier.padding(paddingValues)
                 )
             }
-            !previewLoaded -> {
+            SyncPreviewState.Idle -> {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -241,7 +253,24 @@ fun SyncPreviewScreen(
                     }
                 }
             }
-            else -> {
+            SyncPreviewState.NoChanges -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues),
+                    contentAlignment = Alignment.Center
+                ) {
+                    OutcomeCard(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        icon = Icons.Default.CheckCircle,
+                        iconTint = MaterialTheme.colorScheme.primary,
+                        title = stringResource(R.string.sync_preview_up_to_date),
+                        showRescan = true,
+                        onRescan = { viewModel.loadPreview() }
+                    )
+                }
+            }
+            is SyncPreviewState.Ready -> {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -253,145 +282,237 @@ fun SyncPreviewScreen(
                             onDismiss = { viewModel.clearError() }
                         )
                     }
-                    if (syncComplete) {
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer
-                            )
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CheckCircle,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(48.dp)
-                                )
-                                Spacer(Modifier.height(8.dp))
-                                Text(
-                                    text = stringResource(R.string.sync_preview_completed),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
+                    if (syncMode == SyncMode.DOWNLOAD) {
+                        SyncDownloadSummaryCard(
+                            downloadCount = toDownload.size,
+                            downloadSize = toDownload.sumOf { it.fileSize },
+                            deleteCount = toDelete.size,
+                            deleteSize = toDelete.sumOf { it.fileSize }
+                        )
                     } else {
-                        if (isSyncing) {
-                            SyncProgressCard(
-                                completedFiles = progress.completedFiles,
-                                totalFiles = progress.totalFiles,
-                                transferredBytes = progress.transferredBytes,
-                                totalBytes = progress.totalBytes,
-                                activeDownloads = progress.activeDownloads,
-                                speedBytesPerSec = progress.speedBytesPerSec
-                            )
-                        }
-                        val remainingToDownload by remember {
-                            derivedStateOf {
-                                if (isSyncing) {
-                                    toDownload.filter { it.relativePath !in progress.completedPaths }
-                                } else {
-                                    toDownload
-                                }
-                            }
-                        }
-                        val remainingToDelete by remember {
-                            derivedStateOf {
-                                if (isSyncing || isDeleting) {
-                                    toDelete.filter { it.relativePath !in progress.completedPaths }
-                                } else {
-                                    toDelete
-                                }
-                            }
-                        }
-                        val currentItemsEmpty by remember {
-                            derivedStateOf {
-                                if (syncMode == SyncMode.DOWNLOAD) {
-                                    remainingToDownload.isEmpty() && remainingToDelete.isEmpty()
-                                } else {
-                                    remainingToDelete.isEmpty()
-                                }
-                            }
-                        }
-                        if (currentItemsEmpty && !isSyncing && !isDeleting) {
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                                )
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(16.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(48.dp)
-                                    )
-                                    Spacer(Modifier.height(8.dp))
-                                    Text(
-                                        text = stringResource(R.string.sync_preview_up_to_date),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Spacer(Modifier.height(16.dp))
-                                    Button(onClick = { viewModel.loadPreview() }) {
-                                        Text(stringResource(R.string.sync_preview_rescan))
-                                    }
-                                }
-                            }
-                        }
+                        SyncDeleteSummaryCard(
+                            count = toDelete.size,
+                            totalSize = toDelete.sumOf { it.fileSize }
+                        )
+                    }
+                    // D1: 删除警告两模式均适用（旧版仅 DOWNLOAD 模式）。
+                    if (toDelete.isNotEmpty()) {
+                        SyncDeleteWarningCard()
+                    }
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(vertical = 8.dp)
+                    ) {
                         if (syncMode == SyncMode.DOWNLOAD) {
-                            if (!isSyncing && (remainingToDownload.isNotEmpty() || remainingToDelete.isNotEmpty())) {
-                                SyncDownloadSummaryCard(
-                                    downloadCount = remainingToDownload.size,
-                                    downloadSize = remainingToDownload.sumOf { it.fileSize },
-                                    deleteCount = remainingToDelete.size,
-                                    deleteSize = remainingToDelete.sumOf { it.fileSize }
-                                )
+                            items(toDownload, key = { "dl_${it.relativePath}" }) { action ->
+                                SyncActionItem(action = action, isDownload = true)
+                            }
+                            items(toDelete, key = { "rm_${it.relativePath}" }) { action ->
+                                SyncActionItem(action = action, isDownload = false, showStrikethrough = true)
                             }
                         } else {
-                            if (!isDeleting && remainingToDelete.isNotEmpty()) {
-                                SyncDeleteSummaryCard(
-                                    count = remainingToDelete.size,
-                                    totalSize = remainingToDelete.sumOf { it.fileSize }
-                                )
-                            }
-                        }
-                        if (syncMode == SyncMode.DOWNLOAD && remainingToDelete.isNotEmpty() && !isSyncing) {
-                            SyncDeleteWarningCard()
-                        }
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(vertical = 8.dp)
-                        ) {
-                            if (syncMode == SyncMode.DOWNLOAD) {
-                                items(remainingToDownload, key = { "dl_${it.relativePath}" }) { action ->
-                                    SyncActionItem(action = action, isDownload = true)
-                                }
-                                items(remainingToDelete, key = { "rm_${it.relativePath}" }) { action ->
-                                    SyncActionItem(action = action, isDownload = false, showStrikethrough = true)
-                                }
-                            } else {
-                                items(remainingToDelete, key = { it.relativePath }) { action ->
-                                    SyncActionItem(action = action, isDownload = false)
-                                }
+                            items(toDelete, key = { it.relativePath }) { action ->
+                                SyncActionItem(action = action, isDownload = false)
                             }
                         }
                     }
+                }
+            }
+            is SyncPreviewState.Running -> RunningContent(
+                state = s,
+                progress = progress,
+                paddingValues = paddingValues
+            )
+            is SyncPreviewState.Cancelling -> RunningContent(
+                state = s,
+                progress = progress,
+                paddingValues = paddingValues,
+                stopping = true
+            )
+            is SyncPreviewState.Finished -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues),
+                    contentAlignment = Alignment.Center
+                ) {
+                    when (s.result.outcome) {
+                        SyncRunOutcome.SUCCESS -> OutcomeCard(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            icon = Icons.Default.CheckCircle,
+                            iconTint = MaterialTheme.colorScheme.primary,
+                            title = stringResource(R.string.sync_preview_completed),
+                            showRescan = true,
+                            onRescan = { viewModel.loadPreview() }
+                        )
+                        SyncRunOutcome.PARTIAL_FAILED -> OutcomeCard(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            icon = Icons.Default.Warning,
+                            iconTint = MaterialTheme.colorScheme.error,
+                            title = stringResource(
+                                R.string.sync_preview_result_partial_failed,
+                                s.result.failedFiles,
+                                s.result.completedFiles
+                            ),
+                            showRescan = true,
+                            onRescan = { viewModel.loadPreview() }
+                        )
+                        SyncRunOutcome.FAILED -> OutcomeCard(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            icon = Icons.Default.ErrorOutline,
+                            iconTint = MaterialTheme.colorScheme.error,
+                            title = stringResource(R.string.sync_preview_result_failed),
+                            showRescan = true,
+                            onRescan = { viewModel.loadPreview() }
+                        )
+                        SyncRunOutcome.CANCELLED -> OutcomeCard(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            icon = Icons.Default.Cancel,
+                            iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            title = stringResource(R.string.sync_preview_result_cancelled),
+                            showRescan = true,
+                            onRescan = { viewModel.loadPreview() }
+                        )
+                    }
+                }
+            }
+            is SyncPreviewState.Submitting -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            }
+        }
+    }
+
+    // D1: 含删除项计划的执行确认门（两模式均适用）。D3: 门值改为 planId，非空即弹。
+    if (pendingExecuteConfirm != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissExecuteConfirm() },
+            title = { Text(stringResource(R.string.sync_preview_confirm_dialog_title)) },
+            text = {
+                Text(
+                    if (toDownload.isNotEmpty()) {
+                        stringResource(
+                            R.string.sync_preview_confirm_dialog_delete_message,
+                            toDownload.size,
+                            toDelete.size
+                        )
+                    } else {
+                        stringResource(
+                            R.string.sync_preview_confirm_dialog_delete_only_message,
+                            toDelete.size
+                        )
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmExecute() }) {
+                    Text(stringResource(R.string.common_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissExecuteConfirm() }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun scanIssueMessage(kind: SyncPreviewIssue): String = when (kind) {
+    SyncPreviewIssue.AUTH -> stringResource(R.string.sync_preview_issue_auth)
+    SyncPreviewIssue.PATH -> stringResource(R.string.sync_preview_issue_path)
+    SyncPreviewIssue.NETWORK -> stringResource(R.string.sync_preview_issue_network)
+    SyncPreviewIssue.SCAN_INCOMPLETE -> stringResource(R.string.sync_preview_issue_scan_incomplete)
+    SyncPreviewIssue.STORAGE -> stringResource(R.string.sync_preview_issue_storage)
+    SyncPreviewIssue.UNKNOWN -> stringResource(R.string.sync_preview_issue_unknown)
+}
+
+@Composable
+private fun RunningContent(
+    state: SyncPreviewState,
+    progress: cn.vectory.syncplayer.data.model.SyncProgress,
+    paddingValues: PaddingValues,
+    stopping: Boolean = false
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(paddingValues),
+        contentAlignment = Alignment.Center
+    ) {
+        if (state is SyncPreviewState.Running && state.mode == SyncMode.DOWNLOAD ||
+            state is SyncPreviewState.Cancelling && state.mode == SyncMode.DOWNLOAD
+        ) {
+            SyncProgressCard(
+                completedFiles = progress.completedFiles,
+                totalFiles = progress.totalFiles,
+                transferredBytes = progress.transferredBytes,
+                totalBytes = progress.totalBytes,
+                activeDownloads = progress.activeDownloads,
+                speedBytesPerSec = progress.speedBytesPerSec
+            )
+        } else {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularProgressIndicator()
+                Text(
+                    text = stringResource(
+                        if (stopping) R.string.sync_preview_stopping else R.string.sync_preview_deleting
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OutcomeCard(
+    containerColor: Color,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconTint: Color,
+    title: String,
+    showRescan: Boolean,
+    onRescan: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        colors = CardDefaults.cardColors(containerColor = containerColor)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(48.dp)
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            if (showRescan) {
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = onRescan) {
+                    Text(stringResource(R.string.sync_preview_rescan))
                 }
             }
         }
@@ -514,8 +635,6 @@ private fun SyncActionItem(
         }
     )
 }
-
-
 
 @Composable
 private fun SyncProgressCard(

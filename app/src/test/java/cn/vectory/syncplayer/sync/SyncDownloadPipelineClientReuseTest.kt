@@ -1,6 +1,5 @@
 package cn.vectory.syncplayer.sync
 
-import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.model.SyncAction
 import cn.vectory.syncplayer.data.model.SyncActionType
 import cn.vectory.syncplayer.data.model.SyncProtocol
@@ -85,17 +84,13 @@ class SyncDownloadPipelineClientReuseTest {
         username = "u", password = "p"
     )
 
-    /** 所有 action 的下载成功路径（占位行 → finalize → 元数据回写）。 */
+    /** 所有 action 的下载成功路径（占位行 → finalize → 列提交）。 */
     private fun stubSuccessfulDownloadPath() {
         coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns null
         val idSeq = AtomicLong(100L)
         coEvery { videoRepository.upsert(any()) } answers { idSeq.incrementAndGet() }
-        coEvery { videoRepository.getById(any()) } answers {
-            VideoItemEntity(
-                id = firstArg(), syncRelationId = 1L, relativePath = "rel",
-                fileName = "f.mp4", fileSize = 1L
-            )
-        }
+        // A1: 最终元数据走列提交（占位行存在 ⇒ 命中 1 行）
+        coEvery { videoRepository.updateSyncMetadata(any(), any(), any(), any()) } returns 1
         every { store.usableSpace() } returns Long.MAX_VALUE
         coEvery { store.openWriteSink(any(), any()) } returns mockk<OutputStream>(relaxed = true)
         coEvery { store.finalize(any()) } returns true

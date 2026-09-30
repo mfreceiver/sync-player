@@ -105,6 +105,18 @@ class MediaFileStore @Inject constructor(
         TmpProbeState.UNKNOWN
     }
 
+    /**
+     * A7: final 完整性探测（预览只读）。单次文件属性读取判定
+     * [MediaProbeState]：MISSING 仅来自明确 NoSuchFileException，权限/其它
+     * IO/非 regular/不确定一律 fail-closed 为 IO_ERROR（绝不用
+     * File.exists 吞异常后再判缺失）。阻塞属性读取在 IO dispatcher。
+     * 不写入、不产生日志（不泄漏 path/底层 message）。
+     */
+    suspend fun probeFinalized(id: Long, expectedSize: Long): MediaProbeState =
+        withContext(ioDispatcher) {
+            MediaFinalProbeCore.probe(root, id, expectedSize, NioFileAttributeReader)
+        }
+
     // ---- 读侧 ----
 
     /**

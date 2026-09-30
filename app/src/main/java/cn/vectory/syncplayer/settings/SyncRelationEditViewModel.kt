@@ -11,6 +11,8 @@ import cn.vectory.syncplayer.data.model.SyncRelation
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import cn.vectory.syncplayer.data.repository.SyncSourceRepository
+import cn.vectory.syncplayer.data.repository.SyncSourceCredentialUncertainException
+import cn.vectory.syncplayer.sync.RemoteFileClient
 import cn.vectory.syncplayer.di.IoDispatcher
 import cn.vectory.syncplayer.storage.StoragePaths
 import cn.vectory.syncplayer.sync.RemoteFileClientFactory
@@ -25,6 +27,8 @@ import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,6 +48,7 @@ data class StorageInfo(
  * stringResource against existing entries — the ViewModel never produces copy.
  */
 sealed interface RelationTestResult {
+    data object CredentialsRequired : RelationTestResult
     /** 远端目录可访问（唯一成功态）。 */
     data object DirAccessible : RelationTestResult
 
@@ -55,6 +60,8 @@ sealed interface RelationTestResult {
     /** 访问失败；[code] 为结构化错误码（对非 SyncException 的回退分类镜像 syncErrorMessage）。 */
     data class AccessFailed(val code: SyncErrorCode) : RelationTestResult
 }
+
+enum class RelationEditLoadState { LOADING, READY, FAILED }
 
 /** F09: typed save/delete outcome — 颜色与导航（仅 Saved 返回列表）由类型分支驱动。 */
 sealed interface RelationSaveResult {
@@ -160,17 +167,76 @@ class SyncRelationEditViewModel @Inject constructor(
 
     private val _storageInfo = MutableStateFlow<StorageInfo?>(null)
     val storageInfo: StateFlow<StorageInfo?> = _storageInfo.asStateFlow()
+    private val _loadState = MutableStateFlow(RelationEditLoadState.LOADING)
+    val loadState = _loadState.asStateFlow()
+    private val _credentialsRequired = MutableStateFlow(false)
+    val credentialsRequired = _credentialsRequired.asStateFlow()
+    private val _canSelectRemotePath = MutableStateFlow(false)
+    val canSelectRemotePath = _canSelectRemotePath.asStateFlow()
+    private var loadGeneration = 0L
+    private var loadJob: Job? = null
+    private var remoteGeneration = 0L
+    private var browseJob: Job? = null
+    private var testJob: Job? = null
+    private data class RemoteRequest(val sourceId: Long, val path: String, val generation: Long)
+    private var validatedDirectory: RemoteRequest? = null
+
+    private fun invalidateRemote() {
+        // Invalidate BEFORE cancellation: old catches/finally must not own new UI state.
+        remoteGeneration++
+        browseJob?.cancel()
+        testJob?.cancel()
+        validatedDirectory = null
+        _canSelectRemotePath.value = false
+        _remoteDirectories.value = emptyList()
+        _browseError.value = null
+        _error.value = null
+        _credentialsRequired.value = false
+        _testResult.value = null
+        _isBrowsing.value = false
+        _isTesting.value = false
+    }
+
+    private fun isCurrent(request: RemoteRequest, browsing: Boolean): Boolean =
+        request.generation == remoteGeneration && request.sourceId == _selectedSourceId.value &&
+            request.path == (if (browsing) _currentRemoteBrowsePath.value else _remotePath.value.trim())
 
     init {
-        loadSources()
-        if (relationId > 0) loadRelation()
+        retryLoad()
         loadStorageInfo()
     }
 
-    private fun loadSources() {
-        viewModelScope.launch {
-            _availableSources.value = syncSourceRepository.getAllWithCredentials()
+    fun retryLoad(): Job {
+        if (_loadState.value == RelationEditLoadState.READY || _isSaving.value) return Job().apply { complete() }
+        val generation = ++loadGeneration
+        loadJob?.cancel()
+        invalidateRemote()
+        _loadState.value = RelationEditLoadState.LOADING
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                val sources = syncSourceRepository.getAll()
+                if (generation != loadGeneration) return@launch
+                val relation = if (relationId > 0) syncRelationRepository.getById(relationId) else null
+                if (generation != loadGeneration) return@launch
+                if (relationId > 0) checkNotNull(relation) { "Relation missing" }
+                _availableSources.value = sources
+                if (relation != null) {
+                    _name.value = relation.name
+                    _selectedSourceId.value = relation.syncSourceId
+                    _remotePath.value = relation.remotePath
+                    _localBasePath.value = relation.localBasePath
+                    _currentRemoteBrowsePath.value = relation.remotePath
+                }
+                _loadState.value = RelationEditLoadState.READY
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                if (generation == loadGeneration) _loadState.value = RelationEditLoadState.FAILED
+            }
         }
+        loadJob = job
+        job.start()
+        return job
     }
 
     private fun loadStorageInfo() {
@@ -180,21 +246,20 @@ class SyncRelationEditViewModel @Inject constructor(
         )
     }
 
-    private fun loadRelation() {
-        viewModelScope.launch {
-            val relation = syncRelationRepository.getById(relationId) ?: return@launch
-            _name.value = relation.name
-            _selectedSourceId.value = relation.syncSourceId
-            _remotePath.value = relation.remotePath
-            _localBasePath.value = relation.localBasePath
-            _currentRemoteBrowsePath.value = relation.remotePath
-        }
-    }
-
     fun setName(value: String) { _name.value = value }
-    fun setRemotePath(value: String) { _remotePath.value = value }
+    fun setRemotePath(value: String) {
+        if (_remotePath.value == value) return
+        invalidateRemote()
+        _remotePath.value = value
+        _currentRemoteBrowsePath.value = value
+    }
     fun setLocalBasePath(value: String) { _localBasePath.value = value }
-    fun selectSource(id: Long) { _selectedSourceId.value = id }
+    fun selectSource(id: Long) {
+        if (_selectedSourceId.value == id) return
+        invalidateRemote()
+        _selectedSourceId.value = id
+        _currentRemoteBrowsePath.value = "/"
+    }
 
     // Local base path is a pure logical path string (encrypted volume has no browsable plaintext dirs).
     // Directory materializes on first sync under MediaFileStore.
@@ -202,35 +267,54 @@ class SyncRelationEditViewModel @Inject constructor(
     // --- Remote directory browsing ---
 
     fun browseRemote() {
-        viewModelScope.launch {
-            val sourceId = _selectedSourceId.value
-            val source = _availableSources.value.find { it.id == sourceId }
-            if (source == null) {
-                _error.value = context.getString(R.string.relation_select_source_first)
-                return@launch
-            }
-            _error.value = null
-            _browseError.value = null
-            _isBrowsing.value = true
-            val client = remoteFileClientFactory.create(source.protocol)
+        if (_loadState.value != RelationEditLoadState.READY || _isBrowsing.value) return
+        invalidateRemote()
+        val request = RemoteRequest(_selectedSourceId.value, _currentRemoteBrowsePath.value, remoteGeneration)
+        val source = _availableSources.value.find { it.id == request.sourceId }
+        if (source == null) {
+            _error.value = context.getString(R.string.relation_select_source_first)
+            return
+        }
+        _isBrowsing.value = true
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            var client: RemoteFileClient? = null
             try {
-                client.connect(source, _currentRemoteBrowsePath.value)
-                _remoteDirectories.value = client.listDirectories(_currentRemoteBrowsePath.value)
+                val loaded = syncSourceRepository.getById(request.sourceId)
+                if (!isCurrent(request, true)) return@launch
+                val credentials = checkNotNull(loaded) { "Source missing" }
+                val connection = remoteFileClientFactory.create(credentials.protocol)
+                client = connection
+                connection.connect(credentials, request.path)
+                if (!isCurrent(request, true)) return@launch
+                val directories = connection.listDirectories(request.path)
+                if (!isCurrent(request, true)) return@launch
+                _remoteDirectories.value = directories
+                validatedDirectory = request
             } catch (e: CancellationException) {
+                if (isCurrent(request, true)) validatedDirectory = null
                 throw e
+            } catch (_: SyncSourceCredentialUncertainException) {
+                if (isCurrent(request, true)) _credentialsRequired.value = true
             } catch (e: Exception) {
-                _browseError.value = classifyRemoteError(e)
-                _remoteDirectories.value = emptyList()
+                if (isCurrent(request, true)) _browseError.value = classifyRemoteError(e)
             } finally {
-                _isBrowsing.value = false
                 try {
-                    client.disconnect()
+                    client?.disconnect()
                 } catch (e: CancellationException) {
+                    if (isCurrent(request, true)) validatedDirectory = null
                     throw e
                 } catch (_: Exception) {
+                } finally {
+                    if (isCurrent(request, true)) {
+                        _isBrowsing.value = false
+                        _canSelectRemotePath.value = validatedDirectory == request &&
+                            !_credentialsRequired.value && _browseError.value == null && _error.value == null
+                    }
                 }
             }
         }
+        browseJob = job
+        job.start()
     }
 
     fun clearBrowseError() {
@@ -238,36 +322,51 @@ class SyncRelationEditViewModel @Inject constructor(
     }
 
     fun testRemotePath() {
-        viewModelScope.launch {
-            val sourceId = _selectedSourceId.value
-            val source = _availableSources.value.find { it.id == sourceId }
-            if (source == null) {
-                _testResult.value = RelationTestResult.PreconditionFailed(
-                    RelationTestResult.PreconditionFailed.Reason.NO_SOURCE
-                )
-                return@launch
-            }
-            val path = _remotePath.value.trim()
-            if (path.isBlank()) {
-                _testResult.value = RelationTestResult.PreconditionFailed(
-                    RelationTestResult.PreconditionFailed.Reason.NO_PATH
-                )
-                return@launch
-            }
-            _isTesting.value = true
-            _testResult.value = null
-            val client = remoteFileClientFactory.create(source.protocol)
+        if (_loadState.value != RelationEditLoadState.READY || _isTesting.value) return
+        invalidateRemote()
+        val request = RemoteRequest(_selectedSourceId.value, _remotePath.value.trim(), remoteGeneration)
+        val source = _availableSources.value.find { it.id == request.sourceId }
+        if (source == null) {
+            _testResult.value = RelationTestResult.PreconditionFailed(
+                RelationTestResult.PreconditionFailed.Reason.NO_SOURCE
+            )
+            return
+        }
+        val path = request.path
+        if (path.isBlank()) {
+            _testResult.value = RelationTestResult.PreconditionFailed(
+                RelationTestResult.PreconditionFailed.Reason.NO_PATH
+            )
+            return
+        }
+        _isTesting.value = true
+        _testResult.value = null
+        _credentialsRequired.value = false
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            var client: RemoteFileClient? = null
             try {
-                client.connect(source, path)
-                client.listDirectories(path)
+                val loaded = syncSourceRepository.getById(request.sourceId)
+                if (!isCurrent(request, false)) return@launch
+                val credentials = checkNotNull(loaded) { "Source missing" }
+                val connection = remoteFileClientFactory.create(credentials.protocol)
+                client = connection
+                connection.connect(credentials, path)
+                if (!isCurrent(request, false)) return@launch
+                connection.listDirectories(path)
+                if (!isCurrent(request, false)) return@launch
                 _testResult.value = RelationTestResult.DirAccessible
             } catch (e: CancellationException) {
                 throw e
+            } catch (_: SyncSourceCredentialUncertainException) {
+                if (isCurrent(request, false)) {
+                    _credentialsRequired.value = true
+                    _testResult.value = RelationTestResult.CredentialsRequired
+                }
             } catch (e: Exception) {
                 // F09: 只携带结构化码，展示由 Screen 映射。对非 SyncException 的回退
                 // 分类镜像 syncErrorMessage（SocketTimeout/UnknownHost→超时族、
                 // ConnectException→CONNECTION_REFUSED、其余→UNKNOWN）。
-                _testResult.value = RelationTestResult.AccessFailed(
+                if (isCurrent(request, false)) _testResult.value = RelationTestResult.AccessFailed(
                     (e as? SyncException)?.code ?: when (e) {
                         is SocketTimeoutException -> SyncErrorCode.TIMEOUT
                         is UnknownHostException -> SyncErrorCode.UNKNOWN_HOST
@@ -276,18 +375,22 @@ class SyncRelationEditViewModel @Inject constructor(
                     }
                 )
             } finally {
-                _isTesting.value = false
                 try {
-                    client.disconnect()
+                    client?.disconnect()
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
+                } finally {
+                    if (isCurrent(request, false)) _isTesting.value = false
                 }
             }
         }
+        testJob = job
+        job.start()
     }
 
     fun navigateRemoteUp() {
+        if (_isBrowsing.value || _isTesting.value || _loadState.value != RelationEditLoadState.READY) return
         val current = _currentRemoteBrowsePath.value
         if (current.isEmpty() || current == "/") return
         val lastSlash = current.trimEnd('/').lastIndexOf('/')
@@ -296,18 +399,29 @@ class SyncRelationEditViewModel @Inject constructor(
     }
 
     fun navigateRemoteInto(dirName: String) {
+        if (_isBrowsing.value || _isTesting.value || !_canSelectRemotePath.value ||
+            _loadState.value != RelationEditLoadState.READY) return
+        if (_remoteDirectories.value.none { it.name == dirName }) return
         val base = _currentRemoteBrowsePath.value.trimEnd('/')
         _currentRemoteBrowsePath.value = if (base == "/") "/$dirName" else "$base/$dirName"
         browseRemote()
     }
 
-    fun selectRemotePath() {
-        _remotePath.value = _currentRemoteBrowsePath.value
+    fun selectRemotePath(): Boolean {
+        // An empty successful directory is valid; an empty failed listing is not.
+        val validated = validatedDirectory ?: return false
+        if (!isCurrent(validated, true) || _isBrowsing.value || _isTesting.value ||
+            !_canSelectRemotePath.value || _credentialsRequired.value ||
+            _browseError.value != null || _error.value != null) return false
+        _remotePath.value = validated.path
+        return true
     }
 
     // --- Save ---
 
     fun save() {
+        if (_loadState.value != RelationEditLoadState.READY) return
+        invalidateRemote()
         viewModelScope.launch {
             _error.value = null
             _saveResult.value = null

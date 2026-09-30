@@ -11,6 +11,8 @@ import cn.vectory.syncplayer.data.repository.SyncRelationRepository
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +31,10 @@ import org.junit.Test
  *
  * When a previous sync ended in a terminal state (PARTIAL_FAILED, FAILED, CANCELLED),
  * tapping startSync again must not immediately consume that stale terminal state.
+ *
+ * Fixture note: exercises a pure-download plan (initialTab="download") — the CQ-002
+ * semantics are plan-agnostic, and delete execution is now behind the execute-confirm
+ * gate (covered elsewhere); this test must not lock ungated deletion.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SyncPreviewViewModelStaleTerminalTest {
@@ -41,17 +47,24 @@ class SyncPreviewViewModelStaleTerminalTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
+        // Download path submits via SyncService.start: mock the companion singleton
+        // (see SyncPreviewViewModelTest D3 note — the real body hits the relaxed
+        // Context with startForegroundService and throws AbstractMethodError).
+        mockkObject(SyncService.Companion)
+        every { SyncService.start(any(), any()) } returns Unit
+        every { SyncService.stop(any()) } returns Unit
         coEvery { syncRelationRepository.getById(1L) } returns SyncRelation(
             id = 1L, name = "r", syncSourceId = 10L, remotePath = "/remote", localBasePath = "videos"
         )
-        coEvery { syncEngine.dryRunDelete(1L) } returns Pair(
-            listOf(SyncAction(type = SyncActionType.DELETE_LOCAL, relativePath = "videos/a.enc", fileSize = 10L)),
-            null,
+        coEvery { syncEngine.dryRun(1L) } returns DryRunResult(
+            toDownload = listOf(SyncAction(type = SyncActionType.DOWNLOAD, relativePath = "videos/a.enc", fileSize = 10L)),
+            toDelete = emptyList(),
         )
     }
 
     @After
     fun tearDown() {
+        unmockkObject(SyncService.Companion)
         Dispatchers.resetMain()
     }
 
@@ -63,7 +76,7 @@ class SyncPreviewViewModelStaleTerminalTest {
             syncRelationRepository = syncRelationRepository,
             context = context,
             savedStateHandle = SavedStateHandle(
-                mapOf("relationId" to 1L, "initialTab" to "delete"),
+                mapOf("relationId" to 1L, "initialTab" to "download"),
             ),
         )
     }
@@ -76,7 +89,7 @@ class SyncPreviewViewModelStaleTerminalTest {
     fun `startSync with stale terminal in flow keeps syncing until a NEW terminal arrives`() = runTest {
         val vm = createVm(staleTerminal())
         vm.loadPreview()
-        assertTrue(vm.toDelete.value.isNotEmpty())
+        assertTrue(vm.toDownload.value.isNotEmpty())
 
         vm.startSync()
 
@@ -92,7 +105,7 @@ class SyncPreviewViewModelStaleTerminalTest {
     fun `startSync with stale terminal ignores old terminal and consumes the fresh terminal`() = runTest {
         val vm = createVm(staleTerminal())
         vm.loadPreview()
-        assertTrue(vm.toDelete.value.isNotEmpty())
+        assertTrue(vm.toDownload.value.isNotEmpty())
 
         vm.startSync()
         assertTrue(vm.isSyncing.value)
@@ -107,14 +120,14 @@ class SyncPreviewViewModelStaleTerminalTest {
         progress.value = SyncProgress(isRunning = false, phase = SyncPhase.COMPLETED, relationId = 1L)
         assertFalse("fresh terminal stops syncing", vm.isSyncing.value)
         assertTrue("fresh terminal marks complete", vm.syncComplete.value)
-        assertTrue("COMPLETED branch cleared pending actions", vm.toDelete.value.isEmpty())
+        assertTrue("COMPLETED branch cleared pending actions", vm.toDownload.value.isEmpty())
     }
 
     @Test
     fun `control - startSync from non-terminal state observes the fresh terminal`() = runTest {
         val vm = createVm(SyncProgress(isRunning = false, phase = SyncPhase.IDLE))
         vm.loadPreview()
-        assertTrue(vm.toDelete.value.isNotEmpty())
+        assertTrue(vm.toDownload.value.isNotEmpty())
 
         vm.startSync()
         assertTrue("isSyncing true right after start (no terminal yet)", vm.isSyncing.value)
@@ -125,6 +138,6 @@ class SyncPreviewViewModelStaleTerminalTest {
         progress.value = SyncProgress(isRunning = false, phase = SyncPhase.COMPLETED, relationId = 1L)
         assertFalse("fresh terminal stops syncing", vm.isSyncing.value)
         assertTrue("fresh terminal completes", vm.syncComplete.value)
-        assertTrue("COMPLETED branch cleared the pending list", vm.toDelete.value.isEmpty())
+        assertTrue("COMPLETED branch cleared the pending list", vm.toDownload.value.isEmpty())
     }
 }

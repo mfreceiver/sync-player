@@ -166,4 +166,11 @@ class AuroraPreviewOffsetTest {
         assertEquals(0f, g.effectiveWidthPx, 0f)
         assertEquals(150f, g.offsetXPx, 0f)
     }
+
+    @Test
+    fun `card reserves 16px at either edge independently of track padding`() {
+        val g = resolvePreviewGeometry(400f, 0f, 0f, 24f, 1f, 184f, safetyPaddingPx = 16f)
+        assertEquals(184f, g.effectiveWidthPx, 0f)
+        assertEquals(200f, g.offsetXPx, 0f)
+    }
 }

@@ -14,6 +14,8 @@ import cn.vectory.syncplayer.data.repository.SyncSourceRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.MediaExistence
 import cn.vectory.syncplayer.storage.MediaFileStore
+import cn.vectory.syncplayer.storage.MediaFinalProbe
+import cn.vectory.syncplayer.storage.MediaProbeState
 import cn.vectory.syncplayer.storage.StoragePaths
 import dagger.Lazy
 import io.mockk.coEvery
@@ -57,7 +59,10 @@ class SyncTrashResurrectionRegressionTest {
     )
     private val remoteScanner = SyncRemoteScanner(
         syncRelationRepository, syncSourceRepository, videoRepository, playbackRepository,
-        syncLogRepository, clientFactory, storagePaths, context, publisher
+        syncLogRepository, clientFactory, storagePaths, context, publisher,
+        // A8 接线镜像：与生产 SyncEngine 相同的 store 背景探针（本文件 store 为 mock，
+        // 各用例按场景显式 stub probeFinalized，不依赖 relaxed enum 默认值）
+        MediaFinalProbe { id, size -> store.probeFinalized(id, size) }
     )
 
     private val relation = SyncRelation(
@@ -116,6 +121,8 @@ class SyncTrashResurrectionRegressionTest {
         coEvery { client.listFiles(any()) } returns listOf(
             RemoteFile(path = "a.mp4", name = "a.mp4", isDirectory = false, size = 1000L, lastModified = 5000L)
         )
+        // A8：行在场且元数据相等 → 探测；场景 = 行与 final 均完好在场 → VALID → SKIP
+        coEvery { store.probeFinalized(7L, 1000L) } returns MediaProbeState.VALID
         val scan = remoteScanner.dryRunLocked(1L)
 
         // 红线断言：本地行仍在 → 不得推导出 DOWNLOAD 复活

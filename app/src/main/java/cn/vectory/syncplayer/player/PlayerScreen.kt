@@ -37,11 +37,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import android.net.Uri
 import androidx.media3.exoplayer.ExoPlayer
 import cn.vectory.syncplayer.player.GesturePlayerView.DoubleTapZone
 import kotlinx.coroutines.delay
-import kotlin.math.abs
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import java.util.WeakHashMap
 import kotlin.math.pow
 
 internal enum class MediaSwitchReason {
@@ -152,6 +159,7 @@ fun PlayerScreen(
             getPlayerView().player = exoPlayer
         }
     }
+    val seekCommitListener = remember(viewModel, exoPlayer) { SeekCommitListener(viewModel) }
 
     val togglePlay = {
         val willPlay = !exoPlayer.isPlaying
@@ -194,6 +202,7 @@ fun PlayerScreen(
 
     LaunchedEffect(uiState.videoItem) {
         val item = uiState.videoItem ?: return@LaunchedEffect
+        seekCommitListener.resetForMedia()
         val mediaUri = cn.vectory.syncplayer.provider.MediaUris.mediaUri(item.id)
         currentMediaId = item.id
         val savedPos = viewModel.consumeRestorePosition(item.id)
@@ -249,6 +258,7 @@ fun PlayerScreen(
                 val playerPos = exoPlayer.currentPosition.coerceAtLeast(0)
                 val playerDur = exoPlayer.duration.coerceAtLeast(0)
                 viewModel.updatePlaybackProgress(playerPos, playerDur, videoId = currentMediaId)
+                if (playbackState == Player.STATE_IDLE) seekCommitListener.terminate(playerPos)
 
                 if (playbackState == Player.STATE_ENDED) {
                     val nextId = viewModel.getNextVideoId()
@@ -271,11 +281,20 @@ fun PlayerScreen(
                 viewModel.setPlaying(playing)
             }
 
+            @androidx.annotation.OptIn(UnstableApi::class)
             override fun onPositionDiscontinuity(
                 oldPosition: Player.PositionInfo,
                 newPosition: Player.PositionInfo,
                 reason: Int
             ) {
+                val eventUri = newPosition.mediaItem?.localConfiguration?.uri
+                if (eventUri != null && eventUri != exoPlayer.currentMediaItem?.localConfiguration?.uri) return
+                if (currentMediaId == viewModel.uiState.value.videoItem?.id) {
+                    gestureView.currentPosition = newPosition.positionMs.coerceAtLeast(0L)
+                }
+                if (reason == Player.DISCONTINUITY_REASON_SEEK || reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) {
+                    seekCommitListener.onPositionDiscontinuity(oldPosition, newPosition, reason)
+                }
                 viewModel.updatePlaybackProgress(newPosition.positionMs, exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
             }
 
@@ -284,16 +303,22 @@ fun PlayerScreen(
                 // error.message to the UI (it may carry URI/path/provider details).
                 Log.e("PlayerScreen", "Playback error", error)
                 viewModel.onPlayerError()
+                seekCommitListener.terminate(exoPlayer.currentPosition)
             }
         }
     }
 
     DisposableEffect(exoPlayer) {
+        SeekCommitRouter.register(exoPlayer, seekCommitListener)
         exoPlayer.addListener(playerListener)
-        onDispose { exoPlayer.removeListener(playerListener) }
+        onDispose {
+            SeekCommitRouter.unregister(exoPlayer)
+            seekCommitListener.terminate(exoPlayer.currentPosition)
+            seekCommitListener.close()
+            exoPlayer.removeListener(playerListener)
+        }
     }
 
-    val seekTarget by rememberUpdatedState(uiState.seekTarget)
     val isGestureSeeking by rememberUpdatedState(gestureSeekState.isSeeking)
     LaunchedEffect(uiState.isPlaying) {
         if (uiState.isPlaying) {
@@ -301,20 +326,14 @@ fun PlayerScreen(
             while (true) {
                 val playerPos = exoPlayer.currentPosition.coerceAtLeast(0)
                 val playerDur = exoPlayer.duration.coerceAtLeast(0)
-
-                if (seekTarget >= 0) {
-                    if (abs(playerPos - seekTarget) < 500) {
-                        viewModel.clearSeekTarget()
-                    }
-                }
+                gestureView.videoDuration = playerDur
 
                 // Don't update gestureView.currentPosition during gesture seek —
                 // it would cause the seek target to drift since GesturePlayerView
                 // uses currentPosition as the base for offset calculation.
-                if (!isGestureSeeking) {
+                if (!isGestureSeeking && viewModel.seekPresentation.value.phase != SeekPhase.Settling) {
                     gestureView.currentPosition = playerPos
                 }
-                gestureView.videoDuration = playerDur
                 viewModel.updatePlaybackProgress(playerPos, playerDur, videoId = currentMediaId)
 
                 val now = System.currentTimeMillis()
@@ -385,8 +404,16 @@ fun PlayerScreen(
                 // what the seek overlay previewed.
                 val targetMs = (basePositionMs + offsetMs)
                     .coerceIn(0L, exoPlayer.duration.coerceAtLeast(0L))
-                viewModel.onGestureSeekFinished(targetMs)
-                exoPlayer.seekTo(targetMs)
+                viewModel.onGestureSeekFinished(targetMs, gestureSession)?.let {
+                    performPresentedSeek(viewModel, exoPlayer, it)
+                }
+            }
+            private var gestureSession = -1L
+            override fun onSeekStarted(anchorMs: Long) {
+                gestureSession = viewModel.onGestureSeekStarted(anchorMs)
+            }
+            override fun onSeekCancelled() {
+                viewModel.onGestureSeekCancelled(gestureSession)
             }
             override fun onVolumeGestureStart() {
                 val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
@@ -466,7 +493,7 @@ fun PlayerScreen(
                 }
             }
             override fun onSeekOverlay(positionMs: Long, durationMs: Long) {
-                viewModel.onGestureSeekChanged(positionMs, durationMs)
+                viewModel.onGestureSeekChanged(positionMs, durationMs, gestureSession)
             }
             override fun onLongPressSpeedOverlay(multiplier: Float) {
                 viewModel.setSpeedOverlay(multiplier)
@@ -485,8 +512,16 @@ fun PlayerScreen(
             viewModel.toggleControls()
         }
         gestureView.gestureListener = gestureListener
+        gestureView.positionProvider = { exoPlayer.currentPosition.coerceAtLeast(0L) }
+        gestureView.durationProvider = { exoPlayer.duration.coerceAtLeast(0L) }
+        gestureView.seekPrecisionProvider = { viewModel.seekPresentation.value.precision.factor }
         gestureView.edgeBackEnabled = true
         onDispose {
+            gestureView.cancelSeekGesture()
+            viewModel.cancelSeek()
+            gestureView.positionProvider = null
+            gestureView.durationProvider = null
+            gestureView.seekPrecisionProvider = null
             gestureView.setOnSingleTapCallback(null)
             gestureView.gestureListener = null
         }
@@ -609,7 +644,7 @@ fun PlayerScreen(
                     exoPlayer = exoPlayer,
                     seekSource = seekSource,
                     durationMs = uiState.duration,
-                    gesturePositionMs = (gestureSeekState.seekPositionFraction * uiState.duration).toLong(),
+                    gesturePositionMs = gestureSeekState.targetMs,
                     isPlaying = uiState.isPlaying,
                     onOpenSettings = { showSettingsPopup = true },
                     onBack10 = { seekBy(viewModel, exoPlayer, -10_000L) },
@@ -685,11 +720,13 @@ fun PlayerScreen(
         AuroraSeekPreviewHost(
             seekSource = seekSource,
             progressScrubState = viewModel.progressScrubState,
-            gesturePositionMs = (gestureSeekState.seekPositionFraction * uiState.duration).toLong(),
+            gesturePositionMs = gestureSeekState.targetMs,
             durationMs = uiState.duration,
             bottomChromeHeightPx = bottomChromeHeightPx,
             videoUri = videoUri,
             previewExtractor = previewExtractor,
+            viewModel = viewModel,
+            onStep = { seekBy(viewModel, exoPlayer, it) },
         )
         val speedOverlayMultiplier = overlayState.speedMultiplier
         if (speedOverlayMultiplier != null) {
@@ -764,8 +801,206 @@ fun PlayerScreen(
 
 private fun seekBy(viewModel: PlayerViewModel, exoPlayer: ExoPlayer, deltaMs: Long) {
     val durationMs = exoPlayer.duration.coerceAtLeast(0L)
-    val targetMs = (viewModel.currentPosition.value + deltaMs).coerceIn(0L, durationMs)
-    viewModel.onProgressScrubStarted(targetMs)
-    viewModel.onProgressScrubFinished(targetMs)
-    exoPlayer.seekTo(targetMs)
+    val state = viewModel.seekPresentation.value
+    val anchor = if (state.phase == SeekPhase.Dragging) state.targetMs else exoPlayer.currentPosition
+    val targetMs = (anchor + deltaMs).coerceIn(0L, durationMs)
+    val session = viewModel.onProgressScrubStarted(targetMs)
+    viewModel.onProgressScrubFinished(targetMs, session)?.let { performPresentedSeek(viewModel, exoPlayer, it) }
+}
+
+internal fun performPresentedSeek(viewModel: PlayerViewModel, player: ExoPlayer, targetMs: Long) {
+    SeekCommitRouter.seek(viewModel, player, targetMs)
+}
+
+/** At most one issued seek and one replaceable latest intent, scoped to a media session.
+ *
+ * Media3无应用提交ID；应用超时不取消底层已发出事件；固定延时不能证明旧回调结束。
+ * 历史来源不确定的通知只能更新实际位置，不能确认新提交。
+ * The 100ms quiet window is ONLY scheduling/coalescing, NEVER proof of provenance.
+ */
+internal class SeekCommitListener(private val viewModel: PlayerViewModel) : Player.Listener {
+    private data class Intent(val record: SeekCommitRecord, val player: ExoPlayer)
+    private data class Flight(
+        val intent: Intent,
+        val mediaUri: Uri?,
+        var sawSeek: Boolean = false,
+        var confirmed: Boolean = false,
+    )
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var inFlight: Flight? = null
+    private var pending: Intent? = null
+    private var quietJob: Job? = null
+    private var deadlineJob: Job? = null
+    /** Sticky until resetForMedia or a fresh listener for a rebuilt player. */
+    internal var provenanceUncertain = false
+        private set
+    /** A confirmed SEEK can still have an adjustment; never accept an adjustment
+     * as the *first* identifying event of its successor. Not cleared by time. */
+    private var predecessorAdjustmentPossible = false
+    /** Structural bound independent of how many times the user scrubs. */
+    internal val activeRecordCount: Int get() = (if (inFlight != null) 1 else 0) + (if (pending != null) 1 else 0)
+
+    fun seek(player: ExoPlayer, targetMs: Long) {
+        val record = viewModel.pendingSeekCommit ?: return
+        if (record.targetMs != targetMs) return
+        val intent = Intent(record, player)
+        if (inFlight != null) {
+            if (inFlight?.intent?.record == record) return
+            // VM has replaced old Settling with its newest target. An unconfirmed
+            // issued flight keeps its OWN deadline; replacing the pending slot
+            // cannot postpone that deadline or create another issued seek.
+            if (inFlight?.confirmed == false) provenanceUncertain = true
+            pending = intent
+            if (inFlight?.confirmed == true && !provenanceUncertain) scheduleQuietDrain()
+            return
+        }
+        issue(intent)
+    }
+
+    private fun issue(intent: Intent) {
+        val (record, player) = intent
+        if (viewModel.pendingSeekCommit != record) return
+        // Strict pre-submit no-op: no seekTo call, no in-flight event ownership.
+        val before = player.currentPosition
+        if (before == record.targetMs) {
+            viewModel.acknowledgeSeek(record, before)
+            return
+        }
+        val flight = Flight(intent, player.currentMediaItem?.localConfiguration?.uri)
+        inFlight = flight
+        // Independent issuance deadline, even when the VM commitId changes while
+        // another gesture overwrites the pending slot.
+        deadlineJob = scope.launch {
+            delay(2_000L)
+            expire(flight)
+        }
+        try {
+            player.seekTo(record.targetMs)
+        } catch (e: RuntimeException) {
+            terminate(player.currentPosition)
+            throw e
+        }
+    }
+
+    private fun expire(flight: Flight) {
+        if (inFlight !== flight) return
+        // Missing a confirmable callback permanently poisons attribution for
+        // THIS media session. A later SEEK may be a late event from this flight.
+        if (!flight.confirmed) provenanceUncertain = true
+        retire(flight, flight.intent.player.currentPosition)
+    }
+
+    private fun retire(flight: Flight, actualPositionMs: Long) {
+        if (inFlight !== flight) return
+        quietJob?.cancel()
+        quietJob = null
+        deadlineJob?.cancel()
+        deadlineJob = null
+        predecessorAdjustmentPossible = predecessorAdjustmentPossible || flight.confirmed
+        if (!flight.confirmed) provenanceUncertain = true
+        inFlight = null
+        // If this remains the VM's current record, its actual deadline concludes
+        // Settling with the real player head, without fabricating an ACK.
+        viewModel.terminateSeek(flight.intent.record, actualPositionMs)
+        val next = pending
+        pending = null
+        if (next != null) issue(next)
+    }
+
+    @androidx.annotation.OptIn(UnstableApi::class)
+    override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+        if (reason != Player.DISCONTINUITY_REASON_SEEK && reason != Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) return
+        val flight = inFlight
+        if (flight == null || (flight.mediaUri != null && flight.mediaUri != newPosition.mediaItem?.localConfiguration?.uri)) {
+            viewModel.observeSeekPosition(newPosition.positionMs)
+            return
+        }
+        if (provenanceUncertain) {
+            viewModel.observeSeekPosition(newPosition.positionMs)
+            // Do not retire on a seemingly relevant event. This flight ends at
+            // ITS issuance deadline; callback timing is not attribution evidence.
+            return
+        }
+        when (reason) {
+            Player.DISCONTINUITY_REASON_SEEK -> {
+                if (!flight.sawSeek) {
+                    flight.sawSeek = true
+                    flight.confirmed = true
+                    if (viewModel.pendingSeekCommit == flight.intent.record) {
+                        viewModel.acknowledgeSeek(flight.intent.record, newPosition.positionMs)
+                    } else viewModel.observeSeekPosition(newPosition.positionMs)
+                } else viewModel.observeSeekPosition(newPosition.positionMs)
+                scheduleQuietDrain()
+            }
+            Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT -> {
+                // The first adjustment of the first clean flight can confirm it.
+                // Once a predecessor could still adjust, this event is ambiguous.
+                val attributable = !flight.sawSeek && !predecessorAdjustmentPossible
+                if (attributable) {
+                    flight.confirmed = true
+                    if (viewModel.pendingSeekCommit == flight.intent.record) {
+                        viewModel.acknowledgeSeek(flight.intent.record, newPosition.positionMs)
+                    } else viewModel.observeSeekPosition(newPosition.positionMs)
+                    scheduleQuietDrain()
+                } else {
+                    viewModel.observeSeekPosition(newPosition.positionMs)
+                    if (flight.sawSeek) scheduleQuietDrain()
+                }
+            }
+        }
+    }
+
+    private fun scheduleQuietDrain() {
+        quietJob?.cancel()
+        quietJob = scope.launch {
+            delay(100L)
+            val old = inFlight ?: return@launch
+            // Scheduling only. No elapsed duration proves that a late Media3
+            // callback cannot still arrive after the new intent is issued.
+            if (old.confirmed && !provenanceUncertain) retire(old, old.intent.player.currentPosition)
+        }
+    }
+
+    fun terminate(actualPositionMs: Long) {
+        quietJob?.cancel()
+        quietJob = null
+        deadlineJob?.cancel()
+        deadlineJob = null
+        val old = inFlight
+        if (old != null && !old.confirmed) provenanceUncertain = true
+        if (old?.confirmed == true) predecessorAdjustmentPossible = true
+        inFlight = null
+        pending = null
+        viewModel.pendingSeekCommit?.let { viewModel.terminateSeek(it, actualPositionMs) }
+    }
+
+    fun resetForMedia() {
+        terminate(0L)
+        provenanceUncertain = false
+        predecessorAdjustmentPossible = false
+    }
+
+    fun close() { terminate(0L); scope.cancel() }
+}
+
+private object SeekCommitRouter {
+    private val listeners = WeakHashMap<ExoPlayer, SeekCommitListener>()
+    fun register(player: ExoPlayer, listener: SeekCommitListener) { listeners[player] = listener }
+    fun unregister(player: ExoPlayer) { listeners.remove(player) }
+    fun seek(viewModel: PlayerViewModel, player: ExoPlayer, targetMs: Long) {
+        val listener = listeners[player]
+        if (listener != null) {
+            listener.seek(player, targetMs)
+        } else {
+            // Isolated progress Composable tests have no PlayerScreen listener.
+            // Do not allocate a detached coroutine scope for each invocation.
+            val record = viewModel.pendingSeekCommit ?: return
+            if (record.targetMs != targetMs) return
+            if (player.currentPosition == targetMs) viewModel.acknowledgeSeek(record, player.currentPosition)
+            else try { player.seekTo(targetMs) } catch (e: RuntimeException) {
+                viewModel.terminateSeek(record, player.currentPosition)
+                throw e
+            }
+        }
+    }
 }

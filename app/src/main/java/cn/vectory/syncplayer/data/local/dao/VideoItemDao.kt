@@ -252,6 +252,44 @@ interface VideoItemDao {
     @Query("UPDATE video_item SET audioGainDb = :audioGainDb WHERE id = :id")
     suspend fun updateAudioGain(id: Long, audioGainDb: Float?)
 
+    // ------------------------------------------------------------------ A1 按列更新（列所有权）
+
+    /**
+     * A1: 同步引擎列提交——只动 fileSize/remoteModifiedTime/dateSynced（下载管线
+     * finalize 成功后的最终元数据）。返回受影响行数；行不存在（含并发删除）⇒ 0，
+     * 绝不插入、绝不复活。整行 upsert 会用下载前快照覆盖用户列（star/audioGainDb）
+     * 且 @Upsert 带已知 id 会复活被删行——禁止用于此场景。
+     */
+    @Query(
+        "UPDATE video_item SET fileSize = :fileSize, remoteModifiedTime = :remoteModifiedTime, dateSynced = :dateSynced WHERE id = :id"
+    )
+    suspend fun updateSyncMetadata(id: Long, fileSize: Long, remoteModifiedTime: Long?, dateSynced: Long): Int
+
+    /**
+     * A1: 视频提取器列提交——完整覆盖五个所有列（含显式 null 清除陈旧值：
+     * 「成功但字段缺失」语义；提取失败则调用方不得触 DB）。行不存在 ⇒ 0，绝不复活。
+     */
+    @Query(
+        "UPDATE video_item SET duration = :duration, width = :width, height = :height, bitrate = :bitrate, frameRate = :frameRate WHERE id = :id"
+    )
+    suspend fun updateVideoMetadata(
+        id: Long,
+        duration: Long?,
+        width: Int?,
+        height: Int?,
+        bitrate: Long?,
+        frameRate: Float?
+    ): Int
+
+    /**
+     * A1: 图片提取器列提交——width/height/dateTaken 三列（null 语义同上）。
+     * 行不存在 ⇒ 0，绝不复活；绝不动 video 专属列/用户列/同步列。
+     */
+    @Query(
+        "UPDATE video_item SET width = :width, height = :height, dateTaken = :dateTaken WHERE id = :id"
+    )
+    suspend fun updateImageMetadata(id: Long, width: Int?, height: Int?, dateTaken: Long?): Int
+
     @Query("SELECT * FROM video_item ORDER BY fileName ASC")
     fun getFlatItemsFlow(): Flow<List<VideoItemEntity>>
 
