@@ -5,6 +5,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import android.util.Log
+import cn.vectory.syncplayer.sync.SyncSafeLog
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -60,10 +61,10 @@ class AudioGainAnalyzer @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "Audio gain analysis failed for $uri", e)
+            Log.w(TAG, SyncSafeLog.failure("audio gain analysis", e))
             null
         } finally {
-            try { extractor.release() } catch (e: Exception) { Log.w(TAG, "Failed to release extractor", e) }
+            try { extractor.release() } catch (e: Exception) { Log.w(TAG, SyncSafeLog.failure("release gain extractor", e)) }
         }
     }
 

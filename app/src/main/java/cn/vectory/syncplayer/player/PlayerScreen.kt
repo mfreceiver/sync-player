@@ -27,6 +27,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.res.stringResource
 import cn.vectory.syncplayer.R
 import cn.vectory.syncplayer.browser.UndoResult
+import cn.vectory.syncplayer.browser.safeErrorDetail
 import cn.vectory.syncplayer.ui.components.showTrashUndoSnackbar
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -296,12 +297,20 @@ fun PlayerScreen(
                     seekCommitListener.onPositionDiscontinuity(oldPosition, newPosition, reason)
                 }
                 viewModel.updatePlaybackProgress(newPosition.positionMs, exoPlayer.duration.coerceAtLeast(0), videoId = currentMediaId)
+                // AND-064: keep the gesture-seek base in sync on any real seek —
+                // the poller only writes it while playing, so a paused scrub/±10s
+                // left a stale anchor for the next gesture. Skip while a gesture
+                // is active (the base is intentionally frozen mid-drag).
+                if (!gestureView.isGestureSeeking) {
+                    gestureView.currentPosition = newPosition.positionMs.coerceAtLeast(0)
+                }
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 // Log raw error for developer diagnostics only; never surface
                 // error.message to the UI (it may carry URI/path/provider details).
-                Log.e("PlayerScreen", "Playback error", error)
+                // AND-085: structured token only — PlaybackException.message can carry URI/provider details.
+                Log.e("PlayerScreen", "Playback error: ${safeErrorDetail(error)}")
                 viewModel.onPlayerError()
                 seekCommitListener.terminate(exoPlayer.currentPosition)
             }
@@ -324,6 +333,11 @@ fun PlayerScreen(
         if (uiState.isPlaying) {
             var lastCheckpointMs = System.currentTimeMillis()
             while (true) {
+                // AND-063: this effect's key is a Compose snapshot that freezes at
+                // isPlaying=true once collectAsStateWithLifecycle stops on ON_STOP —
+                // check the live player so the poll actually dies in background
+                // instead of waking every 200ms and writing Room every 30s.
+                if (!exoPlayer.isPlaying) break
                 val playerPos = exoPlayer.currentPosition.coerceAtLeast(0)
                 val playerDur = exoPlayer.duration.coerceAtLeast(0)
                 gestureView.videoDuration = playerDur
@@ -597,7 +611,7 @@ fun PlayerScreen(
             try {
                 snackbarHostState.showSnackbar(ev.message)
             } finally {
-                viewModel.clearError()
+                viewModel.clearError(ev.seq)
             }
         }
     }

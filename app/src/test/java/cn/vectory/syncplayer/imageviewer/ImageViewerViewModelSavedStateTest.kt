@@ -31,7 +31,7 @@ class ImageViewerViewModelSavedStateTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        every { imageQueue.consumeIds() } returns emptyList()
+        every { imageQueue.consumeIds(any()) } returns emptyList()
     }
 
     @After

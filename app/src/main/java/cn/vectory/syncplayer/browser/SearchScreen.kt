@@ -459,12 +459,18 @@ fun SearchScreen(
     error?.let { ev ->
         LaunchedEffect(ev.seq, lifecycleOwner) {
             lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                // Allow a received delete-failure event to claim its matching error first.
-                delay(16)
-                if (handledDeleteErrorSeq != ev.seq) {
-                    snackbarHostState.showSnackbar(ev.message)
+                try {
+                    // Allow a received delete-failure event to claim its matching error first.
+                    delay(16)
+                    if (handledDeleteErrorSeq != ev.seq) {
+                        snackbarHostState.showSnackbar(ev.message)
+                    }
+                } finally {
+                    // AND-080: cancellation mid-snackbar must still retire the
+                    // event so it can't replay after recreation — guarded by seq
+                    // so a newer error that arrived meanwhile is not cleared.
+                    if (viewModel.error.value?.seq == ev.seq) viewModel.clearError()
                 }
-                if (viewModel.error.value?.seq == ev.seq) viewModel.clearError()
             }
         }
     }

@@ -215,7 +215,12 @@ fun SyncSourceEditScreen(
                         }
                         Button(
                             onClick = viewModel::save,
-                            enabled = !isSaving && credentialInputReady && name.isNotBlank() && host.isNotBlank(),
+                            // AND-057: after a successful save the screen navigates
+                            // away; if navigation is deferred a frame or fails, a
+                            // repeat tap must not insert a duplicate row (@Upsert
+                            // with autoGenerate id=0 inserts each time).
+                            enabled = !isSaving && saveResult !is SourceSaveResult.Saved
+                                && credentialInputReady && name.isNotBlank() && host.isNotBlank(),
                             modifier = Modifier.weight(1f)
                         ) {
                             Text(if (isSaving) stringResource(R.string.common_saving) else stringResource(R.string.common_save))

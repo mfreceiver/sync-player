@@ -117,7 +117,7 @@ class QueueNavigationCoordinator @Inject constructor(
         // 🟠3 检查 trySend 结果：onCleared 竞态下通道已关闭 → 优雅 no-op（不崩、不导航）。
         if (navActions.trySend {
                 val token = prepare(QueueMediaType.VIDEO, safeIds, currentId)
-                videoQueue.setIds(safeIds)
+                videoQueue.setIds(currentId, safeIds)
                 onReady(token)
             }.isFailure
         ) return
@@ -128,7 +128,7 @@ class QueueNavigationCoordinator @Inject constructor(
         val safeIds = if (ids.isEmpty()) listOf(currentId) else ids
         if (navActions.trySend {
                 val token = prepare(QueueMediaType.IMAGE, safeIds, currentId)
-                imageQueue.setIds(safeIds)
+                imageQueue.setIds(currentId, safeIds)
                 onReady(token)
             }.isFailure
         ) return
@@ -161,6 +161,7 @@ class QueueNavigationCoordinator @Inject constructor(
         val token = handle.get<String>(QUEUE_VIDEO_TOKEN_KEY)
         val restored = resolveForRestore(token, QueueMediaType.VIDEO)
         videoQueue.setIds(
+            routeCurrentId,
             if (restored != null && routeCurrentId in restored) restored else listOf(routeCurrentId)
         )
         // 失败（restored == null）不登记：后续重组可重试（重试走解析缓存/重读磁盘）。
@@ -173,6 +174,7 @@ class QueueNavigationCoordinator @Inject constructor(
         val token = handle.get<String>(QUEUE_IMAGE_TOKEN_KEY)
         val restored = resolveForRestore(token, QueueMediaType.IMAGE)
         imageQueue.setIds(
+            routeCurrentId,
             if (restored != null && routeCurrentId in restored) restored else listOf(routeCurrentId)
         )
         if (restored != null) backfilledConsumers.add(handle)

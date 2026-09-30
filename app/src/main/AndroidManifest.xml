@@ -22,6 +22,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|smallestScreenSize|density|keyboardHidden|layoutDirection|locale"
             android:theme="@style/Theme.SyncPlayer">
             <intent-filter>

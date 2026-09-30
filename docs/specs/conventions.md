@@ -66,7 +66,7 @@
 1. **Generic ViewModel catches show `sync_error_unknown`** for non-sync exceptions (by design — never leak `e.message`). Diagnostics via Log.
 2. **`security-crypto 1.1.0-alpha06`**：生产 app 用 alpha 依赖。功能正常，留意 API 破坏回归。
 3. **`SyncEngineBoundaryTest` 重试用例真实退避耗时**（~1-3s），因 `Dispatchers.IO` 上 `delay` 无法被虚拟时间控制。
-4. **`androidTest` DAO 测试未在真机执行**（编译验证通过，与 `SafVolumeTest` 同构）。
-5. **播放器进度保存 drain 无时间上界**：`onCleared()` 关闭 channel 后由消费者 drain 完再取消 scope；若底层 `saveProgress` 永久挂起，scope 会延长持有 ViewModel 引用。权衡：最后保存可靠性优先于严格有界退出。
+4. **`androidTest` DAO 测试未在真机执行**（编译验证通过，CI 无模拟器 job）。
+5. **播放器进度保存 drain 单条有界**：每次 `saveProgress` 以 `saveTimeoutMs`（默认 5s，`@VisibleForTesting` 可注入）为上界，超时放弃该条并继续 drain——挂起的保存不再无限延长 scope 持有 ViewModel 引用，但极端慢 IO 下末次保存可能被放弃。
 
 其余风险见 [sync.md](sync.md)（listDirectories/isNotFound/classifySmb/two-phase-commit）。

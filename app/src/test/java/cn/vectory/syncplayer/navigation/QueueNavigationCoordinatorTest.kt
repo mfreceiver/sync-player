@@ -352,7 +352,7 @@ class QueueNavigationCoordinatorTest {
         assertEquals(listOf(1L, 2L, 3L), videoQueue.getIds())
         // 第二个 entry（不同 SavedStateHandle）共用同一 token：先消费/清空队列，
         // 使第二次回填真实可观察（不得被去重吞掉）。
-        assertTrue(videoQueue.consumeIds().isNotEmpty())
+        assertTrue(videoQueue.consumeIds(1L).isNotEmpty())
         cold.restoreVideoQueue(
             SavedStateHandle(mapOf(QUEUE_VIDEO_TOKEN_KEY to tokenRef.get())), routeCurrentId = 2L
         )
@@ -506,7 +506,7 @@ class QueueNavigationCoordinatorTest {
             assertEquals("latest generation must restore full", l, videoQueue.getIds())
         }
         // LRU 容量 5：T1 已被 T2..T6 逐出。
-        videoQueue.consumeIds()
+        videoQueue.consumeIds(600L)
         cold.restoreVideoQueue(
             SavedStateHandle(mapOf(QUEUE_VIDEO_TOKEN_KEY to tokens[0])), routeCurrentId = 100L
         )

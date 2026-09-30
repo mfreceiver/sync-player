@@ -66,7 +66,6 @@ SyncException(code, operation, path?, host?, expectedBytes?/actualBytes?/availab
 
 ## Known Residual Risks（accepted, personal-use）
 
-1. `listDirectories()` 吞异常 → 返回空列表（浏览 UI 可能显示"空目录"而非访问错误）。镜像扫描 `listFiles()` 仍抛（E8 成立）。Defer：转为结构化错误返回。
-2. `isNotFound()` 仅按类型（`FileNotFoundException`）。provider 用普通 `IOException` 文本信号 not-found 时会被当真实失败（DB 行保留）——保守，绝不误删。
-3. `classifySmbException` 按 jcifs 英文状态短语。未知变体安全降级为 `UNKNOWN`→`DOWNLOAD_FAILED`。
-4. 无两阶段提交（Room + EncryptedSharedPreferences + 文件系统）；append-only 写不做崩溃后完整性检查（best-effort purge marker 幂等 → 无害）。
+1. `isNotFound()` 仅按类型（`FileNotFoundException`）。provider 用普通 `IOException` 文本信号 not-found 时会被当真实失败（DB 行保留）——保守，绝不误删。
+2. `classifySmbException` 以 `ntStatus` 数值分类为主、jcifs 英文状态短语为兜底。未知变体安全降级为 `UNKNOWN`→`DOWNLOAD_FAILED`。
+3. 无两阶段提交（Room + EncryptedSharedPreferences + 文件系统）；append-only 写不做崩溃后完整性检查（best-effort purge marker 幂等 → 无害）。

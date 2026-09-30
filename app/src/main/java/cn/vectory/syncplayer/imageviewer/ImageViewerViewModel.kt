@@ -1,12 +1,14 @@
 package cn.vectory.syncplayer.imageviewer
 
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.browser.ErrorEvent
 import cn.vectory.syncplayer.browser.UndoDeleteUseCase
 import cn.vectory.syncplayer.browser.UndoResult
+import cn.vectory.syncplayer.browser.safeErrorDetail
 import cn.vectory.syncplayer.data.local.entity.PlaybackRecordEntity
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
@@ -27,7 +29,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
@@ -48,7 +52,7 @@ data class ImageViewerUiState(
 
 @HiltViewModel
 class ImageViewerViewModel @Inject constructor(
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
     private val videoRepository: VideoRepository,
     private val playbackRepository: PlaybackRepository,
     private val imageQueue: ImageQueue,
@@ -79,8 +83,9 @@ class ImageViewerViewModel @Inject constructor(
     }
 
     /** Clear the image error after the UI has shown it. */
-    fun clearError() {
-        _imageErrorFlow.value = null
+    fun clearError(expectedSeq: Long? = null) {
+        // AND-068: seq-guarded clear — see BrowserViewModel.clearError.
+        _imageErrorFlow.update { if (expectedSeq == null || it?.seq == expectedSeq) null else it }
     }
 
     /**
@@ -107,7 +112,9 @@ class ImageViewerViewModel @Inject constructor(
     }
 
     private fun loadImageIds() {
-        val queueIds = imageQueue.consumeIds()
+        // AND-071: anchored consume — see PlayerViewModel.loadFolderVideoIds.
+        val anchorId = savedStateHandle.get<Long>("imageItemId") ?: 0L
+        val queueIds = imageQueue.consumeIds(anchorId)
         if (queueIds.isNotEmpty()) {
             _allImageIds.value = queueIds
             return
@@ -149,7 +156,7 @@ class ImageViewerViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to load image $imageItemId", e)
+                Log.e(TAG, "Failed to load image id=$imageItemId: ${safeErrorDetail(e)}")
             }
         }
     }
@@ -238,17 +245,43 @@ class ImageViewerViewModel @Inject constructor(
      * doesn't cancel in-flight saves when viewModelScope is cancelled.
      * This scope is deliberately independent of the ViewModel lifecycle (and intentionally
      * not cancelled in onCleared) so a just-launched save always completes.
+     *
+     * Each save is bounded by [saveTimeoutMs]: a permanently-hung repository call is
+     * abandoned (logged) instead of leaking a coroutine — and the ViewModel reference
+     * it captures — for the lifetime of the process.
      */
     private val progressSaveScope = CoroutineScope(SupervisorJob() + ioDispatcher)
+
+    /**
+     * Upper bound for a single progress save, read at each save's execution time.
+     * Instance-level (not const) so tests can inject a small value.
+     */
+    @Volatile
+    @VisibleForTesting
+    internal var saveTimeoutMs: Long = 5_000L
+
+    /** Number of progress saves currently in flight on [progressSaveScope]. */
+    @get:VisibleForTesting
+    internal val activeProgressSaveCount: Int
+        get() = progressSaveScope.coroutineContext.job.children.count()
 
     private fun markCompleted(imageId: Long) {
         progressSaveScope.launch {
             try {
-                playbackRepository.saveProgress(imageId, 1L, 1L)
+                // Unit-returning call: a null result means the timeout fired and the
+                // hung save was abandoned. External (scope/job) cancellation is not
+                // swallowed by withTimeoutOrNull — it rethrows, handled below.
+                val saved = withTimeoutOrNull(saveTimeoutMs) {
+                    playbackRepository.saveProgress(imageId, 1L, 1L)
+                }
+                if (saved == null) {
+                    // Fixed text only — no paths or underlying messages (red line #4).
+                    Log.w(TAG, "Progress save timed out after ${saveTimeoutMs}ms (imageId=$imageId)")
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to mark image completed", e)
+                Log.e(TAG, "Failed to mark image completed: ${safeErrorDetail(e)}")
             }
         }
     }

@@ -14,12 +14,15 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
@@ -68,7 +71,7 @@ class PlayerViewModelSaveProgressTest {
     @Before
     fun setUp() = runTest {
         Dispatchers.setMain(testDispatcher)
-        every { videoQueue.consumeIds() } returns emptyList()
+        every { videoQueue.consumeIds(any()) } returns emptyList()
         every { videoQueue.getIds() } returns emptyList()
         coEvery { userPrefs.getVolumeBalance() } returns false
         coEvery { userPrefs.getQuickRecycle() } returns true
@@ -86,14 +89,16 @@ class PlayerViewModelSaveProgressTest {
         fileSize = 1000L,
     )
 
-    private fun createVm(): PlayerViewModel = PlayerViewModel(
+    private fun createVm(
+        ioDispatcher: CoroutineDispatcher = ioTestDispatcher,
+    ): PlayerViewModel = PlayerViewModel(
         savedStateHandle = SavedStateHandle(),
         videoRepository = videoRepository,
         playbackRepository = playbackRepository,
         userPrefs = userPrefs,
         videoQueue = videoQueue,
         undoDeleteUseCase = undoDeleteUseCase,
-        ioDispatcher = ioTestDispatcher,
+        ioDispatcher = ioDispatcher,
     )
 
     private fun TestScope.loadVideo42(vm: PlayerViewModel) {
@@ -415,5 +420,81 @@ class PlayerViewModelSaveProgressTest {
         vm.saveProgress(100L, 200L)
         advanceUntilIdle()
         coVerify(exactly = 0) { playbackRepository.saveProgress(any(), any(), any()) }
+    }
+
+    // ------------------------------------------------------------------
+    // Per-save upper bound (conventions.md #5 residual risk): a permanently
+    // hung repository call must not park the single consumer — it is abandoned
+    // after saveTimeoutMs and the queue keeps draining in FIFO order.
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `hung saveProgress times out and consumer continues serving queued saves in order`() = runTest {
+        // The consumer runs on a dispatcher sharing THIS test's scheduler so the
+        // withTimeoutOrNull bound is driven by advanceTimeBy (virtual time).
+        val vm = createVm(UnconfinedTestDispatcher(testScheduler))
+        vm.saveTimeoutMs = 50L
+        loadVideo42(vm)
+        val persisted = AtomicLong(-1L)
+        val events = mutableListOf<String>()
+        coEvery { playbackRepository.saveProgress(42L, 1_000L, 100_000L) } coAnswers {
+            awaitCancellation()          // a permanently hung repository call
+        }
+        coEvery { playbackRepository.saveProgress(42L, 2_000L, 100_000L) } coAnswers {
+            events.add("2k")
+            persisted.set(2_000L)
+        }
+        coEvery { playbackRepository.saveProgress(42L, 3_000L, 100_000L) } coAnswers {
+            events.add("3k")
+            persisted.set(3_000L)
+        }
+
+        vm.saveProgress(1_000L, 100_000L)
+        vm.saveProgress(2_000L, 100_000L)
+        vm.saveProgress(3_000L, 100_000L)
+        runCurrent()
+
+        // Serialization intact: the hung save still blocks the queue until its
+        // timeout bound elapses — no early execution of later saves.
+        assertEquals(-1L, persisted.get())
+
+        advanceTimeBy(60)               // cross the saveTimeoutMs bound
+        advanceUntilIdle()
+
+        // The hung save was abandoned; both later saves still ran, in enqueue order.
+        assertEquals(listOf("2k", "3k"), events)
+        assertEquals(3_000L, persisted.get())
+    }
+
+    @Test
+    fun `F-003 - hung saveProgress times out and drain still terminates consumer and scope`() = runTest {
+        val vm = createVm(UnconfinedTestDispatcher(testScheduler))
+        vm.saveTimeoutMs = 50L
+        loadVideo42(vm)
+        val persisted = AtomicLong(-1L)
+        coEvery { playbackRepository.saveProgress(42L, 1_000L, 60_000L) } coAnswers {
+            awaitCancellation()
+        }
+        coEvery { playbackRepository.saveProgress(42L, 5_000L, 60_000L) } coAnswers {
+            persisted.set(5_000L)
+        }
+
+        vm.saveProgress(1_000L, 60_000L)
+        vm.saveProgress(5_000L, 60_000L)
+        vm.clearForTest()
+        runCurrent()
+
+        // Drain is still in progress while the hung save sits under its bound.
+        assertTrue("Scope must remain active while the hung save drains", vm.isProgressSaveScopeActive)
+        assertFalse("Consumer must not complete while the hung save drains", vm.isProgressSaveConsumerCompleted)
+
+        advanceTimeBy(60)
+        advanceUntilIdle()
+
+        // Bounded drain: hung save abandoned, the queued final save still landed,
+        // then the consumer exited and the scope was cancelled — no infinite leak.
+        assertEquals(5_000L, persisted.get())
+        assertFalse("Scope must become inactive after bounded drain", vm.isProgressSaveScopeActive)
+        assertTrue("Consumer must be completed after bounded drain", vm.isProgressSaveConsumerCompleted)
     }
 }

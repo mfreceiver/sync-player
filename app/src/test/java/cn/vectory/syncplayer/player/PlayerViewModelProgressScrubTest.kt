@@ -45,7 +45,7 @@ class PlayerViewModelProgressScrubTest {
     @Before
     fun setUp() = runTest {
         Dispatchers.setMain(dispatcher)
-        every { videoQueue.consumeIds() } returns emptyList()
+        every { videoQueue.consumeIds(any()) } returns emptyList()
         every { videoQueue.getIds() } returns emptyList()
         coEvery { userPrefs.getVolumeBalance() } returns false
         coEvery { userPrefs.getQuickRecycle() } returns true

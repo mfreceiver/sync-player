@@ -37,7 +37,7 @@ class Audit20260913V3ImageRaceTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        every { imageQueue.consumeIds() } returns emptyList()
+        every { imageQueue.consumeIds(any()) } returns emptyList()
     }
 
     @After

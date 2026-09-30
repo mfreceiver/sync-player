@@ -46,7 +46,8 @@ class SyncPlayerHostKeyVerifier(context: Context) : HostKeyVerifier {
                     // 本锁期间其他实例已写入，直接比对
                     rechecked == fingerprint
                 } else {
-                    Log.i("HostKeyVerifier", "First time connecting to $keyLabel, saving fingerprint: $fingerprint")
+                    // AND-085: hostname/fingerprint stay out of logcat (red-line: no path/host in logs).
+                    Log.i("HostKeyVerifier", "TOFU: first-time host key persisted")
                     props.setProperty(keyLabel, fingerprint)
                     try {
                         savePropsLocked()
@@ -64,7 +65,7 @@ class SyncPlayerHostKeyVerifier(context: Context) : HostKeyVerifier {
             if (savedFingerprint == fingerprint) {
                 true
             } else {
-                Log.e("HostKeyVerifier", "Host key mismatch for $keyLabel! Saved: $savedFingerprint, Current: $fingerprint")
+                Log.e("HostKeyVerifier", "Host key mismatch — rejecting connection")
                 false
             }
         }

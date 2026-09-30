@@ -47,7 +47,7 @@ class PlayerViewModelFullscreenTest {
     @Before
     fun setUp() = runTest {
         Dispatchers.setMain(testDispatcher)
-        every { videoQueue.consumeIds() } returns emptyList()
+        every { videoQueue.consumeIds(any()) } returns emptyList()
         every { videoQueue.getIds() } returns emptyList()
         coEvery { userPrefs.getVolumeBalance() } returns false
         coEvery { userPrefs.getQuickRecycle() } returns true

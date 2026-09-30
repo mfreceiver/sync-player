@@ -233,20 +233,27 @@ class MediaFileStore @Inject constructor(
 
     /**
      * 一次性孤儿清扫（v4 去加密断代收尾）。DB 已由破坏性迁移清空，旧媒体文件
-     * 不再被任何行引用。marker 文件保证只执行一次；marker 写入失败无妨——下次
-     * 启动重新清扫，清扫本身幂等。返回删除的条目数。
+     * 不再被任何行引用。
+     *
+     * AND-061：marker 必须**先写后删**。旧顺序（删除后 best-effort 写 marker）
+     * 在 marker 写入失败时会在下次启动重新全删——把清扫间隙新下载的、DB 仍
+     * 引用的文件一并清掉。先写 marker 的最坏结果只是孤儿字节残留（占空间、
+     * 无数据丢失）；[deleteAllMedia] 只删数字桶/thumbs 目录，不会动 marker。
+     * 返回删除的条目数；marker 写失败时本轮不清扫、下次重试（此时尚未删除
+     * 任何文件，重扫是安全的）。
      */
     suspend fun purgeOrphansIfNeeded(): Int {
         val marker = File(root, PURGE_MARKER)
         if (marker.exists()) return 0
-        val (deleted, _) = deleteAllMedia()
         try {
             withContext(ioDispatcher) { marker.writeBytes(byteArrayOf(1)) }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            // marker 写入 best-effort
+            // marker 写不进去就不做本轮清扫——下次启动再试（此时什么都还没删）。
+            return 0
         }
+        val (deleted, _) = deleteAllMedia()
         return deleted
     }
 

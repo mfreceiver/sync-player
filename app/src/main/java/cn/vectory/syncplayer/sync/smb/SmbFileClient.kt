@@ -16,6 +16,7 @@ import jcifs.smb.SmbAuthException
 import jcifs.smb.SmbException
 import jcifs.smb.SmbFile
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -33,13 +34,10 @@ internal fun interface SmbFileFactory {
 
 class SmbFileClient internal constructor(
     private val context: Context,
-    private val smbFileFactory: SmbFileFactory
+    private val smbFileFactory: SmbFileFactory = SmbFileFactory { url, ctx -> SmbFile(url, ctx) },
+    // AND-090: injectable dispatcher — same rationale as SftpFileClient.
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : RemoteFileClient {
-
-    constructor(context: Context) : this(
-        context,
-        SmbFileFactory { url, ctx -> SmbFile(url, ctx) }
-    )
 
     private companion object {
         const val TAG = "SmbFileClient"
@@ -60,14 +58,30 @@ class SmbFileClient internal constructor(
     private fun classifySmbException(e: Throwable): SyncErrorCode = when (e) {
         is SmbAuthException -> SyncErrorCode.AUTHENTICATION_FAILED
         is SmbException -> {
-            val msg = e.message.orEmpty().lowercase()
-            when {
-                msg.contains("bad network name") ||
-                    msg.contains("no such file") ||
-                    msg.contains("not found") -> SyncErrorCode.PATH_NOT_FOUND
-                msg.contains("access denied") -> SyncErrorCode.ACCESS_DENIED
-                msg.contains("logon failure") -> SyncErrorCode.AUTHENTICATION_FAILED
-                else -> SyncErrorCode.UNKNOWN
+            // 先按 NT status 分类（稳定常量）：jcifs 真实文案是 "Access is denied." 等，
+            // 不含 "access denied" 连续子串——纯消息匹配对真异常永不命中。
+            // 英文关键字匹配仅回退给 String-ctor 异常（ntStatus = NT_STATUS_UNSUCCESSFUL）。
+            when (e.ntStatus) {
+                jcifs.smb.NtStatus.NT_STATUS_ACCESS_DENIED,
+                jcifs.smb.NtStatus.NT_STATUS_NETWORK_ACCESS_DENIED -> SyncErrorCode.ACCESS_DENIED
+                jcifs.smb.NtStatus.NT_STATUS_BAD_NETWORK_NAME,
+                jcifs.smb.NtStatus.NT_STATUS_OBJECT_NAME_NOT_FOUND,
+                jcifs.smb.NtStatus.NT_STATUS_OBJECT_PATH_NOT_FOUND,
+                jcifs.smb.NtStatus.NT_STATUS_NO_SUCH_FILE,
+                jcifs.smb.NtStatus.NT_STATUS_NOT_FOUND -> SyncErrorCode.PATH_NOT_FOUND
+                jcifs.smb.NtStatus.NT_STATUS_LOGON_FAILURE -> SyncErrorCode.AUTHENTICATION_FAILED
+                else -> {
+                    val msg = e.message.orEmpty().lowercase()
+                    when {
+                        msg.contains("bad network name") ||
+                            msg.contains("no such file") ||
+                            msg.contains("not found") -> SyncErrorCode.PATH_NOT_FOUND
+                        msg.contains("access denied") ||
+                            msg.contains("access is denied") -> SyncErrorCode.ACCESS_DENIED
+                        msg.contains("logon failure") -> SyncErrorCode.AUTHENTICATION_FAILED
+                        else -> SyncErrorCode.UNKNOWN
+                    }
+                }
             }
         }
         is java.net.SocketTimeoutException -> SyncErrorCode.TIMEOUT
@@ -93,7 +107,7 @@ class SmbFileClient internal constructor(
         // Therefore the whole withContext is wrapped by an OUTER try/catch, and session
         // fields are published only AFTER withContext returns normally.
         try {
-            val session = withContext(Dispatchers.IO) {
+            val session = withContext(ioDispatcher) {
                 checkNetworkAvailable(context)
                 val props = Properties()
                 props.setProperty("jcifs.smb.client.minVersion", "SMB202")
@@ -152,7 +166,7 @@ class SmbFileClient internal constructor(
     }
 
     override suspend fun disconnect() {
-        withContext(Dispatchers.IO + NonCancellable) {
+        withContext(ioDispatcher + NonCancellable) {
             try {
                 cifsContext?.close()
             } catch (e: Exception) {
@@ -177,7 +191,7 @@ class SmbFileClient internal constructor(
         }
     }
 
-    override suspend fun listFiles(path: String): List<RemoteFile> = withContext(Dispatchers.IO) {
+    override suspend fun listFiles(path: String): List<RemoteFile> = withContext(ioDispatcher) {
         val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.BROWSE)
         val result = mutableListOf<RemoteFile>()
         val pathParts = path.trim('/').split("/")
@@ -200,19 +214,32 @@ class SmbFileClient internal constructor(
         result
     }
 
-    suspend fun listShares(): List<RemoteFile> = withContext(Dispatchers.IO) {
+    suspend fun listShares(): List<RemoteFile> = withContext(ioDispatcher) {
         val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.BROWSE)
         val result = mutableListOf<RemoteFile>()
         val smbFile = smbFileFactory.create("smb://$currentHost/", ctx)
         val shares = try {
-            smbFile.listFiles() ?: return@withContext result
+            // jcifs-ng 语义查证（SmbEnumerationUtil.listFiles, 2.1.10）：内部聚合
+            // ArrayList 后 toArray 返回，实现上**不会返回 null**——空目录 = 空数组，
+            // IO/权限失败 = 抛 SmbException。null 分支仅作防御：null 不可能表示
+            // "空"，一旦出现即按枚举失败处理（与 listFilesRecursive 中
+            // null → RemoteScanIncompleteException 的判据一致）。
+            smbFile.listFiles() ?: throw SyncException(
+                SyncErrorCode.UNKNOWN, SyncOperation.BROWSE, host = currentHost
+            )
         } catch (e: CancellationException) {
             throw e
+        } catch (e: SyncException) {
+            throw e
         } catch (e: Exception) {
-            // CQ-001: 已取消则终结为 CE，不降级为空列表。
+            // CQ-001: 已取消则终结为 CE，不包装成 SyncException。
             currentCoroutineContext().ensureActive()
             Log.w(TAG, "Failed to list SMB shares", e)
-            return@withContext result
+            // listDirectories 契约：枚举失败 fail-loud（根路径浏览经此委托），
+            // 不降级为空列表（否则共享枚举被拒被误报为"空目录"）。
+            throw SyncException(
+                classifySmbException(e), SyncOperation.BROWSE, host = currentHost, cause = e
+            )
         }
         for (share in shares) {
             try {
@@ -239,7 +266,7 @@ class SmbFileClient internal constructor(
         result
     }
 
-    override suspend fun listDirectories(path: String): List<RemoteFile> = withContext(Dispatchers.IO) {
+    override suspend fun listDirectories(path: String): List<RemoteFile> = withContext(ioDispatcher) {
         val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.BROWSE)
 
         val trimmedPath = path.trim('/')
@@ -261,14 +288,21 @@ class SmbFileClient internal constructor(
             SyncErrorCode.PATH_NOT_FOUND, SyncOperation.BROWSE, path = path
         )
         val children = try {
-            dir.listFiles() ?: return@withContext result
+            // null 语义同 listShares：jcifs-ng 不会返回 null，防御性 null 按枚举失败处理。
+            dir.listFiles() ?: throw SyncException(
+                SyncErrorCode.UNKNOWN, SyncOperation.BROWSE, path = path
+            )
         } catch (e: CancellationException) {
             throw e
+        } catch (e: SyncException) {
+            throw e
         } catch (e: Exception) {
-            // CQ-001: 已取消则终结为 CE，不降级为空列表。
+            // CQ-001: 已取消则终结为 CE，不包装成 SyncException。
             currentCoroutineContext().ensureActive()
             Log.w(TAG, "Failed to list SMB directory: $path", e)
-            return@withContext result
+            // listDirectories 契约：枚举失败 fail-loud，不降级为空列表
+            // （否则 ACCESS_DENIED/传输故障被浏览 UI 与 testRemotePath 误报为"空目录/可访问"）。
+            throw SyncException(classifySmbException(e), SyncOperation.BROWSE, path = path, cause = e)
         }
         for (child in children) {
             try {
@@ -364,7 +398,7 @@ class SmbFileClient internal constructor(
         remotePath: String,
         sink: java.io.OutputStream,
         onProgress: ((transferred: Long, total: Long) -> Unit)?
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(ioDispatcher) {
         val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.DOWNLOAD)
         try {
             val smbUrl = if (subPath.isNotEmpty()) {
@@ -428,7 +462,7 @@ class SmbFileClient internal constructor(
         }
     }
 
-    override suspend fun deleteFile(remotePath: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun deleteFile(remotePath: String): Boolean = withContext(ioDispatcher) {
         val ctx = cifsContext ?: throw SyncException(SyncErrorCode.NOT_CONNECTED, SyncOperation.DELETE)
         try {
             val smbUrl = if (subPath.isNotEmpty()) {

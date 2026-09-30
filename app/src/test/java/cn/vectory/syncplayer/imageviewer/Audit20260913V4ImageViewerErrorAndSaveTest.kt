@@ -16,13 +16,16 @@ import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -46,7 +49,7 @@ class Audit20260913V4ImageViewerErrorAndSaveTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        every { imageQueue.consumeIds() } returns emptyList()
+        every { imageQueue.consumeIds(any()) } returns emptyList()
     }
 
     @After
@@ -153,6 +156,40 @@ class Audit20260913V4ImageViewerErrorAndSaveTest {
         advanceUntilIdle()
 
         assertEquals("saveProgress should complete despite viewModelScope cancellation", true, progressSaved)
+        coVerify(exactly = 1) { playbackRepository.saveProgress(imageId, 1L, 1L) }
+    }
+
+    @Test
+    fun `hung markCompleted save is abandoned after saveTimeoutMs instead of leaking the coroutine`() = runTest {
+        // progressSaveScope runs on a dispatcher sharing THIS test's scheduler so
+        // the withTimeoutOrNull bound is driven by advanceTimeBy (virtual time).
+        val vm = ImageViewerViewModel(
+            savedStateHandle = SavedStateHandle(),
+            videoRepository = videoRepository,
+            playbackRepository = playbackRepository,
+            imageQueue = imageQueue,
+            undoDeleteUseCase = undoDeleteUseCase,
+            ioDispatcher = UnconfinedTestDispatcher(testScheduler),
+        )
+        vm.saveTimeoutMs = 50L
+        val imageId = 42L
+        coEvery { videoRepository.getById(imageId) } returns imageEntity(imageId)
+        coEvery { playbackRepository.getByVideoId(imageId) } returns PlaybackRecordEntity(videoItemId = imageId)
+        coEvery { playbackRepository.saveProgress(imageId, 1L, 1L) } coAnswers {
+            awaitCancellation()          // a permanently hung repository call
+        }
+
+        vm.loadImage(imageId)
+        runCurrent()
+
+        // The save is in flight, suspended inside the repository mock.
+        assertEquals(1, vm.activeProgressSaveCount)
+
+        advanceTimeBy(60)               // cross the saveTimeoutMs bound
+        advanceUntilIdle()
+
+        // The timeout released the hung save — no leaked coroutine holding the VM.
+        assertEquals(0, vm.activeProgressSaveCount)
         coVerify(exactly = 1) { playbackRepository.saveProgress(imageId, 1L, 1L) }
     }
 }

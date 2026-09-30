@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -246,12 +247,15 @@ private fun ViewModeSection(
             onClick = { onViewModeChange(BrowserViewModel.ViewMode.STAGGERED_GRID); onDismiss() },
             contentDescription = stringResource(R.string.browser_view_staggered)
         ) {
+            // AND-074: hardcoded white was invisible on the light theme — track the
+            // chip's content color like the Icon siblings do.
+            val glyphColor = LocalContentColor.current
             Canvas(modifier = Modifier.size(20.dp)) {
                 val barWidth = size.width / 5f
                 val gap = barWidth
-                drawRect(Color(0xFFFFFFFF), topLeft = Offset(0f, size.height * 0.15f), size = Size(barWidth, size.height * 0.85f))
-                drawRect(Color(0xFFFFFFFF), topLeft = Offset(barWidth + gap, 0f), size = Size(barWidth, size.height * 0.6f))
-                drawRect(Color(0xFFFFFFFF), topLeft = Offset(2 * (barWidth + gap), size.height * 0.3f), size = Size(barWidth, size.height * 0.7f))
+                drawRect(glyphColor, topLeft = Offset(0f, size.height * 0.15f), size = Size(barWidth, size.height * 0.85f))
+                drawRect(glyphColor, topLeft = Offset(barWidth + gap, 0f), size = Size(barWidth, size.height * 0.6f))
+                drawRect(glyphColor, topLeft = Offset(2 * (barWidth + gap), size.height * 0.3f), size = Size(barWidth, size.height * 0.7f))
             }
         }
     }

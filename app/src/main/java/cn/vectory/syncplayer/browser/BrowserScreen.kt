@@ -444,7 +444,7 @@ fun BrowserScreen(
             try {
                 snackbarHostState.showSnackbar(ev.message)
             } finally {
-                viewModel.clearError()
+                viewModel.clearError(ev.seq)
             }
         }
     }

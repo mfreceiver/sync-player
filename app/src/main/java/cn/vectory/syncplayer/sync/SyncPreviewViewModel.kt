@@ -301,6 +301,12 @@ class SyncPreviewViewModel @Inject constructor(
         if (s is SyncPreviewState.Scanning || s is SyncPreviewState.Submitting ||
             s is SyncPreviewState.Running || s is SyncPreviewState.Cancelling
         ) return
+        // AND-083：dryRun/setPendingTask 在运行中的同步持锁期间会无限 park，
+        // 且 resetProgress 会破坏运行中任务的进度——忙时直接拒绝预览。
+        if (syncEngine.progress.value.isRunning) {
+            _error.value = context.getString(R.string.sync_preview_busy)
+            return
+        }
         invalidateInFlight()
         val requestId = requestIdSeq.incrementAndGet()
         val modeSnapshot = _syncMode.value

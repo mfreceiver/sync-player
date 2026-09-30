@@ -381,6 +381,20 @@ class SyncRelationEditViewModelResultTest {
     }
 
     @Test
+    fun `listDirectories ACCESS_DENIED after successful connect emits AccessFailed not DirAccessible`() = runTest {
+        // listDirectories fail-loud 契约：connect 成功但枚举被拒必须报 AccessFailed，
+        // 不得因"吞成空列表"而误报 DirAccessible。
+        coEvery { client.listDirectories(any()) } throws
+            SyncException(SyncErrorCode.ACCESS_DENIED, SyncOperation.BROWSE)
+        vm.selectSource(1L)
+        vm.setRemotePath("media/movies")
+        vm.testRemotePath()
+
+        assertEquals(RelationTestResult.AccessFailed(SyncErrorCode.ACCESS_DENIED), vm.testResult.value)
+        assertFalse(vm.isTesting.value)
+    }
+
+    @Test
     fun `generic failure emits AccessFailed UNKNOWN without carrying throwable message`() = runTest {
         coEvery { client.connect(any(), any()) } throws RuntimeException("internal boom detail")
         vm.selectSource(1L)

@@ -413,25 +413,25 @@ class SyncPreviewViewModelTest {
     }
 
     @Test
-    fun `requestExecute is rejected with a banner while another relation runs`() = runTest {
+    fun `preview and execute are refused with a banner while another relation runs`() = runTest {
         // 引擎正被其它 relation（99L）占用：init 不重连（relationId 不匹配）。
+        // AND-083 合并策略：dryRun 会 park 在运行中同步持有的
+        // storageOperationMutex 上——预览在入口即拒绝，而不是先扫描再在执行时拒绝。
         val vm = createVm(initial = SyncProgress(isRunning = true, phase = SyncPhase.DOWNLOADING, relationId = 99L))
         coEvery { syncEngine.dryRun(1L) } returns DryRunResult(
             toDownload = listOf(downloadAction()), toDelete = emptyList()
         )
         vm.loadPreview()
-        assertTrue(vm.state.value is SyncPreviewState.Ready)
+        assertTrue(
+            "preview must be refused while the engine is owned by another relation",
+            vm.state.value is SyncPreviewState.Idle
+        )
+        assertTrue("refusal must be reported via the typed error banner", vm.error.value != null)
+        coVerify(exactly = 0) { syncEngine.dryRun(any()) }
 
         vm.requestExecute()
-        assertTrue(
-            "plan stays Ready when the engine is owned by another relation",
-            vm.state.value is SyncPreviewState.Ready
-        )
-        assertNull("no confirm gate may be armed on rejection", vm.pendingExecuteConfirm.value)
-        assertTrue(
-            "rejection must be reported via the typed error banner",
-            vm.error.value != null
-        )
+        assertTrue(vm.state.value is SyncPreviewState.Idle)
+        assertNull("no confirm gate may be armed on refusal", vm.pendingExecuteConfirm.value)
         coVerify(exactly = 0) { syncEngine.setPendingTask(any()) }
         io.mockk.verify(exactly = 0) { SyncService.start(any(), any()) }
     }

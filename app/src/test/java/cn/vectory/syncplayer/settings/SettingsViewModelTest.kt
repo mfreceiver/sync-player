@@ -50,6 +50,9 @@ class SettingsViewModelTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         mockkStatic(Log::class)
         every { Log.e(any(), any(), any()) } returns 0
+        // combine() in init now includes the orientation preference flow (AND-089);
+        // it must emit for the first snapshot to be delivered.
+        every { userPrefs.orientation } returns MutableStateFlow(null)
     }
 
     @After

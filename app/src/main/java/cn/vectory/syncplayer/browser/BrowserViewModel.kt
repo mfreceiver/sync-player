@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.browser
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.vectory.syncplayer.data.model.BrowseItem
@@ -53,6 +54,7 @@ class BrowserViewModel @Inject constructor(
     private val userPrefs: UserPreferencesRepository,
     private val fileOps: FileOperationsUseCase,
     private val undoDeleteUseCase: UndoDeleteUseCase,
+    private val savedStateHandle: SavedStateHandle,
     @ApplicationContext private val context: Context
 ) : ViewModel(), FileContextMenuActions, FolderContextMenuActions {
 
@@ -112,8 +114,23 @@ class BrowserViewModel @Inject constructor(
 
     private val _scrollPositions = mutableMapOf<String, Pair<Int, Int>>()
 
+    init {
+        // AND-067: the route `folder` arg only carries the entry folder —
+        // in-screen navigation lived in coordinator memory and scroll offsets in
+        // the map below, both lost on process death. Restore both here; writes
+        // happen in setFolder/saveScrollPosition.
+        savedStateHandle.get<String>(CURRENT_FOLDER_KEY)?.let {
+            if (it.isNotEmpty()) coordinator.setFolder(it)
+        }
+        savedStateHandle.get<java.util.HashMap<String, IntArray>>(SCROLL_POS_KEY)
+            ?.forEach { (k, v) -> if (v.size >= 2) _scrollPositions[k] = v[0] to v[1] }
+    }
+
     fun saveScrollPosition(folder: String, firstVisibleItemIndex: Int, firstVisibleItemScrollOffset: Int) {
         _scrollPositions[folder] = Pair(firstVisibleItemIndex, firstVisibleItemScrollOffset)
+        savedStateHandle[SCROLL_POS_KEY] = java.util.HashMap(
+            _scrollPositions.mapValues { intArrayOf(it.value.first, it.value.second) }
+        )
     }
 
     fun getScrollPosition(folder: String): Pair<Int, Int>? = _scrollPositions[folder]
@@ -179,9 +196,14 @@ class BrowserViewModel @Inject constructor(
 
     // === Content setters, delegated to the coordinator (state update + preference persist) ===
 
-    fun setFolder(folder: String) = coordinator.setFolder(folder)
+    fun setFolder(folder: String) {
+        coordinator.setFolder(folder)
+        savedStateHandle[CURRENT_FOLDER_KEY] = folder
+    }
 
-    fun navigateUp(): Boolean = coordinator.navigateUp()
+    fun navigateUp(): Boolean = coordinator.navigateUp().also { moved ->
+        if (moved) savedStateHandle[CURRENT_FOLDER_KEY] = coordinator.currentFolder.value
+    }
 
     fun setSortMode(mode: SortMode) = coordinator.setSortMode(mode)
 
@@ -219,8 +241,10 @@ class BrowserViewModel @Inject constructor(
         _error.update { ErrorEvent(message, errorSeq.incrementAndGet()) }
     }
 
-    fun clearError() {
-        _error.value = null
+    fun clearError(expectedSeq: Long? = null) {
+        // AND-068: a cancelled effect's finally runs after a NEWER error may have
+        // replaced this one — only clear the event that was actually displayed.
+        _error.update { if (expectedSeq == null || it?.seq == expectedSeq) null else it }
     }
 
     /**
@@ -391,5 +415,7 @@ class BrowserViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "BrowserViewModel"
+        private const val CURRENT_FOLDER_KEY = "browserCurrentFolder"
+        private const val SCROLL_POS_KEY = "browserScrollPositions"
     }
 }

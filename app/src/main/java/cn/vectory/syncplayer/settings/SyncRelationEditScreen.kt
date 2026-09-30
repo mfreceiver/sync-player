@@ -238,7 +238,10 @@ fun SyncRelationEditScreen(
                 }
                 Button(
                     onClick = { viewModel.save() },
-                    enabled = !isSaving && name.isNotBlank() && selectedSourceId > 0L
+                    // AND-057: same saved-gate as the source editor — repeat taps
+                    // after a successful save must not insert duplicates.
+                    enabled = !isSaving && saveResult !is RelationSaveResult.Saved
+                            && name.isNotBlank() && selectedSourceId > 0L
                             && remotePath.isNotBlank() && localBasePath.isNotBlank(),
                     modifier = Modifier.weight(1f)
                 ) {

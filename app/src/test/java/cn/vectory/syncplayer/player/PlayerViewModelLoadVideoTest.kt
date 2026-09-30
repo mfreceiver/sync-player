@@ -56,7 +56,7 @@ class PlayerViewModelLoadVideoTest {
     @Before
     fun setUp() = runTest {
         Dispatchers.setMain(testDispatcher)
-        every { videoQueue.consumeIds() } returns emptyList()
+        every { videoQueue.consumeIds(any()) } returns emptyList()
         every { videoQueue.getIds() } returns emptyList()
         coEvery { videoRepository.getAllIdsSorted() } returns emptyList()
         coEvery { userPrefs.getVolumeBalance() } returns false
@@ -173,7 +173,7 @@ class PlayerViewModelLoadVideoTest {
 
     @Test
     fun `loadVideo skips a deleted id and advances to the next existing one`() = runTest {
-        every { videoQueue.consumeIds() } returns listOf(1L, 2L, 3L)
+        every { videoQueue.consumeIds(any()) } returns listOf(1L, 2L, 3L)
         coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
         coEvery { videoRepository.getById(2L) } returns null
         coEvery { videoRepository.getById(3L) } returns videoEntity(3L)
@@ -191,7 +191,7 @@ class PlayerViewModelLoadVideoTest {
 
     @Test
     fun `loadVideo skips a run of consecutive deleted ids`() = runTest {
-        every { videoQueue.consumeIds() } returns listOf(1L, 2L, 3L, 4L)
+        every { videoQueue.consumeIds(any()) } returns listOf(1L, 2L, 3L, 4L)
         coEvery { videoRepository.getById(2L) } returns null
         coEvery { videoRepository.getById(3L) } returns null
         coEvery { videoRepository.getById(4L) } returns videoEntity(4L)
@@ -206,7 +206,7 @@ class PlayerViewModelLoadVideoTest {
 
     @Test
     fun `loadVideo publishes the structured exhaustion terminal when queue is exhausted after deleted id`() = runTest {
-        every { videoQueue.consumeIds() } returns listOf(1L, 2L)
+        every { videoQueue.consumeIds(any()) } returns listOf(1L, 2L)
         coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
         coEvery { playbackRepository.getByVideoId(1L) } returns null
         coEvery { videoRepository.getById(2L) } returns null
@@ -241,7 +241,7 @@ class PlayerViewModelLoadVideoTest {
 
     @Test
     fun `successful load clears a previously published exhaustion flag`() = runTest {
-        every { videoQueue.consumeIds() } returns listOf(1L, 2L)
+        every { videoQueue.consumeIds(any()) } returns listOf(1L, 2L)
         coEvery { videoRepository.getById(1L) } returns videoEntity(1L)
         coEvery { playbackRepository.getByVideoId(1L) } returns null
         coEvery { videoRepository.getById(2L) } returns null
@@ -260,7 +260,7 @@ class PlayerViewModelLoadVideoTest {
 
     @Test
     fun `stale request resuming after a newer successful load must not publish exhaustion`() = runTest {
-        every { videoQueue.consumeIds() } returns listOf(1L, 2L)
+        every { videoQueue.consumeIds(any()) } returns listOf(1L, 2L)
         val gate = CompletableDeferred<Unit>()
         val entered = java.util.concurrent.atomic.AtomicBoolean(false)
         // The OLD request's DB read reports entry via a side channel, then parks in

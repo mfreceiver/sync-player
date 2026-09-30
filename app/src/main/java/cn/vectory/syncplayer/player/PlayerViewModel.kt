@@ -15,6 +15,7 @@ import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.UserPreferencesRepository
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.di.IoDispatcher
+import cn.vectory.syncplayer.data.model.OrientationPreference
 import cn.vectory.syncplayer.navigation.SAVED_VIDEO_IDS_KEY
 import cn.vectory.syncplayer.navigation.VideoQueue
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -30,6 +31,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import kotlin.math.roundToInt
@@ -135,7 +137,7 @@ data class ProgressScrubUiState(
 
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
     private val videoRepository: VideoRepository,
     private val playbackRepository: PlaybackRepository,
     private val userPrefs: UserPreferencesRepository,
@@ -154,8 +156,21 @@ class PlayerViewModel @Inject constructor(
      * [onCleared] closes [progressSaveChannel]. The consumer loop drains all already-queued
      * saves (including the final teardown save), executes them sequentially to completion,
      * and cancels [progressSaveScope] upon loop termination.
+     *
+     * The drain is bounded: each individual save is capped by [saveTimeoutMs]. A save
+     * that exceeds the bound is abandoned (logged) and the consumer proceeds to the next
+     * queued item — a permanently-hung repository call can never park the consumer, and
+     * the ViewModel reference it captures, forever.
      */
     private val progressSaveScope = CoroutineScope(SupervisorJob() + ioDispatcher)
+
+    /**
+     * Upper bound for a single progress save, read at each save's execution time.
+     * Instance-level (not const) so tests can inject a small value before enqueueing.
+     */
+    @Volatile
+    @VisibleForTesting
+    internal var saveTimeoutMs: Long = 5_000L
 
     private data class PendingProgressSave(val videoId: Long, val position: Long, val duration: Long)
 
@@ -170,14 +185,25 @@ class PlayerViewModel @Inject constructor(
             for (save in progressSaveChannel) {
                 val job = launch {                       // 每次保存一个子 Job（父=消费者协程）
                     try {
-                        playbackRepository.saveProgress(save.videoId, save.position, save.duration)
+                        // saveProgress returns Unit, so a null result here can only mean
+                        // the timeout fired — the hung call is abandoned. An external
+                        // (scope/job) cancellation is NOT swallowed by withTimeoutOrNull:
+                        // it rethrows the foreign CancellationException, handled below.
+                        val saved = withTimeoutOrNull(saveTimeoutMs) {
+                            playbackRepository.saveProgress(save.videoId, save.position, save.duration)
+                        }
+                        if (saved == null) {
+                            // No exception object on timeout — fixed text only, no
+                            // paths or underlying messages (security red line #4).
+                            Log.w(TAG, "Progress save timed out after ${saveTimeoutMs}ms (videoId=${save.videoId})")
+                        }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to save progress: ${safeErrorDetail(e)}")
                     }
                 }
-                job.join()                               // 上一保存结束才取下一项：完成序 == 入队序（仅串行保证，无时延上界）
+                job.join()                               // 上一保存结束（成功/失败/超时放弃）才取下一项：完成序 == 入队序，单次以 saveTimeoutMs 为上界
             }
         } finally {
             progressSaveScope.cancel()
@@ -237,8 +263,11 @@ class PlayerViewModel @Inject constructor(
     }
 
     /** Clear the player error after the UI has shown it. */
-    fun clearError() {
-        _uiState.update { it.copy(error = null) }
+    fun clearError(expectedSeq: Long? = null) {
+        // AND-068: seq-guarded clear — see BrowserViewModel.clearError.
+        _uiState.update { s ->
+            if (expectedSeq == null || s.error?.seq == expectedSeq) s.copy(error = null) else s
+        }
     }
 
     /** Publish an already-mapped user-facing error as a distinct, one-shot UI event. */
@@ -257,6 +286,10 @@ class PlayerViewModel @Inject constructor(
     private val savedVideoIdsFlow: StateFlow<String?> =
         savedStateHandle.getStateFlow(SAVED_VIDEO_IDS_KEY, null)
 
+    // AND-089: loaded once in init; resolveOrientation() is synchronous and
+    // called during composition, so it can't suspend to read the pref.
+    @Volatile private var orientationPref = OrientationPreference.FOLLOW_VIDEO
+
     private var overlayHideJob: Job? = null
 
     init {
@@ -265,6 +298,7 @@ class PlayerViewModel @Inject constructor(
             try {
                 val vb = userPrefs.getVolumeBalance()
                 val qr = userPrefs.getQuickRecycle()
+                orientationPref = userPrefs.getOrientation() ?: OrientationPreference.FOLLOW_VIDEO
                 _uiState.update { it.copy(volumeBalance = vb, quickRecycle = qr) }
             } catch (e: CancellationException) {
                 throw e
@@ -275,7 +309,10 @@ class PlayerViewModel @Inject constructor(
     }
 
     private fun loadFolderVideoIds() {
-        val queueIds = videoQueue.consumeIds()
+        // AND-071: consume only a payload anchored to this entry's target id;
+        // a mismatched payload belongs to a newer navigation and is left alone.
+        val anchorId = savedStateHandle.get<Long>("videoItemId") ?: 0L
+        val queueIds = videoQueue.consumeIds(anchorId)
         if (queueIds.isNotEmpty()) {
             _allVideoIds.value = queueIds
             return
@@ -549,7 +586,13 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun resolveOrientation(videoWidth: Int?, videoHeight: Int?): Int {
-        if (!_uiState.value.isFullscreen) return ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        // AND-089: FOLLOW_SYSTEM means "don't force an orientation change" —
+        // the player stays under system rotation control even in fullscreen.
+        if (orientationPref == OrientationPreference.FOLLOW_SYSTEM ||
+            !_uiState.value.isFullscreen
+        ) {
+            return ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
         if (videoWidth != null && videoHeight != null && videoWidth > 0 && videoHeight > 0) {
             return if (videoWidth >= videoHeight) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             else ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT

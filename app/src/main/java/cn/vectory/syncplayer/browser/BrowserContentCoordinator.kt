@@ -117,7 +117,13 @@ internal class BrowserContentCoordinator(
             } catch (_: Exception) {
                 ViewMode.LIST
             }
-            _gridColumns.value = userPrefs.getGridColumns()
+            _gridColumns.value = try {
+                userPrefs.getGridColumns()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                3 // AND-059: keep parity with the default — an unguarded read here crashed the launch.
+            }
             _browseMode.value = try {
                 BrowseMode.valueOf(userPrefs.getBrowseMode())
             } catch (e: CancellationException) {

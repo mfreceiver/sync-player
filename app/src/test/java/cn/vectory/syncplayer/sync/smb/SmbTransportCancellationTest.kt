@@ -7,6 +7,7 @@ import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncSource
 import cn.vectory.syncplayer.sync.SyncErrorCode
 import cn.vectory.syncplayer.sync.SyncException
+import cn.vectory.syncplayer.sync.SyncOperation
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -43,8 +44,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * call completes with a NORMAL exception (or an in-loop ensureActive fires) → the
  * client must terminate with the original CancellationException (CE-first) —
  * including in per-entry catch blocks, where cancellation must also stop processing
- * of subsequent entries. Uncanceled IOException degradation semantics (empty list /
- * skip bad entry) must remain unchanged.
+ * of subsequent entries. Uncanceled per-entry degradation (skip bad entry) must
+ * remain unchanged; enumeration-phase failures are now fail-loud SyncException
+ * (listDirectories contract — never silently empty).
  *
  * Asserts on exception TYPES, entry/factory counts, and enum codes only — never on
  * message text.
@@ -420,7 +422,7 @@ class SmbTransportCancellationTest {
     }
 
     @Test
-    fun `listDirectories uncanceled IOException still degrades to empty list`() {
+    fun `listDirectories uncanceled IOException throws SyncException not empty list`() {
         val connectFile = newSmbFileMock()
         stubNetworkOk()
         every { factory.create("smb://host/media/", any()) } returns connectFile
@@ -429,9 +431,12 @@ class SmbTransportCancellationTest {
         runBlocking { client.connect(source, "/media") }
         every { connectFile.listFiles() } throws IOException("simulated transport failure")
 
-        val result = runBlocking { client.listDirectories("media") }
+        // listDirectories 契约：枚举失败 fail-loud —— SyncException 而非空列表。
+        val t = runCatching { runBlocking { client.listDirectories("media") } }.exceptionOrNull()
 
-        assertTrue(result.isEmpty())
+        assertTrue("expected SyncException but was ${t?.javaClass}", t is SyncException)
+        assertEquals(SyncErrorCode.UNKNOWN, (t as SyncException).code)
+        assertEquals(SyncOperation.BROWSE, (t as SyncException).operation)
     }
 
     @Test
