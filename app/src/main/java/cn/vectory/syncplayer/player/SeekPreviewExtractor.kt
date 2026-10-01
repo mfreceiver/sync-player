@@ -40,11 +40,18 @@ import java.util.concurrent.atomic.AtomicBoolean
  * bumps a facade `intentTicket` under [publishLock]. An extraction captures
  * its ticket at submit time; after decode+scale, the validity check AND the
  * cache write happen inside ONE [publishLock] critical section. A result from
- * an older session or target can therefore never be returned or cached after
- * a newer intent registered — including the "pure cache hit" path, which the
- * engine cannot see (it never touches engine state). Engine-side identity
- * (`epoch`/`isCurrent(gen)`) is re-verified in the same section, so the
- * facade barrier and the engine barrier agree at the linearization point.
+ * an older SESSION or GENERATION can therefore never be returned or cached
+ * after a newer intent registered — including the "pure cache hit" path,
+ * which the engine cannot see (it never touches engine state). Engine-side
+ * identity (`epoch`/`isCurrent(gen)`) is re-verified in the same section, so
+ * the facade barrier and the engine barrier agree at the linearization point.
+ *
+ * Ticket staleness within a still-current session is deliberately softer
+ * (B1): a frame decoded for a bucket the user has already swept past is a
+ * valuable warm entry for that bucket, so it is written to the cache but NOT
+ * returned as the current UI answer. The UI keeps showing its previous frame
+ * until a frame for the CURRENT bucket arrives.
+ *
  * The one deliberate exception is [prefetchNeighbors]: it is not a UI intent
  * (it must not invalidate in-flight publishes), it runs on its OWN engine
  * channel (own mailbox/lane/native session — UI request identity is never
@@ -158,11 +165,41 @@ internal class SeekPreviewExtractor(
             retriever.setDataSource(context, Uri.parse(uriString))
         }
 
-        override fun decode(positionMs: Long): Bitmap? =
-            retriever.getFrameAtTime(
-                positionMs * 1000L,
+        override fun decode(positionMs: Long): Bitmap? {
+            val timeUs = positionMs * 1000L
+            // Prefer the framework's scaled decode (the Glide-style usage):
+            // one native call that downsamples at decode time — no
+            // full-size intermediate allocation and no CPU re-scale for an
+            // already in-bounds frame. The framework preserves the source
+            // aspect ratio, so the returned size can differ from the
+            // request (and on quirky devices may even exceed it); anything
+            // still out of bounds falls through to the facade's CPU
+            // scaleBitmap, which stays the final safety net either way.
+            val scaled = try {
+                retriever.getScaledFrameAtTime(
+                    timeUs,
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                    MAX_WIDTH,
+                    MAX_HEIGHT,
+                )
+            } catch (ce: CancellationException) {
+                // Cancellation must always propagate — never convert it into
+                // a fallback decode or a "not supported" downgrade.
+                throw ce
+            } catch (e: Exception) {
+                // Recoverable scaled-decode failure (unsupported API level /
+                // codec error / device quirk) — fall back to the full-frame
+                // path below. Fatal throwables (Errors, OOM) are deliberately
+                // NOT caught: they must fail the decode through the regular
+                // failure path instead of silently downgrading to a
+                // full-size allocation.
+                null
+            }
+            return scaled ?: retriever.getFrameAtTime(
+                timeUs,
                 MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
             )
+        }
 
         override fun close() {
             retriever.release()
@@ -754,10 +791,16 @@ internal class SeekPreviewExtractor(
      * Decode a frame off-thread; the engine owns all native lifetime.
      * CancellationException propagates to the caller; any other failure
      * fast-fails as null (cleanup failures remain observable via
-     * [shutdownResult]). A result whose intent ticket or engine generation
-     * was invalidated while in flight is discarded — never returned, never
-     * cached. The validity check and the cache write form one critical
-     * section: the publish linearization point.
+     * [shutdownResult]).
+     *
+     * Publish semantics (B1): session/generation validity still gates
+     * everything — a frame from another media session or an older
+     * generation is never returned and never cached. A result whose INTENT
+     * TICKET was superseded while in flight (the user's target moved on
+     * within the same session) is kept as a cache-only warm entry for the
+     * bucket it decodes, but is NOT returned as the current UI answer.
+     * The validity check and the cache write form one critical section:
+     * the publish linearization point.
      */
     suspend fun extractFrameAtPosition(uri: String, positionMs: Long): Bitmap? {
         val myTicket: Long
@@ -780,19 +823,22 @@ internal class SeekPreviewExtractor(
         // CPU-side scale on the injected dispatcher — never native work.
         // Goes through the same injectable hook as prefetch so tests can
         // park the UI at exactly the scale step (never at native decode).
+        // A frame that arrived already in bounds (framework-scaled decode)
+        // passes through unchanged — no second scale, no copy.
         val scaled = withContext(dispatcher) { (scale ?: ::scaleBitmap)(raw) }
 
         // Publish barrier: validity check + cache write in ONE critical
-        // section. Older-session/older-target results die here even if the
-        // engine still considered them publishable.
+        // section. Session/generation validity is the hard gate; a stale
+        // ticket inside a still-current session downgrades the result to
+        // cache-only instead of discarding it.
         synchronized(publishLock) {
             if (releasedFlag) return null
-            if (intentTicket != myTicket) return null
             val generation = engine.epoch()
             if (generation < 0 || !engine.isCurrent(gen)) return null
             if (scaled.byteCount <= CACHE_MAX_SIZE_BYTES) {
                 frameCache.put(cacheKeyFor(uri, generation, positionMs), scaled)
             }
+            if (intentTicket != myTicket) return null
         }
         return scaled
     }

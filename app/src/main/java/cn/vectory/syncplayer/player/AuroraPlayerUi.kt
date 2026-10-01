@@ -948,14 +948,84 @@ internal fun AuroraSeekPreviewHost(
         }
         try {
             previewExtractor.beginSession(android.net.Uri.parse(videoUri))
+            // Speed-adaptive submission trajectory (B1). Scoped to this
+            // effect so every new session starts with a clean slate.
+            var lastSubmittedBucket = -1L
+            var lastSeenBucket = -1L
+            var lastBucketChangeElapsedMs = -1L
             snapshotFlow { latestTarget }.collectLatest {
                 val target = latestTarget.coerceIn(0L, durationMs.coerceAtLeast(0L))
+                val nowMs = android.os.SystemClock.elapsedRealtime()
+                val targetBucket = previewBucketOf(target)
+                if (targetBucket != lastSeenBucket) {
+                    lastSeenBucket = targetBucket
+                    lastBucketChangeElapsedMs = nowMs
+                }
                 val previous = frame
                 if (previous?.bitmap != null && previous.matches(generation, session, target)) {
                     frame = previous.copy(targetMs = target)
                     viewModel?.updateSeekFrame(session, target, SeekFrame.CurrentBucket)
                     return@collectLatest
                 }
+                // Cache hits are free — they never enter the engine lane, so
+                // they bypass the submission gate. A cache hit for the
+                // current bucket is a fully display-accepted frame. (The
+                // read also bumps the facade intent ticket: frames decoded
+                // for a bucket the thumb has already swept past degrade to
+                // cache-only warm entries instead of flickering on screen.)
+                // The display reference being replaced is dropped WITHOUT
+                // evicting the facade cache: the cache owns every frame it
+                // published (byte-budget eviction is its job), so an old
+                // bucket stays warm for a back-scrub.
+                previewExtractor.getCachedFrame(videoUri, target)?.let { cached ->
+                    frame = PresentedPreviewFrame(generation, session, target, cached)
+                    viewModel?.updateSeekFrame(session, target, SeekFrame.CurrentBucket)
+                    return@collectLatest
+                }
+                // Speed-adaptive submission gate (B1): while the thumb sweeps
+                // many buckets quickly, intermediate decodes would only pile
+                // up on the serial lane and their completions would flicker
+                // past one by one. Skip mid-sweep buckets entirely; the
+                // settled stop point and the slow per-bucket drag still
+                // submit immediately. Nothing is decoding for a skipped
+                // bucket, so the previous frame simply stays on screen.
+                if (!shouldSubmitPreviewFrame(
+                        targetBucket = targetBucket,
+                        nowMs = nowMs,
+                        lastSubmittedBucket = lastSubmittedBucket.takeIf { it >= 0 },
+                        lastBucketChangeElapsedMs = lastBucketChangeElapsedMs.takeIf { it >= 0 },
+                    )
+                ) {
+                    // STOP-POINT WAKEUP (B2): snapshotFlow only emits on
+                    // changes, so a fast sweep that ENDS on a far bucket
+                    // would never submit its stop point. Wait out the
+                    // REMAINING stable time of this bucket; a new target
+                    // (collectLatest cancels this lambda) or the effect
+                    // ending (session end / compact) cancels the wait. While
+                    // waiting, nothing counts as submitted
+                    // (lastSubmittedBucket stays untouched).
+                    val stableForMs = nowMs -
+                        lastBucketChangeElapsedMs.coerceAtLeast(0L)
+                    delay(
+                        (PREVIEW_SUBMIT_STABLE_MS - stableForMs)
+                            .coerceAtLeast(0L),
+                    )
+                    // The wait elapsed and this lambda is by construction
+                    // still the newest emission — a newer one would have
+                    // cancelled it. Re-validate the world that may have
+                    // changed while we slept.
+                    if (latestTarget.coerceIn(0L, durationMs.coerceAtLeast(0L)) != target) {
+                        return@collectLatest
+                    }
+                    // The cache may have been warmed while we waited (e.g. a
+                    // neighbour prefetch) — a hit is free and fully accepted.
+                    previewExtractor.getCachedFrame(videoUri, target)?.let { cached ->
+                        frame = PresentedPreviewFrame(generation, session, target, cached)
+                        viewModel?.updateSeekFrame(session, target, SeekFrame.CurrentBucket)
+                        return@collectLatest
+                    }
+                }
+                lastSubmittedBucket = targetBucket
                 // RETAIN the previous frame while the new bucket decodes:
                 // 500 ms neighbours look visually continuous, so keep showing
                 // the last good frame (same generation + session only) until
@@ -966,27 +1036,46 @@ internal fun AuroraSeekPreviewHost(
                 // replacement, and the `finally` clears everything on
                 // session end.
                 viewModel?.updateSeekFrame(session, target, SeekFrame.Pending)
-                val bitmap = previewExtractor.getCachedFrame(videoUri, target)
-                    ?: previewExtractor.extractFrameAtPosition(videoUri, target)
+                val bitmap = previewExtractor.extractFrameAtPosition(videoUri, target)
                 // Native extraction may ignore coroutine cancellation. Never publish
                 // that late frame or mark a compact/retired target as current.
                 if (!currentCoroutineContext().isActive || target != latestTarget) {
-                    previewExtractor.releaseFrame(bitmap)
+                    // Late completion (B2): only refuse to DISPLAY it — the
+                    // facade already cached this instance as the warm entry
+                    // for its own bucket, and releaseFrame would EVICT that
+                    // entry. Giving up the UI reference must stay separate
+                    // from evicting the cache; the display keeps the previous
+                    // frame until a frame for the CURRENT bucket arrives.
                     return@collectLatest
                 }
-                frame?.bitmap?.let(previewExtractor::releaseFrame)
+                // DISPLAY ACCEPTANCE (B1, tightened): only a frame belonging
+                // to the CURRENT target's bucket may replace what is on
+                // screen. The exact-target check above is the primary gate
+                // (a completed frame is accepted only while its own target
+                // is still the live one, i.e. same 500 ms bucket by
+                // construction, matches()-consistent with the fast path);
+                // the retained previous frame keeps the screen non-grey
+                // until that acceptance happens or this bucket finally
+                // fails (clears). The replaced reference is dropped WITHOUT
+                // evicting the facade cache (see the cache-hit comment).
                 frame = PresentedPreviewFrame(generation, session, target, bitmap)
                 viewModel?.updateSeekFrame(session, target, if (bitmap != null) SeekFrame.CurrentBucket else SeekFrame.Failed)
                 // Rolling window: after each successful frame, warm the
                 // adjacent buckets so stepping the thumb hits cache. The
                 // facade fire-and-forgets (bounded, cache-only); it stops
-                // with the session via endSession/release.
+                // with the session via endSession/release. Gate-skipped
+                // buckets never fire prefetch (it is success-driven), so a
+                // fast sweep leaves the warm window where it was.
                 if (bitmap != null) {
                     previewExtractor.prefetchNeighbors(videoUri, target)
                 }
             }
         } finally {
-            previewExtractor.releaseFrame(frame?.bitmap)
+            // Drop only the UI reference — the facade cache owns every frame
+            // it published and evicts by its own byte budget. Entries persist
+            // until budget eviction; session isolation still applies via the
+            // cache key (epoch/generation), so cross-session hits are not
+            // guaranteed.
             frame = null
             withContext(NonCancellable) { previewExtractor.endSession() }
         }
@@ -1002,10 +1091,12 @@ internal fun AuroraSeekPreviewHost(
     }
     if (active) {
         // Render gate: identity is (media generation, session) — a frame from
-        // another media or an older session can never show. During a drag the
-        // PREVIOUS bucket's frame stays visible as a transition until the new
-        // bucket's frame lands or fails; the bucket match is enforced by the
-        // frame holder above, not here.
+        // another media or an older session can never show. The B1 display
+        // ACCEPTANCE rule (only a frame for the current target's bucket may
+        // replace the shown frame) is enforced by the frame holder above;
+        // this gate deliberately stays session-level so the accepted frame —
+        // and its retained transition predecessor — persist across decodes
+        // without greying the preview (anti-grey semantics unchanged).
         val bitmap = frame
             ?.takeIf { demand && it.generation == generation && it.session == session }
             ?.bitmap
@@ -1020,6 +1111,51 @@ internal fun AuroraSeekPreviewHost(
 internal fun seekPreviewDemand(active: Boolean, compact: Boolean, hasMedia: Boolean): Boolean = active && !compact && hasMedia
 internal fun seekPreviewCompact(containerHeightPx: Float, bottomChromeHeightPx: Int, safetyPx: Float, thresholdPx: Float): Boolean =
     containerHeightPx - bottomChromeHeightPx - safetyPx < thresholdPx
+
+/** The 500 ms preview bucket the facade keys decodes and cache entries on
+ * (mirrors the facade's position rounding; kept local so the UI never
+ * depends on facade internals). */
+internal fun previewBucketOf(positionMs: Long): Long = positionMs / 500L
+
+/** Skip an intermediate bucket only when the thumb has swept strictly more
+ * than this many buckets since the last submission AND is still moving.
+ * 3 buckets = 1.5 s of media — beyond any pause a user perceives as a stop,
+ * so anything at or under it is still "slow dragging" and must submit every
+ * bucket (unchanged legacy behavior). */
+internal const val PREVIEW_SUBMIT_SKIP_MIN_BUCKETS = 3L
+
+/** A target unchanged for at least this long counts as a settled stop and
+ * submits IMMEDIATELY — no fixed delay is ever added. 120 ms sits below
+ * typical waypoint hesitations (the flicker source) and well above gesture
+ * jitter between pointer events. */
+internal const val PREVIEW_SUBMIT_STABLE_MS = 120L
+
+/**
+ * Speed-adaptive preview submission decision (B1). Pure so tests can drive
+ * it with a virtual clock.
+ *
+ * @param targetBucket bucket of the current target
+ * @param nowMs monotonic clock now (`SystemClock.elapsedRealtime()` in prod)
+ * @param lastSubmittedBucket bucket of the last actual engine submission,
+ *   or null when nothing was submitted yet this session (always submit)
+ * @param lastBucketChangeElapsedMs when the target last changed bucket, or
+ *   null when it never changed (treat as maximally stable)
+ */
+internal fun shouldSubmitPreviewFrame(
+    targetBucket: Long,
+    nowMs: Long,
+    lastSubmittedBucket: Long?,
+    lastBucketChangeElapsedMs: Long?,
+): Boolean {
+    if (lastSubmittedBucket == null) return true
+    val stableForMs = lastBucketChangeElapsedMs?.let { nowMs - it } ?: Long.MAX_VALUE
+    // Settled stop point: submit right away (stop fast path).
+    if (stableForMs >= PREVIEW_SUBMIT_STABLE_MS) return true
+    // Still moving: only skip when the sweep has left the submitted bucket
+    // far behind; a slow per-bucket drag keeps every bucket.
+    val sweptBuckets = kotlin.math.abs(targetBucket - lastSubmittedBucket)
+    return sweptBuckets <= PREVIEW_SUBMIT_SKIP_MIN_BUCKETS
+}
 
 internal data class PresentedPreviewFrame(val generation: Long, val session: Long, val targetMs: Long, val bitmap: Bitmap?) {
     fun matches(generation: Long, session: Long, targetMs: Long): Boolean =

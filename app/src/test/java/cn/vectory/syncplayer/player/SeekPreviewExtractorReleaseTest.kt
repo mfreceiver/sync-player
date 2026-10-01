@@ -24,6 +24,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -447,7 +448,7 @@ class SeekPreviewExtractorReleaseTest {
     }
 
     @Test
-    fun `cache hit registers the current target so an older in-flight extraction is discarded`() = runBlocking {
+    fun `cache hit registers the current target so an older in-flight extraction is suppressed but warms its bucket`() = runBlocking {
         val secondDecodeEntered = CountDownLatch(1)
         val secondDecodeGate = CountDownLatch(1)
         val frameCalls = AtomicInteger(0)
@@ -486,11 +487,15 @@ class SeekPreviewExtractorReleaseTest {
 
             secondDecodeGate.countDown()
             assertNull(
-                "the engine may still deliver, but the facade must discard the stale target",
+                "the engine may still deliver, but the facade must not return the stale target as the current answer",
                 withTimeout(5_000) { stale.await() },
             )
-            // The stale pass must not have cached bucket 2000.
-            assertNull(extractor.getCachedFrame("content://test/v", 2_000L))
+            // B1: the stale same-session pass is no longer discarded — it
+            // stays in the cache as a warm entry for ITS bucket (only the
+            // current-answer return was suppressed above). Two 8x8 frames,
+            // each billed at the 1024-byte minimum.
+            assertEquals(2 * 1024, extractor.cacheSizeForTest())
+            assertNotNull(extractor.getCachedFrame("content://test/v", 2_000L))
             // A retry decodes fresh and publishes.
             val retried = withTimeout(5_000) { extractor.extractFrameAtPosition("content://test/v", 2_000L) }
             assertNotNull(retried)
@@ -2323,6 +2328,295 @@ class SeekPreviewExtractorReleaseTest {
                 extractor.release()
                 withTimeout(10_000) { extractor.shutdownResult.await() }
             }
+        }
+    }
+
+    // ---------- B1: display-intent gate + framework-scaled decode ----------
+
+    /**
+     * A decode whose caller's intent expired WHILE it ran (the UI moved on to
+     * a later bucket during the parked native decode) must not be dropped
+     * entirely: it is still a valid same-session frame for ITS bucket, so the
+     * facade keeps it in the cache (free warm-up for the bucket it belongs
+     * to) and only refuses to return it as the current UI answer.
+     */
+    @Test
+    fun `a stale-ticket result from a still-current session warms the cache instead of vanishing`() = runBlocking {
+        val decodeGate = CountDownLatch(1)
+        val decodeEntered = CountDownLatch(1)
+        val retriever = mockk<MediaMetadataRetriever> {
+            every { setDataSource(any<Context>(), any<Uri>()) } returns Unit
+            every { getFrameAtTime(any(), any()) } answers {
+                decodeEntered.countDown()
+                decodeGate.await()
+                Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888)
+            }
+            every { release() } returns Unit
+        }
+        val extractor = newExtractor(retriever)
+        try {
+            extractor.beginSession(Uri.parse("content://test/video"))
+            val ui = async(Dispatchers.IO) {
+                extractor.extractFrameAtPosition("content://test/video", 1_000L)
+            }
+            assertTrue("UI decode must be in flight", decodeEntered.await(10, TimeUnit.SECONDS))
+
+            // The UI moves on while the decode is parked: a fresh intent (any
+            // facade read) supersedes the in-flight request's ticket.
+            assertEquals(null, extractor.getCachedFrame("content://test/video", 5_000L))
+
+            decodeGate.countDown()
+            assertNull("a stale-ticket frame must not become the current UI answer", ui.await())
+            assertEquals(
+                "the stale-ticket frame must stay cached as a warm entry",
+                1024,
+                extractor.cacheSizeForTest(),
+            )
+            assertNotNull(extractor.getCachedFrame("content://test/video", 1_000L))
+        } finally {
+            decodeGate.countDown()
+            extractor.release()
+        }
+    }
+
+    /**
+     * The generation barrier stays hard across sessions: a result completing
+     * after endSession() neither returns nor caches. This is the protection
+     * the B1 stale-ticket relaxation must NOT weaken.
+     */
+    @Test
+    fun `a stale result after the session ended is still rejected entirely`() = runBlocking {
+        val decodeGate = CountDownLatch(1)
+        val decodeEntered = CountDownLatch(1)
+        val retriever = mockk<MediaMetadataRetriever> {
+            every { setDataSource(any<Context>(), any<Uri>()) } returns Unit
+            every { getFrameAtTime(any(), any()) } answers {
+                decodeEntered.countDown()
+                decodeGate.await()
+                Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888)
+            }
+            every { release() } returns Unit
+        }
+        val extractor = newExtractor(retriever)
+        try {
+            extractor.beginSession(Uri.parse("content://test/video"))
+            val ui = async(Dispatchers.IO) {
+                extractor.extractFrameAtPosition("content://test/video", 1_000L)
+            }
+            assertTrue("UI decode must be in flight", decodeEntered.await(10, TimeUnit.SECONDS))
+
+            extractor.endSession()
+            decodeGate.countDown()
+
+            assertNull(ui.await())
+            assertEquals("cross-session frames must never enter the cache", 0, extractor.cacheSizeForTest())
+        } finally {
+            decodeGate.countDown()
+            extractor.release()
+        }
+    }
+
+    /**
+     * When the framework honors the requested bounds, its frame is used
+     * as-is: no CPU re-scale, no copy — the exact instance comes back as the
+     * UI result and the fallback path never runs.
+     */
+    @Test
+    fun `a framework-scaled frame is used as-is without a second scale`() = runBlocking {
+        val scaledFrame = Bitmap.createBitmap(180, 100, Bitmap.Config.ARGB_8888)
+        val scaledAsked = java.util.concurrent.atomic.AtomicLong(0)
+        val retriever = mockk<MediaMetadataRetriever> {
+            every { setDataSource(any<Context>(), any<Uri>()) } returns Unit
+            every { getScaledFrameAtTime(any(), any(), any(), any()) } answers {
+                scaledAsked.incrementAndGet()
+                scaledFrame
+            }
+            every { getFrameAtTime(any(), any()) } answers { error("legacy fallback must not run") }
+            every { release() } returns Unit
+        }
+        val extractor = newExtractor(retriever)
+        try {
+            extractor.beginSession(Uri.parse("content://test/video"))
+            val result = extractor.extractFrameAtPosition("content://test/video", 1_000L)
+            assertEquals("framework scaled-decode must be the primary path", 1L, scaledAsked.get())
+            assertSame("an in-bounds framework frame must not be re-scaled or copied", scaledFrame, result)
+        } finally {
+            extractor.release()
+        }
+    }
+
+    /**
+     * A throwing framework scaled-decode (unsupported on some devices) falls
+     * back to the legacy full-frame + CPU scale path with unchanged
+     * behavior.
+     */
+    @Test
+    fun `a throwing framework scaled-decode falls back to the legacy path`() = runBlocking {
+        val fullFrame = Bitmap.createBitmap(640, 360, Bitmap.Config.ARGB_8888)
+        val retriever = mockk<MediaMetadataRetriever> {
+            every { setDataSource(any<Context>(), any<Uri>()) } returns Unit
+            every { getScaledFrameAtTime(any(), any(), any(), any()) } throws IllegalStateException("unsupported")
+            every { getFrameAtTime(any(), any()) } answers { fullFrame }
+            every { release() } returns Unit
+        }
+        val extractor = newExtractor(retriever)
+        try {
+            extractor.beginSession(Uri.parse("content://test/video"))
+            val result = extractor.extractFrameAtPosition("content://test/video", 1_000L)
+            assertNotNull(result)
+            assertTrue(
+                "fallback must still downscale to the preview budget: ${result!!.width}x${result.height}",
+                result.width <= 180 && result.height <= 180,
+            )
+            assertNotSame("fallback must scale a fresh bitmap, not the full frame", fullFrame, result)
+        } finally {
+            extractor.release()
+        }
+    }
+
+    /** A null from the framework scaled-decode takes the same fallback. */
+    @Test
+    fun `a null framework scaled-decode falls back to the legacy path`() = runBlocking {
+        val fullFrame = Bitmap.createBitmap(640, 360, Bitmap.Config.ARGB_8888)
+        val retriever = mockk<MediaMetadataRetriever> {
+            every { setDataSource(any<Context>(), any<Uri>()) } returns Unit
+            every { getScaledFrameAtTime(any(), any(), any(), any()) } returns null
+            every { getFrameAtTime(any(), any()) } answers { fullFrame }
+            every { release() } returns Unit
+        }
+        val extractor = newExtractor(retriever)
+        try {
+            extractor.beginSession(Uri.parse("content://test/video"))
+            val result = extractor.extractFrameAtPosition("content://test/video", 1_000L)
+            assertNotNull(result)
+            assertTrue(
+                "fallback must still downscale to the preview budget: ${result!!.width}x${result.height}",
+                result.width <= 180 && result.height <= 180,
+            )
+        } finally {
+            extractor.release()
+        }
+    }
+
+    // ---------- B2: scaled-decode exception classification ----------
+
+    /**
+     * A CancellationException from the scaled decode must propagate with its
+     * reason intact: no full-frame fallback decode, no cache growth.
+     */
+    @Test
+    fun `a cancellation from the scaled decode propagates without a legacy fallback`() = runBlocking {
+        val fullAsked = java.util.concurrent.atomic.AtomicLong(0)
+        val retriever = mockk<MediaMetadataRetriever> {
+            every { setDataSource(any<Context>(), any<Uri>()) } returns Unit
+            every { getScaledFrameAtTime(any(), any(), any(), any()) } throws
+                CancellationException("scaled boom")
+            every { getFrameAtTime(any(), any()) } answers {
+                fullAsked.incrementAndGet()
+                Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888)
+            }
+            every { release() } returns Unit
+        }
+        val extractor = newExtractor(retriever)
+        try {
+            extractor.beginSession(Uri.parse("content://test/video"))
+            val outcome = runCatching {
+                extractor.extractFrameAtPosition("content://test/video", 1_000L)
+            }
+            val thrown = outcome.exceptionOrNull()
+            assertTrue(
+                "cancellation must surface as CancellationException, was: $thrown",
+                thrown is CancellationException,
+            )
+            assertEquals(
+                "the original cancellation reason must survive the propagation",
+                "scaled boom",
+                thrown?.message,
+            )
+            assertEquals("the legacy full-frame API must never run", 0L, fullAsked.get())
+            assertEquals("a cancelled decode must not grow the cache", 0, extractor.cacheSizeForTest())
+        } finally {
+            extractor.release()
+        }
+    }
+
+    /**
+     * A fatal Error (OOM) from the scaled decode must NOT silently downgrade
+     * to a full-size decode: it takes the regular failure path — the legacy
+     * full-frame API never runs and no frame is published.
+     */
+    @Test
+    fun `a fatal error from the scaled decode never falls back to the full frame`() = runBlocking {
+        val fullAsked = java.util.concurrent.atomic.AtomicLong(0)
+        val retriever = mockk<MediaMetadataRetriever> {
+            every { setDataSource(any<Context>(), any<Uri>()) } returns Unit
+            every { getScaledFrameAtTime(any(), any(), any(), any()) } throws
+                OutOfMemoryError("oom boom")
+            every { getFrameAtTime(any(), any()) } answers {
+                fullAsked.incrementAndGet()
+                Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888)
+            }
+            every { release() } returns Unit
+        }
+        val extractor = newExtractor(retriever)
+        try {
+            extractor.beginSession(Uri.parse("content://test/video"))
+            val outcome = runCatching {
+                extractor.extractFrameAtPosition("content://test/video", 1_000L)
+            }
+            assertTrue(
+                "the Error must take the failure path (surfaced or degraded), was: " +
+                    "value=${outcome.getOrNull()} error=${outcome.exceptionOrNull()}",
+                outcome.exceptionOrNull() != null || outcome.getOrNull() == null,
+            )
+            assertEquals(
+                "a fatal Error must never re-trigger a full-size decode",
+                0L,
+                fullAsked.get(),
+            )
+            assertEquals("a failed decode must not grow the cache", 0, extractor.cacheSizeForTest())
+        } finally {
+            extractor.release()
+        }
+    }
+
+    /**
+     * The facade's releaseFrame contract is unchanged by B2 (the host no
+     * longer calls it, but the eviction API stays exact): it removes every
+     * cache key holding THAT instance and nothing else.
+     */
+    @Test
+    fun `releaseFrame evicts only the keys holding the released instance`() = runBlocking {
+        val retriever = mockk<MediaMetadataRetriever> {
+            every { setDataSource(any<Context>(), any<Uri>()) } returns Unit
+            every { getScaledFrameAtTime(any(), any(), any(), any()) } answers {
+                Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888)
+            }
+            every { release() } returns Unit
+        }
+        val extractor = newExtractor(retriever)
+        try {
+            extractor.beginSession(Uri.parse("content://test/video"))
+            val warm = extractor.extractFrameAtPosition("content://test/video", 1_000L)
+            assertNotNull(warm)
+            val other = extractor.extractFrameAtPosition("content://test/video", 3_000L)
+            assertNotNull(other)
+            assertEquals(2 * 1024, extractor.cacheSizeForTest())
+
+            extractor.releaseFrame(warm)
+            assertEquals(
+                "only the released instance's key must be evicted",
+                1024,
+                extractor.cacheSizeForTest(),
+            )
+            assertNull(extractor.getCachedFrame("content://test/video", 1_000L))
+            assertSame(other, extractor.getCachedFrame("content://test/video", 3_000L))
+            // Idempotent + null-safe.
+            extractor.releaseFrame(warm)
+            extractor.releaseFrame(null)
+            assertEquals(1024, extractor.cacheSizeForTest())
+        } finally {
+            extractor.release()
         }
     }
 }

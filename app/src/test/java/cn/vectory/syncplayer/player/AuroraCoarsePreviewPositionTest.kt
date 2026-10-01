@@ -1,11 +1,17 @@
 package cn.vectory.syncplayer.player
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import android.os.SystemClock
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -24,8 +30,16 @@ import androidx.core.graphics.Insets
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ApplicationProvider
 import cn.vectory.syncplayer.NoOpTestApp
+import io.mockk.every
+import io.mockk.mockk
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -242,5 +256,376 @@ class AuroraCoarsePreviewPositionTest {
         composeRule.mainClock.autoAdvance = true
         composeRule.waitForIdle()
         assertPreviewBottomSitsAboveChromeTop()
+    }
+
+    // ---------- B1: speed-adaptive submission gate (pure, virtual clock) ----------
+
+    @Test
+    fun `the first target of a session always submits`() {
+        assertTrue(
+            shouldSubmitPreviewFrame(
+                targetBucket = 120L,
+                nowMs = 1_000L,
+                lastSubmittedBucket = null,
+                lastBucketChangeElapsedMs = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `a fast sweep skips intermediate buckets and submits the stable stop`() {
+        // The thumb sweeps 4 buckets per pointer emission (~10 ms apart —
+        // never stable): buckets 124, 128, 132, 136 are all mid-sweep, each
+        // more than 3 buckets past the submitted one — none may reach the
+        // engine.
+        var lastSubmitted: Long? = 120L
+        var lastChange = 0L
+        for (step in 1..4) {
+            val bucket = 120L + step * 4
+            val now = step * 10L
+            lastChange = now
+            val submit = shouldSubmitPreviewFrame(bucket, now, lastSubmitted, lastChange)
+            assertFalse("mid-sweep bucket $bucket must be skipped", submit)
+            // A skipped bucket must NOT count as submitted.
+            assertEquals(120L, lastSubmitted)
+        }
+        // Settling on bucket 148: once the target has been stable for at
+        // least the threshold, the very next emission submits immediately —
+        // no fixed delay is ever added on top of stability.
+        assertTrue(
+            shouldSubmitPreviewFrame(
+                targetBucket = 148L,
+                nowMs = 200L,
+                lastSubmittedBucket = lastSubmitted,
+                lastBucketChangeElapsedMs = lastChange,
+            ),
+        )
+    }
+
+    @Test
+    fun `slow per-bucket dragging still submits every bucket`() {
+        var lastSubmitted: Long? = 120L
+        for (step in 1..5) {
+            val bucket = 120L + step
+            val now = step * 10L
+            assertTrue(
+                "bucket $bucket must submit during a slow per-bucket drag",
+                shouldSubmitPreviewFrame(bucket, now, lastSubmitted, now),
+            )
+            lastSubmitted = bucket
+        }
+    }
+
+    @Test
+    fun `stability boundary submits at exactly the threshold`() {
+        // 120 ms without a bucket change → submit regardless of sweep distance.
+        assertTrue(
+            shouldSubmitPreviewFrame(
+                targetBucket = 150L,
+                nowMs = 1_000L,
+                lastSubmittedBucket = 120L,
+                lastBucketChangeElapsedMs = 880L,
+            ),
+        )
+        // 119 ms, far sweep → still skipped.
+        assertFalse(
+            shouldSubmitPreviewFrame(
+                targetBucket = 150L,
+                nowMs = 1_000L,
+                lastSubmittedBucket = 120L,
+                lastBucketChangeElapsedMs = 881L,
+            ),
+        )
+        // A target that never changed bucket (single-bucket session) counts
+        // as maximally stable.
+        assertTrue(
+            shouldSubmitPreviewFrame(
+                targetBucket = 7L,
+                nowMs = 5_000L,
+                lastSubmittedBucket = null,
+                lastBucketChangeElapsedMs = null,
+            ),
+        )
+    }
+
+    // ---------- B1: host wiring (composed host + fake extractor) ----------
+
+    /**
+     * The composed wiring must mirror the pure gate: during a fast bucket
+     * sweep NO new native decode may be submitted (the initial settled frame
+     * stays on screen), and once the thumb settles the stable stop submits
+     * exactly one more decode. The UI retriever counts ONLY the UI decodes —
+     * prefetch uses its own retriever.
+     */
+    /**
+     * Shared harness for the B2 sweep/wakeup tests: a counting, parkable UI
+     * retriever (each submission is recorded as the native timeUs), a silent
+     * prefetch retriever, and the extractor built on them.
+     */
+    private class SweepHarness {
+        val askedUs = CopyOnWriteArrayList<Long>()
+        val park = AtomicBoolean(false)
+        val settleGate = CountDownLatch(1)
+
+        private val uiRetriever = mockk<MediaMetadataRetriever> {
+            every { setDataSource(any<Context>(), any<Uri>()) } returns Unit
+            every { getScaledFrameAtTime(any(), any(), any(), any()) } answers {
+                // Record the submission BEFORE parking so gate assertions
+                // observe it even while the decode is parked.
+                askedUs.add(firstArg<Long>())
+                if (park.get()) settleGate.await()
+                Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888)
+            }
+            every { release() } returns Unit
+        }
+        private val prefetchRetriever = mockk<MediaMetadataRetriever> {
+            every { setDataSource(any<Context>(), any<Uri>()) } returns Unit
+            every { getScaledFrameAtTime(any(), any(), any(), any()) } answers {
+                Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888)
+            }
+            every { release() } returns Unit
+        }
+
+        val extractor = SeekPreviewExtractor(
+            context = ApplicationProvider.getApplicationContext(),
+            retrieverFactory = { uiRetriever },
+            prefetchRetrieverFactory = { prefetchRetriever },
+        )
+
+        fun release() {
+            park.set(false)
+            settleGate.countDown()
+            extractor.release()
+        }
+    }
+
+    private fun setContentForSweep(
+        harness: SweepHarness,
+        gesture: MutableState<Long>,
+        source: MutableState<SeekSource> = mutableStateOf(SeekSource.GESTURE),
+    ) {
+        composeRule.setContent {
+            MaterialTheme {
+                Box(Modifier.fillMaxSize()) {
+                    AuroraSeekPreviewHost(
+                        seekSource = source.value,
+                        progressScrubState = remember { MutableStateFlow(ProgressScrubUiState()) },
+                        gesturePositionMs = gesture.value,
+                        durationMs = 120_000L,
+                        bottomChromeHeightPx = 0,
+                        videoUri = "content://test/video",
+                        previewExtractor = harness.extractor,
+                    )
+                }
+            }
+        }
+        composeRule.waitForIdle()
+    }
+
+    @Test
+    fun `a stepped bucket sweep submits nothing until the thumb truly stops`() {
+        val harness = SweepHarness()
+        val gesture = mutableStateOf(60_000L)
+        try {
+            setContentForSweep(harness, gesture)
+            composeRule.waitUntil("initial settled decode must happen", 5_000) {
+                harness.askedUs.size >= 1
+            }
+
+            // Fast sweep, one drain per emission: no intermediate bucket may
+            // submit, and each emission cancels the previous stop-point wait.
+            harness.park.set(true)
+            for (position in 62_000L..70_000L step 2_000L) {
+                gesture.value = position
+                composeRule.waitForIdle()
+                assertEquals(
+                    "mid-sweep position $position must not submit",
+                    1,
+                    harness.askedUs.size,
+                )
+            }
+
+            // TRUE STOP: no further emission at all — the stop-point wakeup
+            // must fire on its own after the remaining stable time and submit
+            // exactly the final swept bucket (B2 regression net: the old
+            // skip-branch simply returned, so this stop never submitted).
+            SystemClock.sleep(400)
+            composeRule.waitUntil("the true stop must submit the final bucket", 5_000) {
+                harness.askedUs.size >= 2
+            }
+            assertEquals(
+                "the stop point must be the last swept bucket",
+                listOf(60_000_000L, 70_000_000L),
+                harness.askedUs.toList(),
+            )
+        } finally {
+            harness.release()
+        }
+    }
+
+    @Test
+    fun `a coalesced sweep burst still submits only the final stop`() {
+        val harness = SweepHarness()
+        val gesture = mutableStateOf(60_000L)
+        try {
+            setContentForSweep(harness, gesture)
+            composeRule.waitUntil("initial settled decode must happen", 5_000) {
+                harness.askedUs.size >= 1
+            }
+
+            harness.park.set(true)
+            gesture.value = 62_000
+            gesture.value = 64_000
+            gesture.value = 66_000
+            gesture.value = 68_000
+            gesture.value = 70_000
+            composeRule.waitForIdle()
+            assertEquals(
+                "the coalesced burst must not submit any intermediate decode",
+                1,
+                harness.askedUs.size,
+            )
+
+            // True stop without any further emission: intermediate lambdas
+            // are superseded by collectLatest, only the final lambda's
+            // wakeup survives and submits.
+            SystemClock.sleep(400)
+            composeRule.waitUntil("the final stop must submit", 5_000) {
+                harness.askedUs.size >= 2
+            }
+            assertEquals(
+                listOf(60_000_000L, 70_000_000L),
+                harness.askedUs.toList(),
+            )
+        } finally {
+            harness.release()
+        }
+    }
+
+    @Test
+    fun `a stop-point wait is superseded when the thumb keeps moving`() {
+        val harness = SweepHarness()
+        val gesture = mutableStateOf(60_000L)
+        try {
+            setContentForSweep(harness, gesture)
+            composeRule.waitUntil("initial settled decode must happen", 5_000) {
+                harness.askedUs.size >= 1
+            }
+            harness.park.set(true)
+
+            // Sweep to a far bucket: its stop-point wait is scheduled.
+            gesture.value = 74_000
+            composeRule.waitForIdle()
+            assertEquals(1, harness.askedUs.size)
+
+            // Keep moving in sub-stable intervals: every move cancels the
+            // previous wait. The FIRST wait's deadline passes long before
+            // the last emission — its bucket must never submit.
+            SystemClock.sleep(60)
+            gesture.value = 80_000
+            composeRule.waitForIdle()
+            SystemClock.sleep(50)
+            gesture.value = 86_000
+            composeRule.waitForIdle()
+            SystemClock.sleep(50)
+            gesture.value = 92_000
+            composeRule.waitForIdle()
+            SystemClock.sleep(50)
+            assertEquals(
+                "the superseded stop points must never submit (first deadline long passed)",
+                1,
+                harness.askedUs.size,
+            )
+
+            // The final stop settles and submits its own bucket.
+            SystemClock.sleep(400)
+            composeRule.waitUntil("the final stop must submit", 5_000) {
+                harness.askedUs.size >= 2
+            }
+            assertEquals(
+                listOf(60_000_000L, 92_000_000L),
+                harness.askedUs.toList(),
+            )
+        } finally {
+            harness.release()
+        }
+    }
+
+    @Test
+    fun `session end cancels the stop-point wait with zero submissions`() {
+        val harness = SweepHarness()
+        val gesture = mutableStateOf(60_000L)
+        val source = mutableStateOf(SeekSource.GESTURE)
+        try {
+            setContentForSweep(harness, gesture, source)
+            composeRule.waitUntil("initial settled decode must happen", 5_000) {
+                harness.askedUs.size >= 1
+            }
+            harness.park.set(true)
+
+            gesture.value = 74_000
+            composeRule.waitForIdle()
+            assertEquals(1, harness.askedUs.size)
+
+            // Ending the scrub session tears down the effect (demand gate)
+            // and must cancel the scheduled wait with zero submissions.
+            source.value = SeekSource.NONE
+            composeRule.waitForIdle()
+            SystemClock.sleep(400)
+            assertEquals(
+                "a cancelled stop-point wait must never submit",
+                1,
+                harness.askedUs.size,
+            )
+        } finally {
+            harness.release()
+        }
+    }
+
+    @Test
+    fun `a replaced display frame keeps its bucket cached for a back-scrub hit`() {
+        val harness = SweepHarness()
+        val gesture = mutableStateOf(60_000L)
+        try {
+            setContentForSweep(harness, gesture)
+            composeRule.waitUntil("initial settled decode must happen", 5_000) {
+                harness.askedUs.size >= 1
+            }
+
+            // Step to the next bucket: beyond the 3-bucket skip window, so
+            // it submits via the stop-point wakeup. The acceptance REPLACES
+            // the display reference; the replaced frame must stay cached —
+            // B2 separated giving up the UI reference from evicting the
+            // cache.
+            gesture.value = 62_000
+            composeRule.waitForIdle()
+            composeRule.waitUntil("the near bucket must submit", 5_000) {
+                harness.askedUs.size >= 2
+            }
+            assertEquals(
+                listOf(60_000_000L, 62_000_000L),
+                harness.askedUs.toList(),
+            )
+
+            // Back-scrub INTO the replaced frame's bucket (60_200 → bucket
+            // 60_000): served from the cache — no third decode. (The pre-B2
+            // host evicted the replaced instance on replacement and
+            // re-decoded here.)
+            gesture.value = 60_200
+            composeRule.waitForIdle()
+            assertEquals(
+                "the back-scrub must be served from the retained cache entry (askedUs=${harness.askedUs.toList()})",
+                2,
+                harness.askedUs.size,
+            )
+            val fromCache = harness.extractor.getCachedFrame("content://test/video", 60_200L)
+            assertNotNull(fromCache)
+            assertSame(
+                fromCache,
+                harness.extractor.getCachedFrame("content://test/video", 60_000L),
+            )
+        } finally {
+            harness.release()
+        }
     }
 }
