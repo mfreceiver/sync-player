@@ -346,13 +346,29 @@ internal class SyncDownloadPipeline(
                                                     }
                                                 }
                                                 AttemptPhase.COMMITTED -> {
-                                                    currentAttempt?.let { attempt ->
-                                                        guarded { storagePort.deleteFinal(attempt) }
+                                                    if (currentAttempt != null &&
+                                                        storagePort.isExternalVolume(currentAttempt!!.target.volumeId)
+                                                    ) {
+                                                        // 外部卷（P0-4/P2-18，sol）：世代隔离路径——只回收
+                                                        // 本 attempt 的 final；existing 行的旧 generation READY
+                                                        // 文件完好，保留行（重启后 probe/修复路径接管）。
+                                                        // CAS 未提交 ⇒ 绝不删并发赢家/旧 READY 引用。
+                                                        guarded { storagePort.deleteFinal(currentAttempt!!) }
+                                                        if (existing == null) {
+                                                            guarded { videoRepository.deleteById(id) }
+                                                            assignedId = 0L
+                                                            existing = null
+                                                        }
+                                                    } else {
+                                                        // 内部卷：final 同路径已被本 attempt 覆盖（无世代隔离），
+                                                        // 旧行指向已换文件——幽灵文件防线维持删 final + 删行。
+                                                        currentAttempt?.let { attempt ->
+                                                            guarded { storagePort.deleteFinal(attempt) }
+                                                        }
+                                                        guarded { videoRepository.deleteById(id) }
+                                                        assignedId = 0L
+                                                        existing = null
                                                     }
-                                                    // 无条件：旧行指向已覆盖文件；占位行同理（幽灵文件防线）
-                                                    guarded { videoRepository.deleteById(id) }
-                                                    assignedId = 0L
-                                                    existing = null
                                                 }
                                             }
                                             // 清理侧清零点：与外层补偿 catch 互斥（恰一次回滚）
@@ -480,7 +496,13 @@ internal class SyncDownloadPipeline(
                                                     // 端口实现保证把底层 IO/加密异常转换为 SyncException。
                                                     val writeAttempt = storagePort.newAttempt(assignedId, target, action.fileSize)
                                                     currentAttempt = writeAttempt
-                                                    sink = storagePort.openWriteSink(writeAttempt)
+                                                    // P1-9（sol）：sink 边界包一层结构化转换（单点覆盖 SFTP/SMB
+                                                    // 两客户端）——write/flush/close 抛出的 StorageAccessFailure
+                                                    // 转 SyncException（STORAGE_UNAVAILABLE/KEY_UNAVAILABLE/
+                                                    // STORAGE_IO_TRANSIENT 直通，不再被客户端误包
+                                                    // DOWNLOAD_FAILED）；其余异常原样（LengthVerifying close
+                                                    // 截断仍按 IOException → DOWNLOAD_FAILED 白名单重试）。
+                                                    sink = StorageExceptionTranslatingSink(storagePort.openWriteSink(writeAttempt))
                                                     // A1-1: downloadTo 返回 true 只是传输层收尾——不得据此退出
                                                     // 重试循环。sink.close() 的长度校验（截断→IOException）、
                                                     // finalize、verifyReadable 全部成功后才置 downloadSuccess；
@@ -543,6 +565,12 @@ internal class SyncDownloadPipeline(
                                                     storagePort.verifyReadable(writeAttempt)
                                                 } catch (e: CancellationException) {
                                                     throw e
+                                                } catch (e: SyncException) {
+                                                    // P1-9（sol）：端口已分类的结构化码（STORAGE_UNAVAILABLE/
+                                                    // KEY_UNAVAILABLE/STORAGE_IO_TRANSIENT…）直通，不再统一改写
+                                                    // STORAGE_ERROR——STORAGE_UNAVAILABLE 触发整卷停派，
+                                                    // KEY_UNAVAILABLE 保留白名单重试语义。
+                                                    throw e
                                                 } catch (e: Exception) {
                                                     throw SyncException(SyncErrorCode.STORAGE_ERROR, SyncOperation.DOWNLOAD, path = action.relativePath, cause = e)
                                                 }
@@ -597,8 +625,24 @@ internal class SyncDownloadPipeline(
                                                     dateSynced = System.currentTimeMillis()
                                                 )
                                                 if (committedRows == 0) {
-                                                    // 孤儿密文回滚走同一清理入口（cleanUpAttempt 末尾清零 ⇒ 恰一次）
-                                                    cleanUpAttempt(AttemptPhase.COMMITTED, assignedId, target)
+                                                    // P0-4（sol）：CAS=0 不只是「行已被并发
+                                                    // 删除」——也可能是并发赢家已推进 generation
+                                                    // （重下完成）并提交。此时 DB 行属于赢家：
+                                                    // 绝不 deleteById（会删赢家行），也绝不走
+                                                    // cleanUpAttempt(COMMITTED) 的无条件删行。
+                                                    // 只回收**本失败 attempt** 的文件，且须区分：
+                                                    //  - 外部卷：final 路径含本 attempt generation
+                                                    //    （世代域隔离），删本 attempt 文件不影响
+                                                    //    赢家/旧 READY 引用 → deleteFinal 安全；
+                                                    //  - 内部卷：final 同路径，本 attempt finalize
+                                                    //    可能已覆盖赢家刚写的文件 → 绝不删 final
+                                                    //    （残留文件由扫描 probe SIZE_MISMATCH 修复）。
+                                                    currentAttempt?.let { attempt ->
+                                                        if (storagePort.isExternalVolume(attempt.target.volumeId)) {
+                                                            try { storagePort.deleteFinal(attempt) } catch (_: Exception) {}
+                                                        }
+                                                    }
+                                                    uncleanFinalizedId = 0L
                                                     commitFailed = true
                                                 } else {
                                                     // A1-3 成功侧清零点：与 DB 副作用同处一个保护区——
@@ -618,6 +662,17 @@ internal class SyncDownloadPipeline(
                                                 SyncErrorCode.STORAGE_ERROR,
                                                 SyncOperation.DOWNLOAD
                                             )
+                                            // P1-13（sol）：CAS 提交成功 ⇒ final 已落盘并计入
+                                            // usableSpace；按「仅扣剩余承诺」模型立即释放本 action
+                                            // 的按卷预约，避免对后续 action 双重扣减造成假
+                                            // INSUFFICIENT_SPACE（finally 仅兜底失败/取消路径）。
+                                            if (reservedBytes > 0) {
+                                                try {
+                                                    volumeReservation.release(target.volumeId, reservedBytes)
+                                                } finally {
+                                                    reservedBytes = 0L
+                                                }
+                                            }
                                             // A1-02: 提取阶段只需 id/fileName——existing/占位快照均携带真实
                                             // 分配主键（见上 placeholder.copy(id=assignedId)）；返回值仅作展示，
                                             // 绝不再作为整行写回依据（提取器内部同为列提交）。
@@ -759,8 +814,10 @@ internal class SyncDownloadPipeline(
                             errorMessage = context.getString(R.string.sync_error_storage_unavailable)
                         )
                     } else {
-                    val mediaGone = deleteExecutor.deleteStoreMedia(store, videoItem.id)
-                    val thumbGone = deleteExecutor.deleteStoreThumb(store, videoItem.id)
+                    // P0-7（sol）：删除经端口 ref-aware 路由（外部卷行走真实卷，
+                    // 不再误用 internal by-id store API 探/删内部路径）。
+                    val mediaGone = deleteExecutor.deleteStoreMedia(store, videoItem.id, storagePort)
+                    val thumbGone = deleteExecutor.deleteStoreThumb(store, videoItem.id, storagePort)
                     if (mediaGone && thumbGone) {
                         playbackRepository.deleteByVideoId(videoItem.id)
                         videoRepository.deleteByRelativePathAndRelationId(action.relativePath, relationId)

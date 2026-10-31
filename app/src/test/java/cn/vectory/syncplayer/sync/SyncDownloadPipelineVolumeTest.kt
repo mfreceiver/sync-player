@@ -54,7 +54,13 @@ class SyncDownloadPipelineVolumeTest {
     private val videoMetadataExtractor = mockk<VideoMetadataExtractor>(relaxed = true)
     private val imageMetadataExtractor = mockk<ImageMetadataExtractor>(relaxed = true)
 
-    private val port = FakeSyncStoragePort()
+    private val port = FakeSyncStoragePort().apply {
+        // P2-18：existing 外部 READY 行沿用其引用与世代。
+        refs[42L] = SyncStorageRef(
+            id = 42L, volumeId = "external:abc", datasetId = "ds", generation = "gen-7",
+            format = SyncStorageFormat.CTR_V2, iv = ByteArray(8), plainSize = 1L,
+        )
+    }
 
     private val sut = SyncDownloadPipeline(
         syncRelationRepository, syncSourceRepository, videoRepository, playbackRepository,
@@ -148,7 +154,23 @@ class SyncDownloadPipelineVolumeTest {
     }
 
     @Test
-    fun `CAS zero rows rolls back committed file and keeps action failed`() = runTest {
+    fun `CAS zero rows on external volume keeps winner row and only reclaims own attempt file`() = runTest {
+        stubBasics()
+        port.defaultVolumeId = "external:abc"
+        coEvery { videoRepository.upsert(any()) } returns 7L
+        port.commitRows = 0
+
+        val result = sut.executeSyncLocked(1L, listOf(dlAction()), emptyList())
+
+        assertTrue(!result)
+        // P0-4：CAS=0 可能是并发赢家已推进 generation——绝不 deleteById（保赢家行/旧 READY 引用）。
+        io.mockk.coVerify(exactly = 0) { videoRepository.deleteById(any()) }
+        // 外部卷世代隔离路径：只回收本失败 attempt 的文件。
+        assertTrue(port.deleteFinalCount >= 1)
+    }
+
+    @Test
+    fun `CAS zero rows on internal volume keeps row and never deletes shared final path`() = runTest {
         stubBasics()
         port.defaultVolumeId = "internal"
         coEvery { videoRepository.upsert(any()) } returns 7L
@@ -157,9 +179,35 @@ class SyncDownloadPipelineVolumeTest {
         val result = sut.executeSyncLocked(1L, listOf(dlAction()), emptyList())
 
         assertTrue(!result)
-        // 0 行提交 → 回滚已 finalize 文件（deleteFinal 至少一次），行不复活。
+        // P0-4：内部卷 final 同路径可能已被并发赢家重写——不删 final、不删行。
+        io.mockk.coVerify(exactly = 0) { videoRepository.deleteById(any()) }
+        assertEquals(0, port.deleteFinalCount)
+    }
+
+    /**
+     * P2-18（sol）：外部 rename 替换（existing 外部 READY 行）在 finalize 后、
+     * CAS DB 提交前崩溃（verifyReadable 抛 STORAGE_UNAVAILABLE——卷被拔走）：
+     * 重启后旧 READY 行与引用必须保留——只回收新 attempt 的世代文件，绝不 deleteById。
+     */
+    @Test
+    fun `crash after finalize on external rename keeps existing READY row`() = runTest {
+        stubBasics()
+        port.defaultVolumeId = "external:abc"
+        val existing = VideoItemEntity(
+            id = 42L, syncRelationId = 1L, relativePath = "videos/f.mp4", fileName = "f.mp4",
+            fileSize = 1L, volumeId = "external:abc", storageFormat = "CTR_V2",
+            iv = ByteArray(8), generation = "gen-7",
+        )
+        coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns existing
+        port.verifyErrorCode = SyncErrorCode.STORAGE_UNAVAILABLE
+
+        val result = sut.executeSyncLocked(1L, listOf(dlAction()), emptyList())
+
+        assertTrue(!result)
+        // 旧 READY 行保留（重启后 probe 修复路径接管）；绝不因缺卡删行/删旧世代 final。
+        io.mockk.coVerify(exactly = 0) { videoRepository.deleteById(any()) }
+        // 只回收本次失败 attempt 的 final（新世代，路径隔离）。
         assertTrue(port.deleteFinalCount >= 1)
-        io.mockk.coVerify(atLeast = 1) { videoRepository.deleteById(7L) }
     }
 }
 
@@ -167,6 +215,7 @@ class SyncDownloadPipelineVolumeTest {
 private class FakeSyncStoragePort(
     var defaultVolumeId: String = VOLUME_ID_INTERNAL,
     var sinkErrorCode: SyncErrorCode? = null,
+    var verifyErrorCode: SyncErrorCode? = null,
     var commitRows: Int = 1,
 ) : SyncStoragePort {
 
@@ -217,7 +266,9 @@ private class FakeSyncStoragePort(
 
     override suspend fun finalize(attempt: SyncWriteAttempt): Boolean = true
 
-    override suspend fun verifyReadable(attempt: SyncWriteAttempt) {}
+    override suspend fun verifyReadable(attempt: SyncWriteAttempt) {
+        verifyErrorCode?.let { throw SyncException(it, SyncOperation.DOWNLOAD) }
+    }
 
     override suspend fun cancel(attempt: SyncWriteAttempt) {}
 

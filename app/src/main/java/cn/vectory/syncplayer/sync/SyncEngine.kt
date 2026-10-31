@@ -92,7 +92,9 @@ class SyncEngine @Inject constructor(
     private val deleteExecutor = SyncDeleteExecutor(
         syncRelationRepository, syncSourceRepository, videoRepository, playbackRepository,
         syncLogRepository, remoteFileClientFactory, storagePaths, mediaFileStoreLazy,
-        context, progressPublisher
+        context, progressPublisher,
+        // P0-7（sol）：DELETE_BOTH 接存储端口——ref-aware 删除 + 外卡不可达守卫。
+        this.storagePort
     )
 
     // 远端扫描域已迁入 SyncRemoteScanner（Task 6）；E8 守卫随迁，进度走共享 progressPublisher。

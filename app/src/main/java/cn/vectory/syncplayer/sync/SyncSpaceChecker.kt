@@ -182,13 +182,13 @@ internal class VolumeSpaceReservation {
             is SyncSpaceOutcome.Available -> {
                 val alreadyReserved = reservedByVolume[volumeId] ?: 0L
                 val available = space.usableBytes
-                if (available >= 0) {
-                    val remaining = available - alreadyReserved
-                    if (remaining in 0 until bytes) {
-                        return@lockWith Result.Denied(
-                            SyncErrorCode.INSUFFICIENT_SPACE, bytes, available
-                        )
-                    }
+                // P1-13（sol）：`remaining in 0 until bytes` 对 remaining<0（已超卖）
+                // 不成立反而放行，available<0 也放行——超卖窗口。改为一致快照额度：
+                // bytes>0 时，available<0（读取异常值）或剩余额度 <bytes 一律拒绝。
+                if (bytes > 0 && (available < 0 || available - alreadyReserved < bytes)) {
+                    return@lockWith Result.Denied(
+                        SyncErrorCode.INSUFFICIENT_SPACE, bytes, available
+                    )
                 }
                 reservedByVolume[volumeId] = saturatingAdd(alreadyReserved, bytes)
                 Result.Reserved(available)

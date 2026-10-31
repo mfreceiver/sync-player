@@ -158,21 +158,35 @@ class StorageManagementViewModel @Inject constructor(
                             deleted += d
                             failed += f
                         }
-                        if (failed > 0) Log.w(TAG, "Reset: $deleted deleted, $failed failed")
+                        if (failed > 0) {
+                            Log.w(TAG, "Reset: $deleted deleted, $failed failed")
+                            // P1-14（sol，删除 fail-closed 红线）：任一卷有删除失败
+                            //（含目录不可判定/IO 失败）⇒ 绝不清 DB——残留文件仍被行引用，
+                            // 下次 reset 可重试；清空会把失败卷变成「DB 无行、卡上有密文」
+                            // 的不可恢复孤儿。以部分失败提示代替（不写入 resetWarning 之外的状态）。
+                            throw ResetPartialException(deleted, failed)
+                        }
                         videoItemDao.deleteAll()
                         pendingSyncActionDao.deleteAll()
                         playbackRecordDao.deleteAll()
                     }
                 }
                 // Failure feedback: show warning if some files couldn't be deleted
-                val warning = if (failed > 0) context.getString(R.string.storage_reset_partial, deleted, failed) else null
-                _state.update { it.copy(isResetting = false, resetWarning = warning) }
+                _state.update { it.copy(isResetting = false, resetWarning = null) }
                 refresh()
             } catch (e: VolumeUnreachableException) {
                 _state.update {
                     it.copy(
                         isResetting = false,
                         resetWarning = context.getString(R.string.storage_reset_volume_unavailable)
+                    )
+                }
+            } catch (e: ResetPartialException) {
+                // P1-14：部分删除失败 ⇒ DB 未清（保行），用户可重试 reset。
+                _state.update {
+                    it.copy(
+                        isResetting = false,
+                        resetWarning = context.getString(R.string.storage_reset_partial, e.deleted, e.failed)
                     )
                 }
             } catch (e: CancellationException) {
@@ -186,6 +200,9 @@ class StorageManagementViewModel @Inject constructor(
 
     /** 内部信号：存在不可达卷，重置被拒绝（不用于 UI 文案判断）。 */
     private class VolumeUnreachableException : Exception()
+
+    /** P1-14：部分文件删除失败——reset 未清 DB（保行），携带已删/失败计数供提示。 */
+    private class ResetPartialException(val deleted: Int, val failed: Int) : Exception()
 
     /**
      * 外部 SD v2：切换默认写入卷。仅影响后续同步的新文件；existing 行仍写回自身卷。

@@ -5,11 +5,16 @@ import android.content.Context
 import android.graphics.Bitmap
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.storage.DatasetIdSource
 import cn.vectory.syncplayer.storage.MediaFileStore
+import cn.vectory.syncplayer.storage.StorageRef
+import io.mockk.just
+import io.mockk.runs
 import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
+import io.mockk.slot
 import io.mockk.mockk
 import io.mockk.verify
 import java.io.ByteArrayInputStream
@@ -44,6 +49,9 @@ class ImageMetadataExtractorTest {
     private val storeLazy = mockk<Lazy<MediaFileStore>>()
     private val context = mockk<Context>()
     private val contentResolver = mockk<ContentResolver>()
+
+    /** P1-11：datasetId 源桩（外部 ref 路由测试用）。 */
+    private val TestDatasetIdSource = DatasetIdSource { "ds-test" }
 
     /** 解析成功但无拍摄时间（合法缺失）⇒ 提交 null。 */
     private object NullDateReader : ExifDateReader {
@@ -98,7 +106,7 @@ class ImageMetadataExtractorTest {
     fun `48mp image decodes bounds first then sampled thumbnail`() = runTest {
         val decoder = RecordingDecoder(boundsWidth = 8000, boundsHeight = 6000)
         coEvery { videoRepository.updateImageMetadata(any(), any(), any(), any()) } returns 1
-        val sut = ImageMetadataExtractor(videoRepository, storeLazy, context, decoder, NullDateReader)
+        val sut = ImageMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context, decoder, NullDateReader)
 
         sut.extractAndSave(entity())
 
@@ -122,7 +130,7 @@ class ImageMetadataExtractorTest {
     fun `bounds dimensions still saved when sampled decode fails`() = runTest {
         val decoder = RecordingDecoder(boundsWidth = 4000, boundsHeight = 3000, sampledResult = null)
         coEvery { videoRepository.updateImageMetadata(any(), any(), any(), any()) } returns 1
-        val sut = ImageMetadataExtractor(videoRepository, storeLazy, context, decoder, NullDateReader)
+        val sut = ImageMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context, decoder, NullDateReader)
 
         sut.extractAndSave(entity())
 
@@ -138,7 +146,7 @@ class ImageMetadataExtractorTest {
         val decoder = RecordingDecoder(boundsWidth = 4000, boundsHeight = 3000)
         coEvery { videoRepository.updateImageMetadata(any(), any(), any(), any()) } returns 1
         val sut = ImageMetadataExtractor(
-            videoRepository, storeLazy, context, decoder, ConstDateReader(1234567890L)
+            videoRepository, storeLazy, TestDatasetIdSource, context, decoder, ConstDateReader(1234567890L)
         )
 
         sut.extractAndSave(entity())
@@ -151,7 +159,7 @@ class ImageMetadataExtractorTest {
     fun `zero-row column update returns input entity without resurrection`() = runTest {
         val decoder = RecordingDecoder(boundsWidth = 4000, boundsHeight = 3000)
         coEvery { videoRepository.updateImageMetadata(any(), any(), any(), any()) } returns 0
-        val sut = ImageMetadataExtractor(videoRepository, storeLazy, context, decoder, NullDateReader)
+        val sut = ImageMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context, decoder, NullDateReader)
         val input = entity()
 
         val returned = sut.extractAndSave(input)
@@ -163,7 +171,7 @@ class ImageMetadataExtractorTest {
     @Test
     fun `extraction failure keeps existing row untouched`() = runTest {
         val sut = ImageMetadataExtractor(
-            videoRepository, storeLazy, context, RecordingDecoder(1, 1), NullDateReader
+            videoRepository, storeLazy, TestDatasetIdSource, context, RecordingDecoder(1, 1), NullDateReader
         )
         val input = entity()
         every { contentResolver.openInputStream(any()) } throws RuntimeException("stream boom")
@@ -179,7 +187,7 @@ class ImageMetadataExtractorTest {
     @Test
     fun `cancellation from stream propagates without being swallowed`() = runTest {
         val sut = ImageMetadataExtractor(
-            videoRepository, storeLazy, context, RecordingDecoder(1, 1), NullDateReader
+            videoRepository, storeLazy, TestDatasetIdSource, context, RecordingDecoder(1, 1), NullDateReader
         )
         every { contentResolver.openInputStream(any()) } throws CancellationException("ce-boom")
 
@@ -207,7 +215,7 @@ class ImageMetadataExtractorTest {
     fun `null bounds stream is extraction failure not success-with-missing-fields`() = runTest {
         val decoder = RecordingDecoder(boundsWidth = 4000, boundsHeight = 3000)
         val sut = ImageMetadataExtractor(
-            videoRepository, storeLazy, context, decoder, ConstDateReader(1234567890L)
+            videoRepository, storeLazy, TestDatasetIdSource, context, decoder, ConstDateReader(1234567890L)
         )
         val input = entity()
         every { contentResolver.openInputStream(any()) } returns null
@@ -230,7 +238,7 @@ class ImageMetadataExtractorTest {
     fun `invalid bounds are extraction failure not success-with-missing-fields`() = runTest {
         val decoder = RecordingDecoder(boundsWidth = 0, boundsHeight = 6000)
         val sut = ImageMetadataExtractor(
-            videoRepository, storeLazy, context, decoder, ConstDateReader(1234567890L)
+            videoRepository, storeLazy, TestDatasetIdSource, context, decoder, ConstDateReader(1234567890L)
         )
         val input = entity()
 
@@ -256,7 +264,7 @@ class ImageMetadataExtractorTest {
             override fun readDateTaken(stream: InputStream): Long? =
                 throw IOException("exif corrupt")
         }
-        val sut = ImageMetadataExtractor(videoRepository, storeLazy, context, decoder, throwingReader)
+        val sut = ImageMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context, decoder, throwingReader)
         val input = entity()
 
         val returned = sut.extractAndSave(input)
@@ -281,7 +289,7 @@ class ImageMetadataExtractorTest {
             override fun readDateTaken(stream: InputStream): Long? =
                 throw CancellationException("exif-ce")
         }
-        val sut = ImageMetadataExtractor(videoRepository, storeLazy, context, decoder, ceReader)
+        val sut = ImageMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context, decoder, ceReader)
 
         val thrown = try {
             sut.extractAndSave(entity())
@@ -309,7 +317,7 @@ class ImageMetadataExtractorTest {
     fun `null exif stream is extraction failure not success-with-missing-fields`() = runTest {
         val decoder = RecordingDecoder(boundsWidth = 4000, boundsHeight = 3000)
         val sut = ImageMetadataExtractor(
-            videoRepository, storeLazy, context, decoder, ConstDateReader(1234567890L)
+            videoRepository, storeLazy, TestDatasetIdSource, context, decoder, ConstDateReader(1234567890L)
         )
         val input = entity()
         val opens = AtomicInteger(0)
@@ -441,7 +449,7 @@ class ImageMetadataExtractorTest {
     fun `thumbnail write failure recycles bitmap in finally and is extraction failure`() = runTest {
         val bitmap = mockk<Bitmap>(relaxed = true)
         val decoder = RecordingDecoder(boundsWidth = 4000, boundsHeight = 3000, sampledResult = bitmap)
-        val sut = ImageMetadataExtractor(videoRepository, storeLazy, context, decoder, NullDateReader)
+        val sut = ImageMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context, decoder, NullDateReader)
         val input = entity()
         coEvery { store.writeThumb(any<Long>(), any()) } throws IOException("thumb io")
 
@@ -458,7 +466,7 @@ class ImageMetadataExtractorTest {
     fun `thumbnail write cancellation propagates and still recycles bitmap`() = runTest {
         val bitmap = mockk<Bitmap>(relaxed = true)
         val decoder = RecordingDecoder(boundsWidth = 4000, boundsHeight = 3000, sampledResult = bitmap)
-        val sut = ImageMetadataExtractor(videoRepository, storeLazy, context, decoder, ConstDateReader(1L))
+        val sut = ImageMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context, decoder, ConstDateReader(1L))
         val ce = CancellationException("thumb-ce")
         coEvery { store.writeThumb(any<Long>(), any()) } throws ce
 
@@ -473,5 +481,45 @@ class ImageMetadataExtractorTest {
         verify(exactly = 1) { bitmap.recycle() }
         coVerify(exactly = 0) { videoRepository.updateImageMetadata(any(), any(), any(), any()) }
         coVerify(exactly = 0) { videoRepository.upsert(any()) }
+    }
+
+    /**
+     * P1-11（sol）：外部 CTR_V2 已提交行的缩略图必须按 ref 路由（加密路径含
+     * datasetId/generation），不再误写内部明文 by-id 路径。
+     */
+    @Test
+    fun `external ctr v2 row routes thumbnail write through committed ref`() = runTest {
+        val decoder = RecordingDecoder(boundsWidth = 4000, boundsHeight = 3000)
+        val sut = ImageMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context, decoder, NullDateReader)
+        coEvery { videoRepository.getById(5L) } returns entity().copy(
+            volumeId = "external:u1",
+            storageFormat = "CTR_V2",
+            iv = ByteArray(8),
+            generation = "g7",
+        )
+        val refSlot = slot<StorageRef>()
+        coEvery { store.writeThumb(capture(refSlot), any()) } just runs
+
+        sut.extractAndSave(entity())
+
+        coVerify(exactly = 1) { store.writeThumb(any<StorageRef>(), any()) }
+        coVerify(exactly = 0) { store.writeThumb(any<Long>(), any()) }
+        assertEquals("external:u1", refSlot.captured.volumeId)
+        assertEquals("CTR_V2", refSlot.captured.format.name)
+        assertEquals("ds-test", refSlot.captured.datasetId)
+        assertEquals("g7", refSlot.captured.generation)
+    }
+
+    /** P1-11（sol）：内部（或未提交）行沿用 by-id 明文路径。 */
+    @Test
+    fun `internal row keeps by-id thumbnail write`() = runTest {
+        val decoder = RecordingDecoder(boundsWidth = 4000, boundsHeight = 3000)
+        val sut = ImageMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context, decoder, NullDateReader)
+        coEvery { videoRepository.getById(5L) } returns entity() // internal/PLAIN
+
+        sut.extractAndSave(entity())
+
+        coVerify(exactly = 1) { store.writeThumb(any<Long>(), any()) }
+        coVerify(exactly = 0) { store.writeThumb(any<StorageRef>(), any()) }
     }
 }

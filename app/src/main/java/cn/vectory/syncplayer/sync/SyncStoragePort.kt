@@ -126,6 +126,13 @@ interface SyncStoragePort {
 
     suspend fun listVolumes(): List<SyncVolumeInfo>
 
+    /**
+     * 冷启动恢复钩子（默认 no-op）：恢复持久化登记与默认写入卷。
+     * 生产实现应在 Provider 首次读卡前调用（SyncPlayerApp / DI 初始化侧）；
+     * 同步开始与设置页刷新也会经 snapshotDefaultVolume/listVolumes 幂等恢复。
+     */
+    suspend fun restoreVolumesAtStartup() {}
+
     /** 设置页显式登记外部卷（能力检查通过才生效）；返回 volumeId 或 null。 */
     suspend fun registerExternalVolume(): String?
 
@@ -196,6 +203,31 @@ internal fun StorageAccessFailure.toSyncErrorCode(): SyncErrorCode = when (reaso
 }
 
 /**
+ * P1-9（sol）：sink 边界的结构化异常转换 OutputStream。downloadTo 传输期间的
+ * write/flush/close 若抛 [StorageAccessFailure]（外部卷 IO/缺卡/密钥不可用），
+ * 在此转换为 [SyncException] 直通——不再被 SFTP/SMB 客户端的 catch(Exception)
+ * 误包装成 DOWNLOAD_FAILED（可重试）导致缺卡被静默重试放大。其余异常（含
+ * LengthVerifyingOutputStream close 的长度截断 IOException）原样上抛，保留
+ * 既有 DOWNLOAD_FAILED 白名单重试语义。
+ */
+internal class StorageExceptionTranslatingSink(private val inner: OutputStream) : OutputStream() {
+
+    private inline fun translate(block: () -> Unit) {
+        try {
+            block()
+        } catch (e: StorageAccessFailure) {
+            throw SyncException(e.toSyncErrorCode(), SyncOperation.DOWNLOAD, cause = e)
+        }
+    }
+
+    override fun write(b: Int) = translate { inner.write(b) }
+    override fun write(b: ByteArray) = translate { inner.write(b) }
+    override fun write(b: ByteArray, off: Int, len: Int) = translate { inner.write(b, off, len) }
+    override fun flush() = translate { inner.flush() }
+    override fun close() = translate { inner.close() }
+}
+
+/**
  * 生产实现：包装 A 的双卷 [MediaFileStore] + [MediaVolumeRegistry] + Room v5 列。
  *
  * - **持久化归属 B**：登记的外部卷 uuid 集合与默认写入卷存 UserPreferencesRepository；
@@ -221,7 +253,10 @@ internal class DualVolumeSyncStoragePort @Inject constructor(
         configureMutex.withLock {
             withContext(ioDispatcher) {
                 val datasetId = datasetDao.get()?.datasetId
+                // P1-6（sol）：登记 uuid 归一化读取——剥历史混写的 "external:" 前缀，
+                // 持久化集合与比较基准统一为 bare uuid。
                 val persisted = userPreferencesRepository.getRegisteredExternalVolumes()
+                    .map(::normalizeUuid).toSet()
                 val candidates = try {
                     registry.enumerateExternalCandidates()
                 } catch (e: CancellationException) {
@@ -229,27 +264,33 @@ internal class DualVolumeSyncStoragePort @Inject constructor(
                 } catch (_: Exception) {
                     emptyList()
                 }
-                val registered = candidates
-                    .filter { candidate -> candidate.uuid in persisted }
-                    .mapNotNull { candidate -> registry.registerExternal(candidate, datasetId) }
-                // 持久化集合收敛为“当前仍可登记”的子集（拔走的卷下次插回再恢复）。
-                if (registered.toSet() != persisted) {
-                    userPreferencesRepository.setRegisteredExternalVolumes(registered.toSet())
-                }
-                // 恢复默认卷：不可用（未插卡）时回落内部卷并持久化回落。
+                candidates
+                    .filter { candidate -> normalizeUuid(candidate.uuid) in persisted }
+                    .forEach { candidate -> registry.registerExternal(candidate, datasetId) }
+                // P1-6（sol）：缺卡不清登记——持久化集合保留全部已登记 uuid（含当前
+                // 不可达卷），插回后下次恢复自动重登记；绝不把拔卡当作注销。
+                // 恢复默认卷：用户选择不可用（未插卡）时保留选择、不回落、不持久化
+                // 回落——缺卡时写入按 STORAGE_UNAVAILABLE 结构化失败（快照侧见
+                // snapshotDefaultVolume），绝不静默改写内部卷。
                 val prefDefault = userPreferencesRepository.getDefaultWriteVolume()
-                val ok = registry.setDefaultWriteVolume(prefDefault)
-                if (!ok && prefDefault != VolumeIds.INTERNAL) {
-                    registry.setDefaultWriteVolume(VolumeIds.INTERNAL)
-                    userPreferencesRepository.setDefaultWriteVolume(VolumeIds.INTERNAL)
-                }
+                registry.setDefaultWriteVolume(prefDefault)
             }
         }
     }
 
+    /** P1-6：登记 uuid 归一化——剥 "external:" 前缀，兼容历史混写格式。 */
+    private fun normalizeUuid(raw: String): String = raw.removePrefix(VolumeIds.EXTERNAL_PREFIX)
+
+    override suspend fun restoreVolumesAtStartup() {
+        ensureVolumesConfigured()
+    }
+
     override suspend fun snapshotDefaultVolume(): SyncVolumeTarget {
         ensureVolumesConfigured()
-        return SyncVolumeTarget(registry.defaultWriteTarget().volumeId)
+        // P1-6：以用户持久化选择为准（缺卡时不回落内部卷）；快照返回该卷后，后续
+        // 空间预检/写入以 STORAGE_UNAVAILABLE 结构化失败（整卷停派），绝不静默写内部卷。
+        val pref = userPreferencesRepository.getDefaultWriteVolume()
+        return SyncVolumeTarget(pref.ifBlank { registry.defaultWriteTarget().volumeId })
     }
 
     override suspend fun resolveRef(id: Long): SyncStorageRef? {
@@ -261,13 +302,23 @@ internal class DualVolumeSyncStoragePort @Inject constructor(
             StorageFormat.PLAIN.name -> SyncStorageFormat.PLAIN
             else -> return null
         }
+        // P1-8（sol）：CTR_V2 缺 iv/generation 的行是崩溃残留的 PENDING 占位——
+        // 保留卷身份（绝不回退默认卷重下），返回仅携带 volumeId 的 PENDING 引用。
+        // 文件定位类调用必须先经 [isPendingRef] 特判（路径含 generation，
+        // 无 generation ⇒ 不存在已提交 final），不得对 PENDING 引用 toContract()。
+        if (format == SyncStorageFormat.CTR_V2 && (entity.iv == null || entity.generation == null)) {
+            return SyncStorageRef(
+                id = entity.id,
+                volumeId = entity.volumeId,
+                datasetId = null,
+                generation = null,
+                format = SyncStorageFormat.CTR_V2,
+                plainSize = entity.fileSize,
+            )
+        }
         val datasetId = if (format == SyncStorageFormat.CTR_V2) {
             datasetDao.get()?.datasetId ?: return null
         } else null
-        // 非法组合（CTR_V2 缺 iv/generation 等）→ null：目标卷回退默认卷整行重下。
-        if (format == SyncStorageFormat.CTR_V2 && (entity.iv == null || entity.generation == null)) {
-            return null
-        }
         return SyncStorageRef(
             id = entity.id,
             volumeId = entity.volumeId,
@@ -280,7 +331,8 @@ internal class DualVolumeSyncStoragePort @Inject constructor(
     }
 
     override suspend fun defaultWriteVolumeId(): String =
-        registry.defaultWriteTarget().volumeId
+        userPreferencesRepository.getDefaultWriteVolume()
+            .ifBlank { registry.defaultWriteTarget().volumeId }
 
     override suspend fun setDefaultWriteVolume(volumeId: String): Boolean {
         ensureVolumesConfigured()
@@ -296,7 +348,9 @@ internal class DualVolumeSyncStoragePort @Inject constructor(
     override suspend fun listVolumes(): List<SyncVolumeInfo> {
         ensureVolumesConfigured()
         val owned = ownedVolumeIds()
-        val defaultVolumeId = registry.defaultWriteTarget().volumeId
+        // P1-6：默认卷以用户持久化选择为准（缺卡不回落）。
+        val prefDefault = userPreferencesRepository.getDefaultWriteVolume()
+        val defaultVolumeId = prefDefault.ifBlank { registry.defaultWriteTarget().volumeId }
         return registry.registeredVolumeIds().map { volumeId ->
             val space = if (registry.isAvailable(volumeId)) {
                 when (val r = store.space(VolumeTarget(volumeId))) {
@@ -324,6 +378,7 @@ internal class DualVolumeSyncStoragePort @Inject constructor(
                 val volumeId = registry.registerExternal(candidate, datasetId) ?: return@withContext null
                 val uuid = VolumeIds.externalUuid(volumeId) ?: return@withContext null
                 val persisted = userPreferencesRepository.getRegisteredExternalVolumes()
+                    .map(::normalizeUuid).toSet()
                 userPreferencesRepository.setRegisteredExternalVolumes(persisted + uuid)
                 volumeId
             }
@@ -336,6 +391,7 @@ internal class DualVolumeSyncStoragePort @Inject constructor(
                 val uuid = VolumeIds.externalUuid(volumeId) ?: return@withContext false
                 registry.unregisterExternal(volumeId)
                 val persisted = userPreferencesRepository.getRegisteredExternalVolumes()
+                    .map(::normalizeUuid).toSet()
                 userPreferencesRepository.setRegisteredExternalVolumes(persisted - uuid)
                 if (userPreferencesRepository.getDefaultWriteVolume() == volumeId) {
                     registry.setDefaultWriteVolume(VolumeIds.INTERNAL)
@@ -412,6 +468,10 @@ internal class DualVolumeSyncStoragePort @Inject constructor(
     override suspend fun probeFinalized(id: Long, expectedSize: Long): MediaProbeState {
         val ref = resolveRef(id) ?: return MediaProbeState.IO_ERROR
         if (!registry.isAvailable(ref.volumeId)) return MediaProbeState.IO_ERROR // E8
+        // P1-8（sol）：崩溃残留的 PENDING 占位行在可达卷上按 MISSING 处理——
+        // 扫描派生 DOWNLOAD 修复重下（目标卷保留为行自身卷），未提交 attempt 的
+        // tmp 由 newAttempt 世代隔离自然废弃；绝不因占位行触发 IO_ERROR 持续 E8。
+        if (ref.isPendingRef()) return MediaProbeState.MISSING
         return storeGuarded(SyncOperation.SCAN) { store.probeFinalized(ref.toContract(), expectedSize) }
     }
 
@@ -442,22 +502,29 @@ internal class DualVolumeSyncStoragePort @Inject constructor(
 
     override suspend fun checkMediaExistence(id: Long): MediaExistence =
         withRefOrLegacy(id, { ref ->
-            mapStat(storeGuarded(SyncOperation.DELETE) { volumeOf(ref).strictStat(relMedia(ref)) })
+            // P1-8：PENDING 占位——外部路径含 generation，无 generation ⇒ 无已提交 final。
+            if (ref.isPendingRef()) MediaExistence.NOT_FOUND
+            else mapStat(storeGuarded(SyncOperation.DELETE) { volumeOf(ref).strictStat(relMedia(ref)) })
         }) { store.checkExistence(id) }
 
     override suspend fun checkThumbExistence(id: Long): MediaExistence =
         withRefOrLegacy(id, { ref ->
-            mapStat(storeGuarded(SyncOperation.DELETE) { volumeOf(ref).strictStat(relThumb(ref)) })
+            if (ref.isPendingRef()) MediaExistence.NOT_FOUND
+            else mapStat(storeGuarded(SyncOperation.DELETE) { volumeOf(ref).strictStat(relThumb(ref)) })
         }) { store.checkThumbExistence(id) }
 
     override suspend fun deleteMedia(id: Long): Boolean =
         withRefOrLegacy(id, { ref ->
-            storeGuarded(SyncOperation.DELETE) { store.deleteRef(ref.toContract()) }
+            // P1-8：PENDING 占位无已提交 final（generation 域隔离路径不可能存在）——
+            // 视为已删，DB 行清理由调用方收束。
+            if (ref.isPendingRef()) true
+            else storeGuarded(SyncOperation.DELETE) { store.deleteRef(ref.toContract()) }
         }) { store.delete(id) }
 
     override suspend fun deleteThumb(id: Long): Boolean =
         withRefOrLegacy(id, { ref ->
-            storeGuarded(SyncOperation.DELETE) { store.deleteThumb(ref.toContract()) }
+            if (ref.isPendingRef()) true
+            else storeGuarded(SyncOperation.DELETE) { store.deleteThumb(ref.toContract()) }
         }) { store.deleteThumb(id) }
 
     override suspend fun ownedVolumeIds(): Set<String> =
@@ -555,23 +622,34 @@ internal class DualVolumeSyncStoragePort @Inject constructor(
         is FileStat.IoError -> MediaExistence.IO_ERROR(stat.reason)
     }
 
-    /** 有契约引用时走 [refAction]；行不存在/引用非法时回退 [legacyAction]（内部卷旧行为）。 */
+    /**
+     * 有契约引用时走 [refAction]；仅当行不存在或为内部 PLAIN 引用（resolveRef == null）
+     * 时走 [legacyAction]（内部卷 by-id 旧行为）。
+     * P0-3（sol）：refAction 的异常一律向上抛（结构化 SyncException），绝不吞掉后
+     * 回退内部卷 legacy 路径——外部卷拔卡时回退会把「卷不可用」误报为 NOT_FOUND，
+     * 进而按缺卡删 DB 行丢外卡文件（fail-open 必须消除）。
+     */
     private suspend fun <T> withRefOrLegacy(
         id: Long,
         refAction: suspend (SyncStorageRef) -> T,
         legacyAction: suspend () -> T,
     ): T {
-        return try {
-            val r = resolveRef(id)
-            if (r != null) refAction(r) else legacyAction()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            legacyAction()
-        }
+        val r = resolveRef(id)
+        return if (r != null) refAction(r) else legacyAction()
     }
 
-    /** 递归删除外部卷上本应用 dataset 根（计数语义与 store.deleteAllMedia 一致）。 */
+    /** PENDING 占位引用（CTR_V2 未提交：无 generation ⇒ 无已提交 final 文件）。 */
+    private fun SyncStorageRef.isPendingRef(): Boolean =
+        format == SyncStorageFormat.CTR_V2 && (generation == null || iv == null)
+
+    /**
+     * 递归删除外部卷上本应用 dataset 根（计数语义与 store.deleteAllMedia 一致）。
+     * P1-14（sol）：不再用 stat==null 猜目录——[MediaVolume.strictStat] 对目录返回
+     * [FileStat.IoError]（"not-regular"）。目录判定：IoError 且 listOwned 可枚举 ⇒
+     * 目录（下钻删子项后删目录本身）；IoError 且不可枚举 ⇒ failed++（类型不可判定，
+     * fail-closed——调用方据 failed>0 拒绝清 DB）。Exists ⇒ 删文件（失败复检
+     * Missing 才计删）；Missing ⇒ 已不存在，无需删除。
+     */
     private suspend fun deleteTree(volume: MediaVolume, rel: String): Pair<Int, Int> {
         val deleted = intArrayOf(0)
         val failed = intArrayOf(0)
@@ -589,29 +667,49 @@ internal class DualVolumeSyncStoragePort @Inject constructor(
                 val stat = try {
                     volume.strictStat(childRel)
                 } catch (_: Exception) {
-                    null
+                    FileStat.IoError("stat")
                 }
-                val isDir = stat == null // listOwned 能列出但 strictStat 失败 ⇒ 按目录尝试下钻
-                if (isDir) {
-                    walk(childRel)
-                } else {
-                    try {
-                        if (volume.delete(childRel)) deleted[0]++ else {
-                            val still = try {
-                                volume.strictStat(childRel)
-                            } catch (_: Exception) {
-                                FileStat.IoError("recheck")
-                            }
-                            if (still is FileStat.Missing) deleted[0]++ else failed[0]++
+                when (stat) {
+                    is FileStat.Exists -> deleteChild(volume, childRel, deleted, failed)
+                    is FileStat.Missing -> Unit // 已不存在：无需删除
+                    is FileStat.IoError -> {
+                        // 可能是目录（FileVolume 对目录返回 IoError("not-regular")）：
+                        // 可枚举 ⇒ 目录，下钻后删目录本身；不可枚举 ⇒ fail-closed。
+                        val entries = try {
+                            volume.listOwned(childRel)
+                        } catch (_: Exception) {
+                            null
                         }
-                    } catch (_: Exception) {
-                        failed[0]++
+                        if (entries != null) {
+                            walk(childRel)
+                            deleteChild(volume, childRel, deleted, failed)
+                        } else {
+                            failed[0]++
+                        }
                     }
                 }
             }
         }
         withContext(ioDispatcher) { walk(rel) }
         return deleted[0] to failed[0]
+    }
+
+    /** 删除单个文件/已清空目录；失败复检 Missing 才计删，否则 failed（fail-closed）。 */
+    private fun deleteChild(volume: MediaVolume, rel: String, deleted: IntArray, failed: IntArray) {
+        try {
+            if (volume.delete(rel)) {
+                deleted[0]++
+            } else {
+                val still = try {
+                    volume.strictStat(rel)
+                } catch (_: Exception) {
+                    FileStat.IoError("recheck")
+                }
+                if (still is FileStat.Missing) deleted[0]++ else failed[0]++
+            }
+        } catch (_: Exception) {
+            failed[0]++
+        }
     }
 }
 
