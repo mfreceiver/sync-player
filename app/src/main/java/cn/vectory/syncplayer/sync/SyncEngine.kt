@@ -59,8 +59,18 @@ class SyncEngine @Inject constructor(
     private val storagePaths: StoragePaths,
     private val mediaFileStoreLazy: Lazy<MediaFileStore>,
     @ApplicationContext private val context: Context,
-    @IoDispatcher private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    // 外部 SD v2（任务包 B）：存储端口（di/SyncModule.kt 提供注入；默认 legacy 单内部卷，
+    // 手工构造/测试用）。A 的双卷契约合入后仅替换 DI 绑定。
+    private val storagePortCtor: SyncStoragePort =
+        LegacySyncStoragePort(mediaFileStoreLazy, videoRepository, ioDispatcher = ioDispatcher)
 ) {
+
+    /**
+     * 外部 SD v2（任务包 B）：存储端口。所有卷决策经此抽象；legacy 默认为单内部卷
+     * 适配，与下载管线/探针共享同一实例（默认卷快照/目标选择/CAS 提交一致性）。
+     */
+    internal val storagePort: SyncStoragePort = storagePortCtor
 
     // 进度状态已迁入 SyncProgressPublisher（上帝类拆分第一轮）。
     // 对外仍暴露只读 StateFlow<SyncProgress>，签名不变；内部通过 progressPublisher 读写。
@@ -86,21 +96,23 @@ class SyncEngine @Inject constructor(
     )
 
     // 远端扫描域已迁入 SyncRemoteScanner（Task 6）；E8 守卫随迁，进度走共享 progressPublisher。
-    // A8 接线：本地 final 完整性探针（必填契约）——延迟取 store，与下载管线同一单内部卷。
+    // A8 接线：本地 final 完整性探针（必填契约）——经存储端口：行所在卷不可用时返回
+    // IO_ERROR，scanner 按既有 E8 语义清空 toDownload/toDelete（绝不按缺卡推导删除）。
     private val remoteScanner = SyncRemoteScanner(
         syncRelationRepository, syncSourceRepository, videoRepository, playbackRepository,
         syncLogRepository, remoteFileClientFactory, storagePaths, context, progressPublisher,
         localFinalProbe = MediaFinalProbe { id, size ->
-            mediaFileStoreLazy.get().probeFinalized(id, size)
+            this.storagePort.probeFinalized(id, size)
         }
     )
 
     // 下载主管线已迁入 SyncDownloadPipeline（Task 7）；复用同一 deleteExecutor 与 progressPublisher。
+    // 外部 SD v2：共享同一 storagePort 实例（默认卷快照/目标选择/CAS 提交一致性）。
     private val downloadPipeline = SyncDownloadPipeline(
         syncRelationRepository, syncSourceRepository, videoRepository, playbackRepository,
         syncLogRepository, videoMetadataExtractor, imageMetadataExtractor,
         remoteFileClientFactory, storagePaths, mediaFileStoreLazy, context,
-        progressPublisher, deleteExecutor, ioDispatcher
+        progressPublisher, deleteExecutor, ioDispatcher, this.storagePort
     )
 
     suspend fun setPendingTask(task: PendingSyncTask) {

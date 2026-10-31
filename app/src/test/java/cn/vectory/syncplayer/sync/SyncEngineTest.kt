@@ -338,7 +338,7 @@ class SyncEngineTest {
         val sink = mockk<OutputStream>(relaxed = true)
         coEvery { mediaFileStore.openWriteSink(301L, any()) } returns sink
         coEvery { mediaFileStore.finalize(301L) } returns true
-        coEvery { mediaFileStore.verifyReadable(any(), any()) } coAnswers {
+        coEvery { mediaFileStore.verifyReadable(any<Long>(), any<Long>()) } coAnswers {
             throw CancellationException("cancel")
         }
 
@@ -349,7 +349,7 @@ class SyncEngineTest {
         } catch (e: Throwable) {
             e
         }
-        coVerify(exactly = 1) { mediaFileStore.verifyReadable(any(), any()) }
+        coVerify(exactly = 1) { mediaFileStore.verifyReadable(any<Long>(), any<Long>()) }
 
         assertEquals(SyncPhase.CANCELLED, syncEngine.progress.value.phase)
         assertNotNull(thrown)
@@ -385,7 +385,7 @@ class SyncEngineTest {
         val sink = mockk<OutputStream>(relaxed = true)
         coEvery { mediaFileStore.openWriteSink(302L, any()) } returns sink
         coEvery { mediaFileStore.finalize(302L) } returns true
-        coEvery { mediaFileStore.verifyReadable(any(), any()) } coAnswers {
+        coEvery { mediaFileStore.verifyReadable(any<Long>(), any<Long>()) } coAnswers {
             throw IOException("simulated unreadable")
         }
         coEvery { mediaFileStore.delete(any()) } coAnswers {
@@ -400,7 +400,7 @@ class SyncEngineTest {
         } catch (e: Throwable) {
             e
         }
-        coVerify(exactly = 1) { mediaFileStore.verifyReadable(any(), any()) }
+        coVerify(exactly = 1) { mediaFileStore.verifyReadable(any<Long>(), any<Long>()) }
 
         // BUG-007 v3.1 语义（guarded「原异常优先」）：COMMITTED 回滚 delete 抛出的 CE 被吞并，
         // 原 STORAGE_ERROR 胜出——计为 per-action 失败（PARTIAL_FAILED），不传播取消。
@@ -440,7 +440,7 @@ class SyncEngineTest {
         val sink = mockk<OutputStream>(relaxed = true)
         coEvery { mediaFileStore.openWriteSink(303L, any()) } returns sink
         coEvery { mediaFileStore.finalize(303L) } returns true
-        coEvery { mediaFileStore.verifyReadable(any(), any()) } coAnswers {
+        coEvery { mediaFileStore.verifyReadable(any<Long>(), any<Long>()) } coAnswers {
             throw IOException("simulated unreadable")
         }
         coEvery { mediaFileStore.delete(any()) } coAnswers {
@@ -465,7 +465,7 @@ class SyncEngineTest {
         assertEquals(false, returned)
         assertEquals(SyncPhase.PARTIAL_FAILED, syncEngine.progress.value.phase)
         assertEquals(1, syncEngine.progress.value.failedFiles)
-        coVerify(exactly = 1) { mediaFileStore.verifyReadable(any(), any()) }
+        coVerify(exactly = 1) { mediaFileStore.verifyReadable(any<Long>(), any<Long>()) }
         coVerify(exactly = 1) { mediaFileStore.delete(303L) }
         coVerify(exactly = 0) { mediaFileStore.cancel(303L) }
         coVerify(exactly = 1) { videoRepository.deleteById(303L) }

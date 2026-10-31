@@ -128,7 +128,7 @@ class ImageMetadataExtractorTest {
 
         coVerify(exactly = 1) { videoRepository.updateImageMetadata(5L, 4000, 3000, null) }
         coVerify(exactly = 0) { videoRepository.upsert(any()) }
-        coVerify(exactly = 0) { store.writeThumb(any(), any()) }
+        coVerify(exactly = 0) { store.writeThumb(any<Long>(), any()) }
         // EXIF 流照常重开
         verify(exactly = 3) { contentResolver.openInputStream(any()) }
     }
@@ -218,7 +218,7 @@ class ImageMetadataExtractorTest {
         // 既有列值保留：绝无任何 DB 写
         coVerify(exactly = 0) { videoRepository.updateImageMetadata(any(), any(), any(), any()) }
         coVerify(exactly = 0) { videoRepository.upsert(any()) }
-        coVerify(exactly = 0) { store.writeThumb(any(), any()) }
+        coVerify(exactly = 0) { store.writeThumb(any<Long>(), any()) }
     }
 
     /**
@@ -240,7 +240,7 @@ class ImageMetadataExtractorTest {
         assertEquals(1, decoder.boundsCalls) // 确已到达 bounds 解码
         coVerify(exactly = 0) { videoRepository.updateImageMetadata(any(), any(), any(), any()) }
         coVerify(exactly = 0) { videoRepository.upsert(any()) }
-        coVerify(exactly = 0) { store.writeThumb(any(), any()) }
+        coVerify(exactly = 0) { store.writeThumb(any<Long>(), any()) }
     }
 
     /**
@@ -443,7 +443,7 @@ class ImageMetadataExtractorTest {
         val decoder = RecordingDecoder(boundsWidth = 4000, boundsHeight = 3000, sampledResult = bitmap)
         val sut = ImageMetadataExtractor(videoRepository, storeLazy, context, decoder, NullDateReader)
         val input = entity()
-        coEvery { store.writeThumb(any(), any()) } throws IOException("thumb io")
+        coEvery { store.writeThumb(any<Long>(), any()) } throws IOException("thumb io")
 
         val returned = sut.extractAndSave(input)
 
@@ -460,7 +460,7 @@ class ImageMetadataExtractorTest {
         val decoder = RecordingDecoder(boundsWidth = 4000, boundsHeight = 3000, sampledResult = bitmap)
         val sut = ImageMetadataExtractor(videoRepository, storeLazy, context, decoder, ConstDateReader(1L))
         val ce = CancellationException("thumb-ce")
-        coEvery { store.writeThumb(any(), any()) } throws ce
+        coEvery { store.writeThumb(any<Long>(), any()) } throws ce
 
         val thrown = try {
             sut.extractAndSave(entity())

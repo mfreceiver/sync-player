@@ -18,6 +18,7 @@ import cn.vectory.syncplayer.sync.SyncErrorCode
 import cn.vectory.syncplayer.sync.SyncException
 import cn.vectory.syncplayer.sync.SyncOperation
 import cn.vectory.syncplayer.sync.SyncEngine
+import cn.vectory.syncplayer.sync.SyncStoragePort
 import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.ui.util.getMimeType
 import dagger.Lazy
@@ -81,6 +82,9 @@ class FileOperationsUseCase @Inject constructor(
     private val syncRelationRepository: SyncRelationRepository,
     private val mediaFileStoreLazy: Lazy<MediaFileStore>,
     private val syncEngine: SyncEngine,
+    // 外部 SD v2：经存储端口做卷感知文件/缩略图操作（legacy 端口委托内部卷 store）。
+    private val storagePort: SyncStoragePort =
+        cn.vectory.syncplayer.sync.LegacySyncStoragePort(mediaFileStoreLazy, videoRepository),
     @ApplicationContext private val context: Context,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
@@ -386,8 +390,9 @@ class FileOperationsUseCase @Inject constructor(
         val video = videoRepository.getById(id)
             ?: return DeleteMediaResult.SkippedNotFound(id)
 
+        // 外部 SD v2：经存储端口按行卷路由（legacy 端口委托内部卷 store）。
         val existence = try {
-            mediaStore.checkExistence(id)
+            storagePort.checkMediaExistence(id)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -412,10 +417,10 @@ class FileOperationsUseCase @Inject constructor(
         if (!fileMissing) {
             try {
                 // Boolean false = missing OR delete failed (cannot tell alone) — re-check below.
-                val deleted = mediaStore.delete(id)
+                val deleted = storagePort.deleteMedia(id)
                 if (!deleted) {
                     val stillThere = try {
-                        mediaStore.checkExistence(id)
+                        storagePort.checkMediaExistence(id)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -461,10 +466,10 @@ class FileOperationsUseCase @Inject constructor(
 
         // M2: Boolean false from deleteThumb is ambiguous (missing vs fail). Re-check existence.
         try {
-            val deleted = mediaStore.deleteThumb(id)
+            val deleted = storagePort.deleteThumb(id)
             if (!deleted) {
                 val stillThere = try {
-                    mediaStore.checkThumbExistence(id)
+                    storagePort.checkThumbExistence(id)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {

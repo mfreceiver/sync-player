@@ -136,7 +136,7 @@ class SyncDownloadPipelineAttemptGateTest {
             storeCalls.add("cancel:${firstArg<Long>()}")
             true
         }
-        coEvery { store.verifyReadable(any(), any()) } coAnswers {
+        coEvery { store.verifyReadable(any<Long>(), any<Long>()) } coAnswers {
             storeCalls.add("verify:${firstArg<Long>()}")
         }
         // fake repository：existing 行由 seedExistingRow 放入；占位 upsert 顺序分配新 id
@@ -261,9 +261,9 @@ class SyncDownloadPipelineAttemptGateTest {
         coVerify(exactly = 3) { client.downloadTo(any(), any(), any()) }
         coVerify(exactly = 3) { store.cancel(42L) }
         coVerify(exactly = 0) { store.delete(any()) }
-        coVerify(exactly = 0) { store.probePendingTmp(any()) }
+        coVerify(exactly = 0) { store.probePendingTmp(any<Long>()) }
         coVerify(exactly = 0) { store.finalize(any()) }
-        coVerify(exactly = 0) { store.verifyReadable(any(), any()) }
+        coVerify(exactly = 0) { store.verifyReadable(any<Long>(), any<Long>()) }
         coVerify(exactly = 0) { videoRepository.updateSyncMetadata(any(), any(), any(), any()) }
         assertEquals(1L, rows[42L]?.fileSize)
         coVerify(exactly = 1) {

@@ -95,7 +95,7 @@ class SyncDownloadPipelineRetryTest {
             storeCalls.add("cancel:${firstArg<Long>()}")
             true
         }
-        coEvery { store.verifyReadable(any(), any()) } coAnswers {
+        coEvery { store.verifyReadable(any<Long>(), any<Long>()) } coAnswers {
             storeCalls.add("verify:${firstArg<Long>()}")
         }
         // Stateful fake video repository: NEW file (no existing row); upsert assigns fresh ids.

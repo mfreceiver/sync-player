@@ -39,7 +39,8 @@ SyncException(code, operation, path?, host?, expectedBytes?/actualBytes?/availab
 ```
 
 - `message` **刻意为 null**（不携带显示文本）。
-- `SyncErrorCode`（17）: NETWORK_UNAVAILABLE, UNKNOWN_HOST, CONNECTION_REFUSED, TIMEOUT, AUTHENTICATION_FAILED, ACCESS_DENIED, PATH_NOT_FOUND, NOT_CONNECTED, SCAN_INCOMPLETE, DOWNLOAD_FAILED, REMOTE_DELETE_FAILED, INSUFFICIENT_SPACE, FINALIZE_FAILED, STORAGE_ERROR, THUMBNAIL_ERROR, DATABASE_ERROR, UNKNOWN。
+- `SyncErrorCode`（20）: NETWORK_UNAVAILABLE, UNKNOWN_HOST, CONNECTION_REFUSED, TIMEOUT, AUTHENTICATION_FAILED, ACCESS_DENIED, PATH_NOT_FOUND, NOT_CONNECTED, SCAN_INCOMPLETE, DOWNLOAD_FAILED, REMOTE_DELETE_FAILED, INSUFFICIENT_SPACE, FINALIZE_FAILED, STORAGE_ERROR, THUMBNAIL_ERROR, DATABASE_ERROR, STORAGE_UNAVAILABLE, STORAGE_IO_TRANSIENT, KEY_UNAVAILABLE, UNKNOWN。
+  - 外部 SD v2 新增三码（任务包 B）：卷不可达/缺卡=`STORAGE_UNAVAILABLE`（终态，不进重试白名单，走整卷 offline 停派）；可恢复存储 IO=`STORAGE_IO_TRANSIENT`（瞬态）；加密密钥不可用=`KEY_UNAVAILABLE`（瞬态）。`SyncStoragePort`（sync 包端口层）在 sink 边界把 `StorageAccessFailure` 映射为上述结构化码，`SyncException` 直接透传不吞。
 - `ErrorMessageMapper.classifyRemoteError(e)` 读 **code**（非 message 子串）→ `RemoteBrowseError`。
 - `syncErrorMessage(e, context)` 解析 code → `R.string.*`（UNKNOWN 永不泄漏 `e.message`）。
 
@@ -58,7 +59,15 @@ SyncException(code, operation, path?, host?, expectedBytes?/actualBytes?/availab
 `CancellationException` **始终**先于普通 Exception 传播。清理在 `NonCancellable` 中完成（pending task markCancelled + deleteByRelationId）。
 
 ### 重试白名单
-仅瞬态码重试：`{TIMEOUT, CONNECTION_REFUSED, UNKNOWN_HOST, NETWORK_UNAVAILABLE, DOWNLOAD_FAILED, UNKNOWN}`。终态码（AUTH/ACCESS/PATH_NOT_FOUND/SPACE/FINALIZE/…）立即抛出。
+仅瞬态码重试：`{TIMEOUT, CONNECTION_REFUSED, UNKNOWN_HOST, NETWORK_UNAVAILABLE, DOWNLOAD_FAILED, UNKNOWN, STORAGE_IO_TRANSIENT, KEY_UNAVAILABLE}`（后两码为外部 SD v2 新增；重试 ≤3 次、1s/2s 退避）。终态码（AUTH/ACCESS/PATH_NOT_FOUND/SPACE/FINALIZE/STORAGE_UNAVAILABLE/…）立即抛出。
+
+### 外部 SD v2 · 卷路由（任务包 B）
+- 每轮同步在 `storageOperationMutex` 内对默认写入卷做**一次快照**；existing 行按自身 `volumeId` 选目标（切换默认卷只影响新文件）。
+- 新行占位 `storageState=PENDING`（Provider 不公开未提交行）；DB 提交走 CAS `updateSyncStorageMetadata(expectedOldGeneration, …)`，**0 行受影响即失败**（不复活并发删除行），成功才置 READY。
+- 空间按卷分组预检（`checkSpaceByVolume`）+ 按卷预约账本（`VolumeSpaceReservation`，Long 饱和不溢出）+ 每 attempt 复检（E9）。
+- 整卷 offline 停派：action 以 `STORAGE_UNAVAILABLE` 失败后，同卷剩余 action 不再派发（跳过、不重试）。
+- 写并发 lane：外部卷 1、内部卷 3（按卷分组顺序执行）。
+- E8 扩展：卷不可用 → `probeFinalized` 返回 `IO_ERROR` → dryRun 清空 `toDownload`/`toDelete`，**绝不按缺卡推导删除**。
 
 ## DryRunResult
 

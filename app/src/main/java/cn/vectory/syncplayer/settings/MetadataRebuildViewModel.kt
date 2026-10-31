@@ -16,6 +16,7 @@ import cn.vectory.syncplayer.storage.MediaFileStore
 import cn.vectory.syncplayer.sync.ImageMetadataExtractor
 import cn.vectory.syncplayer.sync.VideoMetadataExtractor
 import cn.vectory.syncplayer.sync.SyncEngine
+import cn.vectory.syncplayer.sync.SyncStoragePort
 import cn.vectory.syncplayer.sync.syncErrorMessage
 import cn.vectory.syncplayer.ui.util.isImageFile
 import cn.vectory.syncplayer.ui.util.isVideoFile
@@ -52,6 +53,8 @@ class MetadataRebuildViewModel @Inject constructor(
     private val mediaFileStoreLazy: Lazy<MediaFileStore>,
     private val fileOps: FileOperationsUseCase,
     private val syncEngine: SyncEngine,
+    // 外部 SD v2：经存储端口做卷感知存在性探测（legacy 端口委托内部卷 store）。
+    private val storagePort: SyncStoragePort,
     @ApplicationContext private val context: Context,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
@@ -105,7 +108,9 @@ class MetadataRebuildViewModel @Inject constructor(
 
                         for (record in dbRecords) {
                         // M1: three-way existence — IO error aborts scan (do not fake orphan).
-                        when (val existence = mediaStore.checkExistence(record.id)) {
+                        // 外部 SD v2：经端口按行卷探测；外部卷被拔出 → IO_ERROR → 中止，
+                        // 绝不按"卷不可达推导文件不存在"清理（fail-closed）。
+                        when (val existence = storagePort.checkMediaExistence(record.id)) {
                             is MediaExistence.EXISTS -> {
                                 val incomplete = when {
                                     isVideoFile(record.fileName) -> record.duration == null

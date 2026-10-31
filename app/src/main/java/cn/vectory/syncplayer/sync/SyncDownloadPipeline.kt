@@ -34,6 +34,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -73,11 +74,23 @@ internal class SyncDownloadPipeline(
     private val context: Context,
     private val progressPublisher: SyncProgressPublisher,
     private val deleteExecutor: SyncDeleteExecutor,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    storagePortOverride: SyncStoragePort? = null
 ) {
 
     private val mediaFileStore: MediaFileStore
         get() = mediaFileStoreLazy.get()
+
+    /**
+     * 存储端口（外部 SD v2 任务包 B）：所有卷相关决策（目标卷选择/空间/三阶段写/
+     * CAS 提交/离线卷停派）经由该抽象。默认 legacy 单卷适配（内部卷），A 的双卷
+     * 契约合入后由 Engine/DI 注入真实实现。
+     */
+    internal val storagePort: SyncStoragePort =
+        storagePortOverride ?: LegacySyncStoragePort(mediaFileStoreLazy, videoRepository, ioDispatcher = ioDispatcher)
+
+    /** 按卷空间预约账本（内部卷 3 lane 并发下保证 E9 复检 + 预约总量不超卖）。 */
+    private val volumeReservation = VolumeSpaceReservation()
 
     private val spaceChecker = SyncSpaceChecker()
 
@@ -161,21 +174,46 @@ internal class SyncDownloadPipeline(
         val store = mediaFileStore
 
         val toActuallyDownload = toDownload
-        // 预检逻辑（溢出降级、诊断日志）已迁入 SyncSpaceChecker；此处只处理
-        // 「空间不足」这一需要 repository 副作用的判定分支，Ok 直接放行到逐文件下载。
-        val spaceCheck = spaceChecker.checkSpace(toActuallyDownload, store)
-        if (spaceCheck is SyncSpaceChecker.Result.Insufficient) {
-            DebugLogger.e(TAG, "空间不足，中止同步")
-            // F02: 结构化终态入库（FAILED + 错误码），不再拼文案；文案由展示层映射。
-            syncRelationRepository.updateLastSync(
-                relationId,
-                SyncOutcome(
-                    SyncOutcome.Status.FAILED,
-                    errorCode = SyncErrorCode.INSUFFICIENT_SPACE.name
+        // 外部 SD v2：每轮同步在 storageOperationMutex 内对默认卷做一次快照（Engine
+        // 持锁后调用本方法）。existing 行按其自身 volumeId 选目标——切换默认卷只影响
+        // 新文件；legacy 端口无卷列，全部解析为内部卷（与旧行为等价）。
+        val defaultTarget = storagePort.snapshotDefaultVolume()
+        val actionTargets: List<SyncVolumeTarget> = toActuallyDownload.map { action ->
+            val rel = storagePaths.toLocalRelativePath(relation.localBasePath, action.relativePath)
+            val existingRow = videoRepository.getByRelativePathAndRelationId(rel, relationId)
+            val ref = existingRow?.let { storagePort.resolveRef(it.id) }
+            ref?.let { SyncVolumeTarget(it.volumeId) } ?: defaultTarget
+        }
+        // 空间预检按卷分组（溢出降级、诊断日志在 SyncSpaceChecker）；任何卷
+        // Insufficient/Unavailable 都中止整轮（沿用旧“预检失败即中止”语义，
+        // fail-closed：不允许部分卷放行后中途耗尽）。
+        when (val spaceCheck = spaceChecker.checkSpaceByVolume(toActuallyDownload, actionTargets, storagePort)) {
+            is SyncSpaceChecker.VolumeResult.Insufficient -> {
+                DebugLogger.e(TAG, "空间不足(volume 索引=${spaceCheck.volumeIndex})，中止同步")
+                // F02: 结构化终态入库（FAILED + 错误码），不再拼文案；文案由展示层映射。
+                syncRelationRepository.updateLastSync(
+                    relationId,
+                    SyncOutcome(
+                        SyncOutcome.Status.FAILED,
+                        errorCode = SyncErrorCode.INSUFFICIENT_SPACE.name
+                    )
                 )
-            )
-            progressPublisher.value = SyncProgress(isRunning = false, phase = SyncPhase.FAILED, relationId = relationId, relationName = name, localBasePath = basePath)
-            return false
+                progressPublisher.value = SyncProgress(isRunning = false, phase = SyncPhase.FAILED, relationId = relationId, relationName = name, localBasePath = basePath)
+                return false
+            }
+            is SyncSpaceChecker.VolumeResult.Unavailable -> {
+                DebugLogger.e(TAG, "卷不可用，中止同步")
+                syncRelationRepository.updateLastSync(
+                    relationId,
+                    SyncOutcome(
+                        SyncOutcome.Status.FAILED,
+                        errorCode = spaceCheck.code.name
+                    )
+                )
+                progressPublisher.value = SyncProgress(isRunning = false, phase = SyncPhase.FAILED, relationId = relationId, relationName = name, localBasePath = basePath)
+                return false
+            }
+            is SyncSpaceChecker.VolumeResult.Ok -> Unit
         }
 
         val totalActions = toDownload.size + toDelete.size
@@ -203,24 +241,30 @@ internal class SyncDownloadPipeline(
             if (toDownload.isNotEmpty()) {
 
                 if (toActuallyDownload.isNotEmpty()) {
-                    // AND-010（通道级客户端复用）：W = maxConcurrency 个长驻 lane 各持一个 client，
-                    // 从无界 Channel 消费 action。旧实现每个 action 新建 client（create+connect+close），
-                    // SFTP 是完整 SSH 握手、SMB 是会话协商，大库同步时连接建立成本与传输本身同量级。
-                    // lane 内 client 跨 action 复用；E5 重试内的 disconnect+connect 重连语义不变；
-                    // 某 action 失败后该 lane 丢弃 client（可能已损坏），下一个 action 重新建连。
-                    // 并发度由 lane 数量约束（原 Semaphore 不再需要）。
-                    val actionChannel = Channel<SyncAction>(Channel.UNLIMITED)
+                    // AND-010（通道级客户端复用）：lane 各持一个 client，从无界 Channel 消费
+                    // action，lane 内 client 跨 action 复用；E5 重试内的 disconnect+connect
+                    // 重连语义不变；某 action 失败后该 lane 丢弃 client（可能已损坏）。
+                    // 外部 SD v2：整卷 offline 停派登记簿——某卷判 STORAGE_UNAVAILABLE 后，
+                    // 该卷剩余 action 不再派发（不建连、不重试风暴），直接计失败。
+                    val offlineVolumes: MutableSet<String> = ConcurrentHashMap.newKeySet()
+                    // 外部 SD v2：按目标卷分组，组间顺序执行；外部卷写 lane=1（慢卡/加密流
+                    // 串行受控），内部卷 lane=MAX_CONCURRENCY。
+                    val byVolume: Map<String, List<Int>> =
+                        toActuallyDownload.indices.groupBy { actionTargets[it].volumeId }
+                    for ((volumeId, volumeIndices) in byVolume) {
+                    val lanes = if (storagePort.isExternalVolume(volumeId)) 1 else maxConcurrency
+                    val actionChannel = Channel<Pair<SyncAction, SyncVolumeTarget>>(Channel.UNLIMITED)
                     coroutineScope {
                         val workerScope = this
                         launch {
-                            for (action in toActuallyDownload) actionChannel.send(action)
+                            for (i in volumeIndices) actionChannel.send(toActuallyDownload[i] to actionTargets[i])
                             actionChannel.close()
                         }
-                        repeat(maxConcurrency) {
+                        repeat(lanes) {
                             launch(ioDispatcher) {
                                 var laneClient: RemoteFileClient? = null
                                 try {
-                                    for (action in actionChannel) {
+                                    for ((action, target) in actionChannel) {
                                         var client = laneClient
                                         // BUG-007：声明提升至 per-action try 之外——attempt 级清理与
                                         // 外层 CE 补偿 catch（见下）均需读取 existing/assignedId；
@@ -235,9 +279,14 @@ internal class SyncDownloadPipeline(
                                         var placeholderEntity: VideoItemEntity? = null
                                         var assignedId = 0L
                                         var uncleanFinalizedId = 0L
+                                        // 外部 SD v2：本 action 的按卷空间预约量（finally 释放）。
+                                        var reservedBytes = 0L
+                                        // 外部 SD v2：当前写 attempt（外部卷 tmp/final 路径含
+                                        // generation，清理与 CAS 提交都需要它；null = 尚未创建）。
+                                        var currentAttempt: SyncWriteAttempt? = null
 
                                         /** BUG-007 唯一清理入口（attempt 级 catch 与外层 CE 补偿共用）。 */
-                                        suspend fun cleanUpAttempt(phase: AttemptPhase, id: Long) {
+                                        suspend fun cleanUpAttempt(phase: AttemptPhase, id: Long, target: SyncVolumeTarget) {
                                             suspend fun guarded(op: suspend () -> Unit) {
                                                 // NonCancellable 语境下框架不交付 CE；此兜底只防自定义实现/mock
                                                 // 违约抛 CE。吞并理由「原异常优先」：清理中的任何异常都不得替换
@@ -248,7 +297,10 @@ internal class SyncDownloadPipeline(
                                                 AttemptPhase.NOT_FINALIZED -> {
                                                     // 本尝试从未进入 finalize ⇒ tmp 可能从未创建或已自删，
                                                     // 旧 final 必然完好——绝不探测、绝不删 final。
-                                                    guarded { store.cancel(id) }
+                                                    // attempt 未创建（预留失败/建连失败）⇒ 磁盘不可能有 tmp。
+                                                    currentAttempt?.let { attempt ->
+                                                        guarded { storagePort.cancel(attempt) }
+                                                    }
                                                     if (existing == null) {
                                                         guarded { videoRepository.deleteById(id) }
                                                         assignedId = 0L
@@ -259,14 +311,17 @@ internal class SyncDownloadPipeline(
                                                     // 但 NonCancellable 不约束自定义实现/mock 的行为——探测抛出的任何
                                                     // 异常（含 CE）按「原异常优先」收敛 UNKNOWN 后继续清理。
                                                     val probe = try {
-                                                        store.probePendingTmp(id)
+                                                        currentAttempt?.let { storagePort.probePendingTmp(it) }
+                                                            ?: TmpProbeState.ABSENT
                                                     } catch (_: Exception) {
                                                         TmpProbeState.UNKNOWN
                                                     }
                                                     when (probe) {
                                                         TmpProbeState.PRESENT -> {
                                                             // tmp 未被消费 ⇒ rename 未发生，旧 final 完好
-                                                            guarded { store.cancel(id) }
+                                                            currentAttempt?.let { attempt ->
+                                                                guarded { storagePort.cancel(attempt) }
+                                                            }
                                                             if (existing == null) {
                                                                 guarded { videoRepository.deleteById(id) }
                                                                 assignedId = 0L
@@ -275,7 +330,9 @@ internal class SyncDownloadPipeline(
                                                         TmpProbeState.ABSENT -> {
                                                             // 进入过 finalize 且 tmp 严格确认缺失 ⇒ 被 rename 消费
                                                             // （前提链见计划 §2.1）——与 COMMITTED 分支同构
-                                                            guarded { store.delete(id) }
+                                                            currentAttempt?.let { attempt ->
+                                                                guarded { storagePort.deleteFinal(attempt) }
+                                                            }
                                                             guarded { videoRepository.deleteById(id) }
                                                             assignedId = 0L
                                                             existing = null
@@ -289,7 +346,9 @@ internal class SyncDownloadPipeline(
                                                     }
                                                 }
                                                 AttemptPhase.COMMITTED -> {
-                                                    guarded { store.delete(id) }
+                                                    currentAttempt?.let { attempt ->
+                                                        guarded { storagePort.deleteFinal(attempt) }
+                                                    }
                                                     // 无条件：旧行指向已覆盖文件；占位行同理（幽灵文件防线）
                                                     guarded { videoRepository.deleteById(id) }
                                                     assignedId = 0L
@@ -304,6 +363,25 @@ internal class SyncDownloadPipeline(
                                             val fileName = action.relativePath.substringAfterLast("/")
                                             // 复审红线：日志不拼 fileName/path——只留字节数。
                                             DebugLogger.d(TAG, "下载开始: ${action.fileSize} bytes")
+
+                                            // 外部 SD v2：整卷 offline 停派——该卷已判
+                                            // STORAGE_UNAVAILABLE 时不再建连/派发，直接计一次失败。
+                                            if (target.volumeId in offlineVolumes) {
+                                                throw SyncException(
+                                                    SyncErrorCode.STORAGE_UNAVAILABLE,
+                                                    SyncOperation.DOWNLOAD,
+                                                    path = action.relativePath
+                                                )
+                                            }
+
+                                            // 外部 SD v2：按卷空间预约——3 lane 并发时防止各 lane
+                                            // 的 E9 复检都通过但合计超卖（检查-生效竞态）。
+                                            when (val res = volumeReservation.tryReserve(target.volumeId, action.fileSize, storagePort)) {
+                                                is VolumeSpaceReservation.Result.Reserved -> reservedBytes = action.fileSize
+                                                is VolumeSpaceReservation.Result.Denied -> throw res.toSyncException(
+                                                    SyncOperation.DOWNLOAD, path = action.relativePath
+                                                )
+                                            }
 
                                             if (client == null) {
                                                 client = getClient(source.protocol)
@@ -324,6 +402,9 @@ internal class SyncDownloadPipeline(
                                             )
 
                                             existing = videoRepository.getByRelativePathAndRelationId(localRelPath, relationId)
+                                            // 外部 SD v2：existing 行的存储引用——其 volumeId 决定目标卷
+                                            //（预检阶段已定，此处取 generation 供 CAS 提交）。
+                                            val existingRef = existing?.let { storagePort.resolveRef(it.id) }
                                             var downloadSuccess = false
                                             var attempts = 0
                                             assignedId = existing?.id ?: 0L
@@ -341,19 +422,30 @@ internal class SyncDownloadPipeline(
                                                     } catch (_: Exception) {}
                                                     connectWithRetry(client, source, relation.remotePath)
                                                 }
-                                                // E9: 每个文件下载前复检可用空间（3 并发下载途中磁盘可能被耗尽）。
-                                                // 不足时直接抛出，由外层 catch 计 failedDownloadCount 并跳到下一个文件，
-                                                // 不进入 3 次重试（空间不足不会在几秒内自愈，重试无意义）。
+                                                // E9: 每个文件下载前按目标卷复检可用空间（3 并发下载途中磁盘
+                                                // 可能被耗尽）。卷不可用 → 结构化 STORAGE_UNAVAILABLE（不重试、
+                                                // 计入整卷 offline 停派）；不足时直接抛出，由外层 catch 计
+                                                // failedDownloadCount 并跳到下一个文件，不进入 3 次重试
+                                                //（空间不足不会在几秒内自愈，重试无意义）。
                                                 val requiredBytes = action.fileSize
-                                                val spaceNow = store.usableSpace()
-                                                if (spaceNow in 0 until requiredBytes) {
-                                                    throw SyncException(
-                                                        SyncErrorCode.INSUFFICIENT_SPACE,
+                                                when (val spaceOutcome = storagePort.usableSpace(target)) {
+                                                    is SyncSpaceOutcome.Unavailable -> throw SyncException(
+                                                        spaceOutcome.code,
                                                         SyncOperation.DOWNLOAD,
-                                                        path = action.relativePath,
-                                                        expectedBytes = requiredBytes,
-                                                        availableBytes = spaceNow
+                                                        path = action.relativePath
                                                     )
+                                                    is SyncSpaceOutcome.Available -> {
+                                                        val spaceNow = spaceOutcome.usableBytes
+                                                        if (spaceNow in 0 until requiredBytes) {
+                                                            throw SyncException(
+                                                                SyncErrorCode.INSUFFICIENT_SPACE,
+                                                                SyncOperation.DOWNLOAD,
+                                                                path = action.relativePath,
+                                                                expectedBytes = requiredBytes,
+                                                                availableBytes = spaceNow
+                                                            )
+                                                        }
+                                                    }
                                                 }
                                                 // 占位行仅在 existing==null 首次创建（最小元数据：fileSize=0、remoteModifiedTime=null），
                                                 // 进程崩溃后 dryRun 必然重下（size/mtime 不匹配远端）。
@@ -366,7 +458,13 @@ internal class SyncDownloadPipeline(
                                                         fileName = fileName,
                                                         fileSize = 0,
                                                         remoteModifiedTime = null,
-                                                        dateSynced = System.currentTimeMillis()
+                                                        dateSynced = System.currentTimeMillis(),
+                                                        // 外部 SD v2：新行先 PENDING（Provider 不公开），
+                                                        // 仅 CAS 列提交成功才转 READY；目标卷/格式随行落地，
+                                                        // 崩溃恢复由 dryRun 的 size/mtime 不匹配整行重下。
+                                                        volumeId = target.volumeId,
+                                                        storageFormat = if (storagePort.isExternalVolume(target.volumeId)) "CTR_V2" else "PLAIN",
+                                                        storageState = "PENDING",
                                                     )
                                                     assignedId = videoRepository.upsert(placeholder)
                                                     // A1-02：占位快照必须携带真实分配主键。cleanUpAttempt 在行删除后
@@ -378,7 +476,11 @@ internal class SyncDownloadPipeline(
                                                 // 明文长度 = 远端源文件大小 = action.fileSize，sink close 时校验写入长度。
                                                 var sink: java.io.OutputStream? = null
                                                 try {
-                                                    sink = store.openWriteSink(assignedId, action.fileSize)
+                                                    // 外部 SD v2：写尝试经端口创建（携带目标卷），sink 边界由
+                                                    // 端口实现保证把底层 IO/加密异常转换为 SyncException。
+                                                    val writeAttempt = storagePort.newAttempt(assignedId, target, action.fileSize)
+                                                    currentAttempt = writeAttempt
+                                                    sink = storagePort.openWriteSink(writeAttempt)
                                                     // A1-1: downloadTo 返回 true 只是传输层收尾——不得据此退出
                                                     // 重试循环。sink.close() 的长度校验（截断→IOException）、
                                                     // finalize、verifyReadable 全部成功后才置 downloadSuccess；
@@ -408,8 +510,12 @@ internal class SyncDownloadPipeline(
                                                     // 已完成但未确认）。CE/异常保持 FINALIZE_UNCERTAIN（由探测收束）。
                                                     attemptPhase = AttemptPhase.FINALIZE_UNCERTAIN
                                                     val finalizedOk = try {
-                                                        store.finalize(assignedId)
+                                                        storagePort.finalize(writeAttempt)
                                                     } catch (e: CancellationException) {
+                                                        throw e
+                                                    } catch (e: SyncException) {
+                                                        // 外部 SD v2（设计 §接口先行）：finalize 边界不得吞掉
+                                                        // 端口已分类的结构化存储异常（如 STORAGE_IO_TRANSIENT）。
                                                         throw e
                                                     } catch (e: Exception) {
                                                         throw SyncException(
@@ -434,7 +540,7 @@ internal class SyncDownloadPipeline(
                                                 // STORAGE_ERROR，由 attempt 级 generic catch 经
                                                 // cleanUpAttempt(COMMITTED) 单点回滚（删 final + 删 DB 行，恰一次）。
                                                 try {
-                                                    store.verifyReadable(assignedId, action.fileSize)
+                                                    storagePort.verifyReadable(writeAttempt)
                                                 } catch (e: CancellationException) {
                                                     throw e
                                                 } catch (e: Exception) {
@@ -445,11 +551,11 @@ internal class SyncDownloadPipeline(
                                                     downloadSuccess = true
                                                 } catch (e: CancellationException) {
                                                     try { sink?.close() } catch (_: Exception) {}
-                                                    withContext(NonCancellable) { cleanUpAttempt(attemptPhase, assignedId) }
+                                                    withContext(NonCancellable) { cleanUpAttempt(attemptPhase, assignedId, target) }
                                                     throw e
                                                 } catch (e: Exception) {
                                                     try { sink?.close() } catch (_: Exception) {}
-                                                    withContext(NonCancellable) { cleanUpAttempt(attemptPhase, assignedId) }
+                                                    withContext(NonCancellable) { cleanUpAttempt(attemptPhase, assignedId, target) }
                                                     // P1-2: 终态错误（AUTH/ACCESS/PATH_NOT_FOUND/SPACE/FINALIZE/...）
                                                     // 不会在几秒内自愈，重试纯属浪费延迟并放大认证/下载压力，立即抛出，
                                                     // 由外层 catch 计一次 failedDownloadCount。仅瞬态错误继续重试。
@@ -477,15 +583,22 @@ internal class SyncDownloadPipeline(
                                             // 0 行判定后的 STORAGE_ERROR 在保护区外抛出（普通失败路径交付）。
                                             var commitFailed = false
                                             withContext(NonCancellable) {
-                                                val committedRows = videoRepository.updateSyncMetadata(
-                                                    id = assignedId,
+                                                // 外部 SD v2：CAS 列提交经存储端口——expectedOldGeneration
+                                                // 非 null 时按世代比较，0 行受影响即失败（不复活并发删除行）。
+                                                // legacy 端口委托 videoRepository.updateSyncMetadata（无世代列）。
+                                                val committedRows = storagePort.updateSyncStorageMetadata(
+                                                    attempt = currentAttempt ?: throw SyncException(
+                                                        SyncErrorCode.STORAGE_ERROR,
+                                                        SyncOperation.DOWNLOAD
+                                                    ),
+                                                    expectedOldGeneration = existingRef?.generation,
                                                     fileSize = action.fileSize,
                                                     remoteModifiedTime = action.remoteModifiedTime,
                                                     dateSynced = System.currentTimeMillis()
                                                 )
                                                 if (committedRows == 0) {
                                                     // 孤儿密文回滚走同一清理入口（cleanUpAttempt 末尾清零 ⇒ 恰一次）
-                                                    cleanUpAttempt(AttemptPhase.COMMITTED, assignedId)
+                                                    cleanUpAttempt(AttemptPhase.COMMITTED, assignedId, target)
                                                     commitFailed = true
                                                 } else {
                                                     // A1-3 成功侧清零点：与 DB 副作用同处一个保护区——
@@ -546,7 +659,7 @@ internal class SyncDownloadPipeline(
                                             // attempt 级已清理过则登记簿为 0 → 跳过（恰一次回滚）。
                                             val id = uncleanFinalizedId
                                             if (id != 0L) {
-                                                withContext(NonCancellable) { cleanUpAttempt(AttemptPhase.COMMITTED, id) }
+                                                withContext(NonCancellable) { cleanUpAttempt(AttemptPhase.COMMITTED, id, target) }
                                             }
                                             workerScope.cancel(e)
                                             throw e
@@ -559,7 +672,12 @@ internal class SyncDownloadPipeline(
                                             // 吞并——原异常优先，继续走下方失败计费；CE 不经此分支（先传播）。
                                             val id = uncleanFinalizedId
                                             if (id != 0L) {
-                                                withContext(NonCancellable) { cleanUpAttempt(AttemptPhase.COMMITTED, id) }
+                                                withContext(NonCancellable) { cleanUpAttempt(AttemptPhase.COMMITTED, id, target) }
+                                            }
+                                            // 外部 SD v2：整卷 offline 停派——首个 STORAGE_UNAVAILABLE
+                                            // 把该卷登记为 offline，剩余 action 不再派发。
+                                            if ((e as? SyncException)?.code == SyncErrorCode.STORAGE_UNAVAILABLE) {
+                                                offlineVolumes.add(target.volumeId)
                                             }
                                             val localRelPath = storagePaths.toLocalRelativePath(relation.localBasePath, action.relativePath)
                                             progressPublisher.removeActiveDownload(action.relativePath)
@@ -584,6 +702,15 @@ internal class SyncDownloadPipeline(
                                             } catch (_: Exception) {
                                             }
                                             laneClient = null
+                                        } finally {
+                                            // 外部 SD v2：无论成败/取消，释放本 action 的按卷空间预约。
+                                            if (reservedBytes > 0) {
+                                                try {
+                                                    volumeReservation.release(target.volumeId, reservedBytes)
+                                                } finally {
+                                                    reservedBytes = 0L
+                                                }
+                                            }
                                         }
                                     }
                                 } finally {
@@ -603,6 +730,7 @@ internal class SyncDownloadPipeline(
                             }
                         }
                     }
+                    } // for (volumeId, volumeIndices) in byVolume
                 }
             }
 
@@ -616,6 +744,21 @@ internal class SyncDownloadPipeline(
 
                 val videoItem = videoRepository.getByRelativePathAndRelationId(action.relativePath, relationId)
                 if (videoItem != null) {
+                    // 外部 SD v2（E8 关联红线）：行所在卷不可用时绝不删除——fail-closed
+                    // 保留 DB 行与文件，计一次失败；绝不按「缺卡 ⇒ 文件不存在」推导删除。
+                    val deleteRef = storagePort.resolveRef(videoItem.id)
+                    val deleteTarget = deleteRef?.let { SyncVolumeTarget(it.volumeId) } ?: SyncVolumeTarget(VOLUME_ID_INTERNAL)
+                    if (!storagePort.isVolumeAvailable(deleteTarget.volumeId)) {
+                        failedDeleteCount.incrementAndGet()
+                        syncLogRepository.log(
+                            action = "DELETE_LOCAL",
+                            relativePath = action.relativePath,
+                            status = "FAILED",
+                            dryRun = false,
+                            fileSize = action.fileSize,
+                            errorMessage = context.getString(R.string.sync_error_storage_unavailable)
+                        )
+                    } else {
                     val mediaGone = deleteExecutor.deleteStoreMedia(store, videoItem.id)
                     val thumbGone = deleteExecutor.deleteStoreThumb(store, videoItem.id)
                     if (mediaGone && thumbGone) {
@@ -644,6 +787,7 @@ internal class SyncDownloadPipeline(
                             )
                         )
                     }
+                    } // else — 卷可达，正常删除
                 } else {
                     // No DB row — nothing local to clean; treat as already gone.
                     syncLogRepository.log(
@@ -755,12 +899,17 @@ internal class SyncDownloadPipeline(
         // P1-2: 单文件下载重试白名单。只有真正「可能自愈」的瞬态错误才进入 3 次重试；
         // 终态错误（认证失败、权限拒绝、远端文件不存在、空间不足、finalize 失败、扫描不完整等）
         // 立即抛出，避免无意义延迟、重复认证压力与重复下载。
+        // 外部 SD v2：仅两瞬态存储码入白名单——STORAGE_IO_TRANSIENT（可恢复 EIO 抖动）与
+        // KEY_UNAVAILABLE（keystore 初始化竞态可自愈）；STORAGE_UNAVAILABLE 为终态
+        //（缺卡几秒内不会自愈，重试只放大压力），走整卷 offline 停派。
         private val RETRYABLE_CODES: Set<SyncErrorCode> = setOf(
             SyncErrorCode.TIMEOUT,
             SyncErrorCode.CONNECTION_REFUSED,
             SyncErrorCode.UNKNOWN_HOST,
             SyncErrorCode.NETWORK_UNAVAILABLE,
             SyncErrorCode.DOWNLOAD_FAILED,
+            SyncErrorCode.STORAGE_IO_TRANSIENT,
+            SyncErrorCode.KEY_UNAVAILABLE,
             SyncErrorCode.UNKNOWN
         )
     }

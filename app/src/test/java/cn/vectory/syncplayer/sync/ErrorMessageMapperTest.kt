@@ -228,4 +228,27 @@ class ErrorMessageMapperTest {
             )
         )
     }
+
+    // ---------------------------------------------------------------------------
+    // 外部 SD v2（任务包 B）：三个新存储错误码必须各自映射到独立资源 id
+//（断言资源 id，不断言文案）。
+// ---------------------------------------------------------------------------
+
+@org.junit.Test
+fun `new storage error codes map to distinct string resources`() {
+    io.mockk.every { context.getString(any<Int>()) } returns ""
+
+    syncErrorMessage(
+        SyncException(SyncErrorCode.STORAGE_UNAVAILABLE, SyncOperation.DOWNLOAD), context, host
+    )
+    io.mockk.verify { context.getString(cn.vectory.syncplayer.R.string.sync_error_storage_unavailable) }
+    syncErrorMessage(
+        SyncException(SyncErrorCode.STORAGE_IO_TRANSIENT, SyncOperation.DOWNLOAD), context, host
+    )
+    io.mockk.verify { context.getString(cn.vectory.syncplayer.R.string.sync_error_storage_io_transient) }
+    syncErrorMessage(
+        SyncException(SyncErrorCode.KEY_UNAVAILABLE, SyncOperation.DOWNLOAD), context, host
+    )
+    io.mockk.verify { context.getString(cn.vectory.syncplayer.R.string.sync_error_key_unavailable) }
+}
 }

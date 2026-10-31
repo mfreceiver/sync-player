@@ -25,6 +25,12 @@ enum class SyncErrorCode {
     STORAGE_ERROR,
     THUMBNAIL_ERROR,
     DATABASE_ERROR,
+    /** 目标卷不可用（外卡拔出等）：终态，不进入重试白名单；整卷 offline 停止派发。 */
+    STORAGE_UNAVAILABLE,
+    /** 可恢复的存储 IO 抖动（可重试 EIO）：瞬态，进入重试白名单。 */
+    STORAGE_IO_TRANSIENT,
+    /** 密钥不可用（keystore 未就绪/被锁）：瞬态（初始化竞态可自愈），进入重试白名单。 */
+    KEY_UNAVAILABLE,
     UNKNOWN
 }
 

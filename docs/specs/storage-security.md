@@ -35,8 +35,13 @@ filesDir/
 
 - **升级孤儿清扫**（`SyncPlayerApp` 启动，`storageOperationMutex` 下）：marker
   `.storage_v4_purged` 保证每卷只执行一次；清扫幂等，marker 写失败无害。
-- **重置存储**（存储管理页）：`deleteAllMedia()` 删数字桶 + thumbs（只动自己布局内
-  的目录），随后清空三张业务表。
+- **重置存储**（存储管理页，外部 SD v2）：任一持有数据的卷当前不可达（含卷枚举读失败）
+  → **拒绝全库 reset**（fail-closed，避免误判"外部卡数据不存在"）；可达时按卷
+  `deleteAllOwned(volumeId)`（内部卷=数字桶+thumbs，外部卷=递归删 dataset 根），随后清空
+  三张业务表。
+- **默认写入卷 / 外部卡登记**（外部 SD v2，任务包 B）：默认卷与已登记外部卡 UUID 持久化于
+  `UserPreferencesRepository`（DataStore）；登记/注销为设置页显式用户操作（能力探测通过才
+  登记成功）；启动时按持久化 UUID 重注册并恢复默认卷（不可达时回退内部卷并持久化收敛）。
 
 ## ContentProvider
 

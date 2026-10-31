@@ -353,6 +353,22 @@
     <string name="sync_error_unknown">操作失败，请重试</string>
     <string name="sync_error_insufficient_space">可用空间不足：需要 %1$s，剩余 %2$s</string>
     <string name="sync_error_local_delete_incomplete">本地删除未完成 mediaGone=%1$b thumbGone=%2$b</string>
+    <string name="sync_error_storage_unavailable">存储位置当前不可用，请检查存储卡后重试</string>
+    <string name="sync_error_storage_io_transient">存储读写暂时失败，正在自动重试</string>
+    <string name="sync_error_key_unavailable">加密密钥暂不可用，正在自动重试</string>
+
+    <!-- Storage management: dual-volume (external SD encrypted storage v2) -->
+    <string name="storage_default_volume_section">默认存储位置</string>
+    <string name="storage_volume_internal">本机存储</string>
+    <string name="storage_volume_external">外部存储卡</string>
+    <string name="storage_volume_unavailable">（不可用）</string>
+    <string name="storage_volume_free_space">剩余空间 %1$s</string>
+    <string name="storage_volume_set_default">设为默认</string>
+    <string name="storage_volume_current_default">当前默认</string>
+    <string name="storage_volume_register">登记外部存储卡</string>
+    <string name="storage_volume_unregister">注销</string>
+    <string name="storage_reset_volume_unavailable">有存储位置当前不可用，无法安全重置；请插入所有存储卡后重试</string>
+    <string name="storage_error_generic">操作失败，请重试</string>
 
     <!-- Sync Notification -->
     <string name="sync_notif_channel_name">文件同步</string>

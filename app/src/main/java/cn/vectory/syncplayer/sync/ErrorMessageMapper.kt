@@ -102,6 +102,12 @@ fun syncErrorMessage(e: Throwable, context: Context, host: String? = null): Stri
             context.getString(R.string.sync_error_thumbnail_error)
         SyncErrorCode.DATABASE_ERROR ->
             context.getString(R.string.sync_error_database_error)
+        SyncErrorCode.STORAGE_UNAVAILABLE ->
+            context.getString(R.string.sync_error_storage_unavailable)
+        SyncErrorCode.STORAGE_IO_TRANSIENT ->
+            context.getString(R.string.sync_error_storage_io_transient)
+        SyncErrorCode.KEY_UNAVAILABLE ->
+            context.getString(R.string.sync_error_key_unavailable)
         SyncErrorCode.UNKNOWN ->
             context.getString(R.string.sync_error_unknown)
     }
