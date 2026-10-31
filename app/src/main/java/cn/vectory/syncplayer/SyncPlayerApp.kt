@@ -3,6 +3,7 @@ package cn.vectory.syncplayer
 import android.app.Application
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
+import cn.vectory.syncplayer.di.StorageBootstrap
 import cn.vectory.syncplayer.security.AppLockManager
 import cn.vectory.syncplayer.storage.MediaFileStore
 import cn.vectory.syncplayer.sync.SyncEngine
@@ -27,6 +28,7 @@ class SyncPlayerApp : Application() {
      */
     @Inject lateinit var mediaFileStore: Provider<MediaFileStore>
     @Inject lateinit var syncEngine: SyncEngine
+    @Inject lateinit var storageBootstrap: StorageBootstrap
 
     /**
      * AND-086: [MasterKey]/[EncryptedSharedPreferences] first construction does
@@ -41,7 +43,25 @@ class SyncPlayerApp : Application() {
         super.onCreate()
         registerX25519Aliases()
         appLockManager.register()
+        initStorage()
         purgeUpgradeOrphans()
+    }
+
+    /**
+     * v2 启动存储初始化：确保 storage_dataset 单行存在（datasetId 是外部卷路径成分，
+     * 缺行时外部写入 fail-closed）。失败不影响启动——下次启动再试；期间外部下载
+     * 会因 datasetIdSource 抛错而失败（安全方向）。
+     */
+    private fun initStorage() {
+        appScope.launch {
+            try {
+                storageBootstrap.ensureDatasetId()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "storage bootstrap skipped: ${e.javaClass.simpleName}")
+            }
+        }
     }
 
     /**

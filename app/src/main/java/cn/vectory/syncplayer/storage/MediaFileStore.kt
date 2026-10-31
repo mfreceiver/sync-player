@@ -1,7 +1,15 @@
 package cn.vectory.syncplayer.storage
 
 import androidx.annotation.VisibleForTesting
+import cn.vectory.syncplayer.crypto.ChunkedEncryptSink
+import cn.vectory.syncplayer.crypto.CryptoScheme
+import cn.vectory.syncplayer.crypto.MediaCryptoMaster
+import cn.vectory.syncplayer.crypto.MediaKeyUnavailableException
 import cn.vectory.syncplayer.di.IoDispatcher
+import cn.vectory.syncplayer.storage.volume.FileStat
+import cn.vectory.syncplayer.storage.volume.MediaVolume
+import cn.vectory.syncplayer.storage.volume.SeekableReadHandle
+import cn.vectory.syncplayer.storage.volume.VolumeResolver
 import cn.vectory.syncplayer.sync.SyncErrorCode
 import cn.vectory.syncplayer.sync.SyncException
 import cn.vectory.syncplayer.sync.SyncOperation
@@ -12,6 +20,8 @@ import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
 import java.nio.file.attribute.BasicFileAttributes
+import java.util.UUID
+import javax.crypto.SecretKey
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -46,6 +56,12 @@ enum class TmpProbeState { PRESENT, ABSENT, UNKNOWN }
 class MediaFileStore @Inject constructor(
     private val storagePaths: StoragePaths,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
+    /** v2 双卷解析器；null（纯测试构造）时仅 legacy/内部路径可用。 */
+    private val volumeResolver: VolumeResolver? = null,
+    /** v2 媒体主密钥；null 时 CTR_V2 路径抛 IllegalStateException（fail-closed）。 */
+    private val cryptoMaster: MediaCryptoMaster? = null,
+    /** v2 datasetId 源（storage_dataset 单行）；null 时外部写入路径不可用。 */
+    private val datasetIdSource: DatasetIdSource? = null,
 ) {
     private val root: File get() = storagePaths.userdataRoot
 
@@ -217,6 +233,312 @@ class MediaFileStore @Inject constructor(
         }
     }
 
+    // ---- v2 双卷（StorageRef/WriteAttempt；冻结契约见 StorageContracts）----
+
+    private fun resolver(): VolumeResolver =
+        volumeResolver ?: throw IllegalStateException("volume resolver not configured")
+
+    private fun master(): MediaCryptoMaster =
+        cryptoMaster ?: throw IllegalStateException("crypto master not configured")
+
+    private suspend fun datasetId(): String =
+        datasetIdSource?.invoke() ?: throw StorageAccessFailure(StorageAccessFailure.Reason.IO_TRANSIENT)
+
+    /** 存储 IO 统一包装：KEY_UNAVAILABLE / VOLUME_UNAVAILABLE / IO_TRANSIENT 结构化上抛。 */
+    private inline fun <T> storageIo(block: () -> T): T = try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: StorageAccessFailure) {
+        throw e
+    } catch (e: MediaKeyUnavailableException) {
+        // TODO(B): 映射新 SyncErrorCode.KEY_UNAVAILABLE；当前仅结构化异常，不改 SyncException.kt
+        throw StorageAccessFailure(StorageAccessFailure.Reason.KEY_UNAVAILABLE, e)
+    } catch (e: IllegalStateException) {
+        throw e
+    } catch (e: IOException) {
+        // TODO(B): 映射新 SyncErrorCode.STORAGE_IO_TRANSIENT
+        throw StorageAccessFailure(StorageAccessFailure.Reason.IO_TRANSIENT, e)
+    } catch (e: Exception) {
+        throw StorageAccessFailure(StorageAccessFailure.Reason.IO_TRANSIENT, e)
+    }
+
+    private fun requireVolume(volumeId: String): MediaVolume =
+        resolver().resolve(volumeId)
+            ?: throw StorageAccessFailure(StorageAccessFailure.Reason.VOLUME_UNAVAILABLE)
+
+    private fun mediaRel(ref: StorageRef): String = when (ref.format) {
+        StorageFormat.PLAIN -> MediaPaths.mediaRelPath(ref.id)
+        StorageFormat.CTR_V2 -> MediaPaths.externalMediaRelPath(
+            ref.datasetId!!, ref.id, ref.generation!!
+        )
+    }
+
+    private fun thumbRel(ref: StorageRef): String = when (ref.format) {
+        StorageFormat.PLAIN -> MediaPaths.thumbRelPath(ref.id)
+        StorageFormat.CTR_V2 -> MediaPaths.externalThumbRelPath(
+            ref.datasetId!!, ref.id, ref.generation!!
+        )
+    }
+
+    private fun tmpRel(rel: String): String = rel + MediaPaths.TMP_SUFFIX
+
+    /** 写目标选择：existing 行固定自身卷（不随默认切换）；新行用注册表默认快照。 */
+    fun selectWriteTarget(existing: StorageRef?): VolumeTarget =
+        VolumeTarget(existing?.volumeId ?: resolver().defaultWriteTarget().volumeId)
+
+    /** 建 attempt：external 每 attempt 新 generation+IV（失败全量重下，不续写）。 */
+    suspend fun newAttempt(id: Long, target: VolumeTarget, expectedLength: Long): WriteAttempt =
+        withContext(ioDispatcher) {
+            require(expectedLength >= 0) { "expectedLength must be non-negative" }
+            val ref = if (target.volumeId == VolumeIds.INTERNAL) {
+                StorageRef.internal(id, expectedLength)
+            } else {
+                StorageRef(
+                    id = id,
+                    volumeId = target.volumeId,
+                    datasetId = datasetId(),
+                    generation = CryptoScheme.newGeneration(),
+                    format = StorageFormat.CTR_V2,
+                    iv = CryptoScheme.newIv(),
+                    plainSize = expectedLength
+                )
+            }
+            WriteAttempt(ref, UUID.randomUUID().toString())
+        }
+
+    /**
+     * attempt 下载 sink（tmp）。internal 走明文长度校验；external 为 CTR 有界缓冲
+     * 加密（ChunkedEncryptSink，close 即长度校验）。物理密文长度核验由 [finalizeRef] 做。
+     */
+    suspend fun openWriteSink(attempt: WriteAttempt): OutputStream = withContext(ioDispatcher) {
+        storageIo {
+            val volume = requireVolume(attempt.ref.volumeId)
+            val tmp = tmpRel(mediaRel(attempt.ref))
+            when (attempt.ref.format) {
+                StorageFormat.PLAIN ->
+                    LengthVerifyingOutputStream(volume.openWrite(tmp), attempt.ref.plainSize)
+                StorageFormat.CTR_V2 ->
+                    ChunkedEncryptSink(
+                        volume.openWrite(tmp),
+                        contentKey(attempt.ref),
+                        attempt.ref.iv!!,
+                        attempt.ref.plainSize
+                    )
+            }
+        }
+    }
+
+    /**
+     * finalize：external 先 O(1) strictStat 校验 tmp 物理密文长度 == plainSize（CTR
+     * 无填充，两值相等），再同卷同目录原子 rename；任何不符返回 false（rename 未发生）。
+     * 卷缺失抛 VOLUME_UNAVAILABLE（拔卡不误判 NOT_FOUND——调用方按存储不可用处理）。
+     */
+    suspend fun finalizeRef(attempt: WriteAttempt): Boolean = withContext(ioDispatcher) {
+        storageIo {
+            val volume = requireVolume(attempt.ref.volumeId)
+            val rel = mediaRel(attempt.ref)
+            when (attempt.ref.format) {
+                StorageFormat.PLAIN -> volume.atomicRename(tmpRel(rel), rel)
+                StorageFormat.CTR_V2 -> {
+                    when (val stat = volume.strictStat(tmpRel(rel))) {
+                        is FileStat.Exists ->
+                            if (stat.size == attempt.ref.plainSize) volume.atomicRename(tmpRel(rel), rel) else false
+                        FileStat.Missing -> false
+                        is FileStat.IoError ->
+                            // TODO(B): 映射新 SyncErrorCode.STORAGE_IO_TRANSIENT
+                            throw StorageAccessFailure(StorageAccessFailure.Reason.IO_TRANSIENT)
+                    }
+                }
+            }
+        }
+    }
+
+    /** 丢弃 tmp（幂等）。 */
+    suspend fun cancelRef(attempt: WriteAttempt) {
+        withContext(ioDispatcher) {
+            try {
+                requireVolume(attempt.ref.volumeId).delete(tmpRel(mediaRel(attempt.ref)))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // 清理尽力而为：tmp 残留无害（下次 attempt 同 id 覆盖或孤儿清扫）。
+            }
+        }
+    }
+
+    /** tmp 三态探测：IoError/卷缺失 ⇒ UNKNOWN（调用方只删行、不删 final）。 */
+    suspend fun probePendingTmp(attempt: WriteAttempt): TmpProbeState =
+        withContext(ioDispatcher) {
+            val volume = try {
+                resolver().resolve(attempt.ref.volumeId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            } ?: return@withContext TmpProbeState.UNKNOWN
+            when (volume.strictStat(tmpRel(mediaRel(attempt.ref)))) {
+                is FileStat.Exists -> TmpProbeState.PRESENT
+                FileStat.Missing -> TmpProbeState.ABSENT
+                is FileStat.IoError -> TmpProbeState.UNKNOWN
+            }
+        }
+
+    /** 随机读句柄（Provider/解析器用）。卷缺失/IO 失败抛 StorageAccessFailure。 */
+    suspend fun openRead(ref: StorageRef): SeekableReadHandle = withContext(ioDispatcher) {
+        storageIo { requireVolume(ref.volumeId).openRead(mediaRel(ref)) }
+    }
+
+    /** attempt 内容 key（HKDF 域隔离；KEY_UNAVAILABLE 结构化失败，绝不静默换钥）。 */
+    fun contentKey(ref: StorageRef): SecretKey {
+        val generation = ref.generation
+            ?: throw StorageAccessFailure(StorageAccessFailure.Reason.INVALID_REF)
+        return CryptoScheme.deriveContentKey(master().masterKey(), generation)
+    }
+
+    /** finalize 后可读性探针：strictStat == Exists(plainSize)（CTR 密文长 == 明文长）。 */
+    suspend fun verifyReadable(ref: StorageRef) {
+        withContext(ioDispatcher) {
+            storageIo {
+                when (val stat = requireVolume(ref.volumeId).strictStat(mediaRel(ref))) {
+                    is FileStat.Exists ->
+                        if (stat.size != ref.plainSize) {
+                            throw StorageAccessFailure(StorageAccessFailure.Reason.IO_TRANSIENT)
+                        }
+                    FileStat.Missing ->
+                        throw StorageAccessFailure(StorageAccessFailure.Reason.VOLUME_UNAVAILABLE)
+                    is FileStat.IoError ->
+                        throw StorageAccessFailure(StorageAccessFailure.Reason.IO_TRANSIENT)
+                }
+            }
+        }
+    }
+
+    /** final 三态探测（ref 版）。 */
+    suspend fun probeFinalized(ref: StorageRef, expectedSize: Long): MediaProbeState =
+        withContext(ioDispatcher) {
+            val volume = try {
+                resolver().resolve(ref.volumeId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            } ?: return@withContext MediaProbeState.IO_ERROR
+            when (val stat = volume.strictStat(mediaRel(ref))) {
+                is FileStat.Exists ->
+                    if (stat.size == expectedSize) MediaProbeState.VALID else MediaProbeState.SIZE_MISMATCH
+                FileStat.Missing -> MediaProbeState.MISSING
+                is FileStat.IoError -> MediaProbeState.IO_ERROR
+            }
+        }
+
+    /** 删除正文（幂等语义沿用 volume.delete）。 */
+    suspend fun deleteRef(ref: StorageRef): Boolean = withContext(ioDispatcher) {
+        try {
+            requireVolume(ref.volumeId).delete(mediaRel(ref))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** 写缩略图：external 为 GCM（tmp→原子 rename）；internal 明文直写（tmp→rename）。 */
+    suspend fun writeThumb(ref: StorageRef, bytes: ByteArray) {
+        withContext(ioDispatcher) {
+            storageIo {
+                require(bytes.size <= CryptoScheme.THUMB_MAX_PLAIN) { "thumb too large" }
+                val volume = requireVolume(ref.volumeId)
+                val rel = thumbRel(ref)
+                val payload = when (ref.format) {
+                    StorageFormat.PLAIN -> bytes
+                    StorageFormat.CTR_V2 ->
+                        CryptoScheme.encryptThumb(CryptoScheme.deriveThumbKey(master().masterKey()), bytes)
+                }
+                volume.openWrite(tmpRel(rel)).use { it.write(payload) }
+                volume.atomicRename(tmpRel(rel), rel)
+            }
+        }
+    }
+
+    /** 读缩略图明文：external 解密（GCM 失败/缺失返回 null——缩略图可再生）；internal 读文件。 */
+    suspend fun readThumbBytes(ref: StorageRef): ByteArray? = withContext(ioDispatcher) {
+        val volume = try {
+            resolver().resolve(ref.volumeId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        } ?: throw StorageAccessFailure(StorageAccessFailure.Reason.VOLUME_UNAVAILABLE)
+        when (ref.format) {
+            StorageFormat.PLAIN -> {
+                val handle = try {
+                    volume.openRead(thumbRel(ref))
+                } catch (_: Exception) {
+                    return@withContext null
+                }
+                handle.use {
+                    val out = ByteArray(it.size().toInt())
+                    var read = 0
+                    while (read < out.size) {
+                        val n = it.read(out, read, out.size - read)
+                        if (n < 0) break
+                        read += n
+                    }
+                    if (read == out.size) out else out.copyOf(read)
+                }
+            }
+            StorageFormat.CTR_V2 -> {
+                val encoded = try {
+                    val handle = volume.openRead(thumbRel(ref))
+                    handle.use {
+                        val out = ByteArray(it.size().toInt())
+                        var read = 0
+                        while (read < out.size) {
+                            val n = it.read(out, read, out.size - read)
+                            if (n < 0) break
+                            read += n
+                        }
+                        if (read == out.size) out else null
+                    }
+                } catch (_: Exception) {
+                    null
+                } ?: return@withContext null
+                try {
+                    CryptoScheme.decryptThumb(CryptoScheme.deriveThumbKey(master().masterKey()), encoded)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        }
+    }
+
+    suspend fun deleteThumb(ref: StorageRef): Boolean = withContext(ioDispatcher) {
+        try {
+            requireVolume(ref.volumeId).delete(thumbRel(ref))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** 目标卷空间查询（结构化，不吞错误为 0）。 */
+    suspend fun space(target: VolumeTarget): SpaceResult = withContext(ioDispatcher) {
+        val volume = try {
+            resolver().resolve(target.volumeId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        } ?: return@withContext SpaceResult.Unavailable(SpaceResult.Unavailable.Reason.VOLUME_MISSING)
+        val bytes = volume.usableSpace()
+        if (bytes >= 0) SpaceResult.Available(bytes)
+        else SpaceResult.Unavailable(SpaceResult.Unavailable.Reason.IO_ERROR)
+    }
+
     // ---- 清扫（重置存储 / 版本升级孤儿回收） ----
 
     /**
@@ -284,7 +606,7 @@ class MediaFileStore @Inject constructor(
  * 底层流在任何路径下都会被关闭；校验异常优先于底层 close 异常（后者 addSuppressed）。
  */
 private class LengthVerifyingOutputStream(
-    private val raw: FileOutputStream,
+    private val raw: OutputStream,
     private val expectedLength: Long,
 ) : OutputStream() {
     private var written = 0L

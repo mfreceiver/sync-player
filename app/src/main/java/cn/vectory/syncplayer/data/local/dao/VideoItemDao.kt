@@ -266,6 +266,42 @@ interface VideoItemDao {
     suspend fun updateSyncMetadata(id: Long, fileSize: Long, remoteModifiedTime: Long?, dateSynced: Long): Int
 
     /**
+     * v5 双卷存储列提交（冻结契约「接口先行」）：一次 UPDATE 同步提交
+     * volumeId/storageFormat/iv/generation/storageState + fileSize/remoteModifiedTime/dateSynced。
+     *
+     * CAS：仅当行存在且 generation 仍等于 [expectedOldGeneration]（含双方均为 null 的
+     * 新建 PENDING 行）时更新。返回 0 = 行已被并发提交/删除 —— 调用方必须失败本 attempt
+     * （回滚文件），绝不 upsert 复活、绝不覆盖 star/audioGainDb。
+     */
+    @Query(
+        """
+        UPDATE video_item SET
+            volumeId = :volumeId,
+            storageFormat = :storageFormat,
+            iv = :iv,
+            generation = :generation,
+            storageState = :storageState,
+            fileSize = :fileSize,
+            remoteModifiedTime = :remoteModifiedTime,
+            dateSynced = :dateSynced
+        WHERE id = :id
+          AND ((:expectedOldGeneration IS NULL AND generation IS NULL) OR generation = :expectedOldGeneration)
+        """
+    )
+    suspend fun updateSyncStorageMetadata(
+        id: Long,
+        expectedOldGeneration: String?,
+        volumeId: String,
+        storageFormat: String,
+        iv: ByteArray?,
+        generation: String?,
+        storageState: String,
+        fileSize: Long,
+        remoteModifiedTime: Long?,
+        dateSynced: Long
+    ): Int
+
+    /**
      * A1: 视频提取器列提交——完整覆盖五个所有列（含显式 null 清除陈旧值：
      * 「成功但字段缺失」语义；提取失败则调用方不得触 DB）。行不存在 ⇒ 0，绝不复活。
      */

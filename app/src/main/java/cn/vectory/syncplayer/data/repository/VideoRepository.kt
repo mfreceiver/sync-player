@@ -158,6 +158,26 @@ class VideoRepository @Inject constructor(
         videoItemDao.updateSyncMetadata(id, fileSize, remoteModifiedTime, dateSynced)
 
     /**
+     * v5 双卷存储列提交（CAS on expectedOldGeneration；见 VideoItemDao.updateSyncStorageMetadata）。
+     * 返回 0 = 行已被并发提交/删除——调用方必须失败本 attempt，绝不 upsert 复活。
+     */
+    suspend fun updateSyncStorageMetadata(
+        id: Long,
+        expectedOldGeneration: String?,
+        volumeId: String,
+        storageFormat: String,
+        iv: ByteArray?,
+        generation: String?,
+        storageState: String,
+        fileSize: Long,
+        remoteModifiedTime: Long?,
+        dateSynced: Long
+    ): Int = videoItemDao.updateSyncStorageMetadata(
+        id, expectedOldGeneration, volumeId, storageFormat, iv, generation,
+        storageState, fileSize, remoteModifiedTime, dateSynced
+    )
+
+    /**
      * A1: 视频提取器列提交（duration/width/height/bitrate/frameRate 全列，
      * 显式 null = 清除陈旧值）。返回受影响行数：0 = 行已消失，不复活。
      */
