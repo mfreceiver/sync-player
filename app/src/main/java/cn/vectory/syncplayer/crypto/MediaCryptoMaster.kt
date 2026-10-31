@@ -4,13 +4,13 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.security.KeyStore
-import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 
 /**
  * 媒体主密钥不可用（Keystore 失效/解包失败/磁盘损坏）。
@@ -50,6 +50,8 @@ class MediaCryptoMaster constructor(
             if (blob != null) {
                 try {
                     kekProvider.unwrap(blob)
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     throw MediaKeyUnavailableException(e)
                 }
@@ -63,7 +65,11 @@ class MediaCryptoMaster constructor(
         val mk = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
         try {
             storeBlob(kekProvider.wrap(mk))
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            // P1-10：持久化失败（含 commit()=false 抛出的 IOException）绝不缓存/返回该 key
+            // ——否则重启后 loadBlob 读不到 blob 会静默换钥，全部外部密文永久不可解。
             throw MediaKeyUnavailableException(e)
         }
         return mk
@@ -103,10 +109,13 @@ class KeystoreKekProvider(
     }
 
     override fun wrap(mk: SecretKey): ByteArray {
-        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        // P0-2：Keystore KEK 默认 randomizedEncryptionRequired=true，拒绝 caller-provided
+        // GCM IV（InvalidAlgorithmParameterException/isForEncryption mismatch）。按设计文档
+        // 密钥节：init(ENCRYPT_MODE, key) 不传 IV，由 Keystore 生成并回读 cipher.iv 存 blob。
         val c = Cipher.getInstance("AES/GCM/NoPadding").apply {
-            init(Cipher.ENCRYPT_MODE, key(), GCMParameterSpec(128, iv))
+            init(Cipher.ENCRYPT_MODE, key())
         }
+        val iv = c.iv ?: throw MediaKeyUnavailableException()
         return iv + c.doFinal(mk.encoded)
     }
 

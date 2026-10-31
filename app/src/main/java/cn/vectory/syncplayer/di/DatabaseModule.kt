@@ -1,6 +1,7 @@
 package cn.vectory.syncplayer.di
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.security.crypto.EncryptedSharedPreferences
@@ -37,18 +38,22 @@ object DatabaseModule {
             // storageState + volumeId 索引；新表 storage_dataset）。破坏性迁移：DB 全表清空
             // （源/关系/媒体/播放/待执行/同步日志），用户需重建同步配置并重新同步；
             // 外部旧 epoch 不自动全删。EncryptedSharedPreferences/DataStore 不随 Room 清空。
-            // datasetId 在首次创建/破坏性迁移事务内建立（dropAllTables 后 id 重用不碰撞旧卡文件）。
             .fallbackToDestructiveMigration(dropAllTables = true)
             .addCallback(DatasetSeedCallback())
             .build()
     }
 
-    /** DB 首次创建与破坏性迁移后都补种 storage_dataset 单行（INSERT OR IGNORE 幂等）。 */
-    private class DatasetSeedCallback : RoomDatabase.Callback() {
-        override fun onCreate(db: SupportSQLiteDatabase) = seed(db)
-        override fun onDestructiveMigration(db: SupportSQLiteDatabase) = seed(db)
-
-        private fun seed(db: SupportSQLiteDatabase) {
+    /**
+     * storage_dataset 单行补种（INSERT OR IGNORE 幂等）。
+     *
+     * P0-1：Room 2.7 破坏性迁移顺序是 dropAllTables → onDestructiveMigration 回调 →
+     * createAllTables；onDestructiveMigration/onCreate 时机不可靠（前者新表尚未建、
+     * 后者仅在首次创建触发）。onOpen 在一切建表/迁移之后必定执行，是唯一安全兜底；
+     * INSERT OR IGNORE 保证幂等（首开/迁移/重复打开都只种一行）。
+     */
+    @VisibleForTesting
+    internal class DatasetSeedCallback : RoomDatabase.Callback() {
+        override fun onOpen(db: SupportSQLiteDatabase) {
             val datasetId = java.util.UUID.randomUUID().toString()
             db.execSQL(
                 "INSERT OR IGNORE INTO storage_dataset(id, datasetId, createdAt) VALUES(1, ?, ?)",

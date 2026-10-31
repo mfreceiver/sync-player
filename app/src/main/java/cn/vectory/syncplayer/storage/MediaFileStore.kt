@@ -257,10 +257,34 @@ class MediaFileStore @Inject constructor(
     } catch (e: IllegalStateException) {
         throw e
     } catch (e: IOException) {
-        // TODO(B): 映射新 SyncErrorCode.STORAGE_IO_TRANSIENT
-        throw StorageAccessFailure(StorageAccessFailure.Reason.IO_TRANSIENT, e)
+        throw classifyIoFailure(e)
     } catch (e: Exception) {
         throw StorageAccessFailure(StorageAccessFailure.Reason.IO_TRANSIENT, e)
+    }
+
+    /**
+     * P1-9：IOException 不再一律 IO_TRANSIENT（可重试）。按设计文档错误映射节分类：
+     * ENOSPC ⇒ INSUFFICIENT_SPACE、权限/只读 ⇒ ACCESS_DENIED（均终态，不进重试白名单）；
+     * 其余保持 IO_TRANSIENT（可恢复 EIO 抖动）。
+     */
+    private fun classifyIoFailure(e: IOException): Exception {
+        val fs = e as? java.nio.file.FileSystemException
+            ?: e.cause as? java.nio.file.FileSystemException
+        val reason = listOfNotNull(fs?.reason, fs?.message, e.message)
+            .firstOrNull { !it.isNullOrBlank() }
+            .orEmpty()
+        return when {
+            fs is java.nio.file.AccessDeniedException ||
+                reason.contains("Permission denied", ignoreCase = true) ||
+                reason.contains("Read-only file system", ignoreCase = true) ||
+                reason.contains("EACCES", ignoreCase = true) ||
+                reason.contains("EROFS", ignoreCase = true) ->
+                SyncException(SyncErrorCode.ACCESS_DENIED, SyncOperation.DOWNLOAD, cause = e)
+            reason.contains("No space left", ignoreCase = true) ||
+                reason.contains("ENOSPC", ignoreCase = true) ->
+                SyncException(SyncErrorCode.INSUFFICIENT_SPACE, SyncOperation.DOWNLOAD, cause = e)
+            else -> StorageAccessFailure(StorageAccessFailure.Reason.IO_TRANSIENT, e)
+        }
     }
 
     private fun requireVolume(volumeId: String): MediaVolume =
@@ -318,13 +342,22 @@ class MediaFileStore @Inject constructor(
             when (attempt.ref.format) {
                 StorageFormat.PLAIN ->
                     LengthVerifyingOutputStream(volume.openWrite(tmp), attempt.ref.plainSize)
-                StorageFormat.CTR_V2 ->
-                    ChunkedEncryptSink(
-                        volume.openWrite(tmp),
-                        contentKey(attempt.ref),
-                        attempt.ref.iv!!,
-                        attempt.ref.plainSize
-                    )
+                StorageFormat.CTR_V2 -> {
+                    // P1-12：先取 contentKey（可能 KEY_UNAVAILABLE 失败），成功后再 openWrite；
+                    // 反过来会在密钥失败时泄漏已打开的 tmp 文件流。
+                    val contentKey = contentKey(attempt.ref)
+                    val raw = volume.openWrite(tmp)
+                    try {
+                        ChunkedEncryptSink(raw, contentKey, attempt.ref.iv!!, attempt.ref.plainSize)
+                    } catch (e: Exception) {
+                        // 构造失败（cipher init 等）不留半开 FD。
+                        try {
+                            raw.close()
+                        } catch (_: Exception) {
+                        }
+                        throw e
+                    }
+                }
             }
         }
     }

@@ -13,18 +13,20 @@ import java.nio.file.attribute.BasicFileAttributes
 /**
  * 普通 File 后端卷（内部与外部都用它；构造传 volumeId/root，不硬编码 internal）。
  *
- * 路径安全：拒绝绝对路径、空段、`..`/`.` 段；canonical 包含关系校验确保不逃出 root；
- * 符号链接末级按 NOFOLLOW 语义处理（strictStat 非 regular ⇒ IoError；openRead 对
- * 末级符号链接直接拒绝——宁可 IO 失败也不跟随到卷外）。
+ * 路径安全：拒绝绝对路径、空段、`..`/`.` 段；父目录 canonical 包含关系校验确保不
+ * 逃出 root（中间目录符号链接指向卷外会被 canonical 化后拦截）；末级组件**不做**
+ * canonicalize（P2-17：canonicalFile 会跟随末级符号链接，导致 delete/openWrite 命中
+ * 链接目标而非链接自身）——末级符号链接按 NOFOLLOW 语义处理（strictStat 非 regular ⇒
+ * IoError；openRead 对末级符号链接直接拒绝——宁可 IO 失败也不跟随到卷外）。
+ *
+ * 卷根不自动创建（P0-5）：探测/解析路径绝不 mkdirs 外部卷根——外部卡失挂载时
+ * Android 会重建空挂载点，mkdirs 会造出假根让卷误判可用；写入由 [openWrite]/
+ * [atomicRename] 对目标父目录 mkdirs（真实写路径，卷可用性已由 registry 复核）。
  */
 class FileVolume(
     override val volumeId: String,
     private val rootDir: File,
 ) : MediaVolume {
-
-    init {
-        require(rootDir.isDirectory || rootDir.mkdirs()) { "volume root unavailable" }
-    }
 
     private fun resolve(relPath: String): File {
         require(!relPath.startsWith('/')) { "absolute path rejected" }
@@ -33,11 +35,19 @@ class FileVolume(
             "invalid relative path"
         }
         val rootCanonical = rootDir.canonicalFile
-        val file = File(rootCanonical, relPath).canonicalFile
-        if (file != rootCanonical && !file.path.startsWith(rootCanonical.path + File.separator)) {
+        // 只 canonicalize 父目录链（拦中间目录符号链接逃逸），末级保持未解析：
+        // delete/openWrite/strictStat 都作用于链接本身而非其目标。
+        val parentCanonical = if (segments.size == 1) {
+            rootCanonical
+        } else {
+            File(rootCanonical, segments.subList(0, segments.size - 1).joinToString("/")).canonicalFile
+        }
+        if (parentCanonical != rootCanonical &&
+            !parentCanonical.path.startsWith(rootCanonical.path + File.separator)
+        ) {
             throw IOException("path escapes volume root")
         }
-        return file
+        return File(parentCanonical, segments.last())
     }
 
     override fun openRead(relPath: String): SeekableReadHandle {
@@ -69,6 +79,9 @@ class FileVolume(
     }
 
     override fun strictStat(relPath: String): FileStat {
+        // P0-5：卷根缺失/非目录（外部卡失挂载）≠ 文件缺失——根不可信时绝不可报 Missing
+        // （调用方会把 Missing 解读为「可安全判负/删行」），fail-closed 为 IoError。
+        if (!rootDir.isDirectory) return FileStat.IoError("volume-root")
         val f = try {
             resolve(relPath)
         } catch (_: Exception) {

@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.crypto
 import java.io.IOException
 import java.io.OutputStream
 import javax.crypto.SecretKey
+import kotlinx.coroutines.CancellationException
 
 /**
  * CTR 有界缓冲加密输出流（v2 新写；历史 ChunkedEncryptSink 是 GCM 分块 AEAD，不可复用）。
@@ -95,6 +96,15 @@ class ChunkedEncryptSink(
             if (tail.isNotEmpty()) sink.write(tail)
         } catch (e: IOException) {
             failure = e
+        } catch (e: CancellationException) {
+            // CE 先传播（不吞成 IOException），底层资源仍关闭。
+            closeFailed = true
+            try {
+                sink.close()
+            } catch (e2: IOException) {
+                e.addSuppressed(e2)
+            }
+            throw e
         } catch (e: Exception) {
             failure = IOException("cipher finalization failed", e)
         }

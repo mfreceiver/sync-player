@@ -69,12 +69,32 @@ class MediaVolumeRegistry @Inject constructor(
     override fun resolve(volumeId: String): MediaVolume? = try {
         when {
             volumeId == VolumeIds.INTERNAL -> internalVolume()
-            VolumeIds.isExternal(volumeId) ->
-                registeredExternal[VolumeIds.externalUuid(volumeId)]?.let { externalVolume(it, volumeId) }
+            VolumeIds.isExternal(volumeId) -> resolveExternalVerified(volumeId)
             else -> null
         }
     } catch (_: Exception) {
         null // 卷根不可用（未挂载等）——fail-closed，不 fallback
+    }
+
+    /**
+     * P0-5：外部卷每次关键操作（store 每个 IO 前都 resolve）重新复核挂载状态：
+     * 受控根必须已存在（绝不 mkdirs 重建）+ StorageManager 确认 removable +
+     * MEDIA_MOUNTED + UUID 与登记条目匹配。任一不满足 ⇒ null（卷不可用），
+     * 绝不重定向另一张卡、绝不沿缓存路径写进失挂载后重建的空挂载点。
+     */
+    private fun resolveExternalVerified(volumeId: String): MediaVolume? {
+        val uuid = VolumeIds.externalUuid(volumeId) ?: return null
+        val dir = registeredExternal[uuid] ?: return null
+        if (!dir.isDirectory) return null // 挂载点缺失/未挂载——不创建假根
+        val sm = context.getSystemService(StorageManager::class.java) ?: return null
+        val meta = try {
+            storageVolumeMeta(sm, dir)
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        if (!meta.removable || meta.state != Environment.MEDIA_MOUNTED) return null
+        if (meta.uuid != uuid) return null // 身份不匹配（换了卡）——不启用
+        return FileVolume(volumeId, dir)
     }
 
     override fun defaultWriteTarget(): VolumeTarget = VolumeTarget(defaultVolumeId)
@@ -134,11 +154,9 @@ class MediaVolumeRegistry @Inject constructor(
      */
     fun registerExternal(candidate: ExternalCandidate, datasetId: String?): String? {
         val volumeId = VolumeIds.external(candidate.uuid)
-        val volume = try {
-            externalVolume(candidate.dir, volumeId)
-        } catch (_: Exception) {
-            return null
-        }
+        // 挂载点必须已真实存在（P0-5：登记路径同样不 mkdirs 外部根）。
+        if (!candidate.dir.isDirectory) return null
+        val volume = FileVolume(volumeId, candidate.dir)
         val probeRel = probeRelPath(datasetId)
         return try {
             val sink = volume.openWrite(probeRel)
@@ -171,6 +189,4 @@ class MediaVolumeRegistry @Inject constructor(
 
     private fun internalVolume(): MediaVolume =
         FileVolume(VolumeIds.INTERNAL, storagePaths.userdataRoot)
-
-    private fun externalVolume(dir: File, volumeId: String): MediaVolume = FileVolume(volumeId, dir)
 }

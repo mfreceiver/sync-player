@@ -256,7 +256,10 @@ internal class DualVolumeSyncStoragePort @Inject constructor(
         val entity = videoRepository.getById(id) ?: return null
         val format = when (entity.storageFormat) {
             StorageFormat.CTR_V2.name -> SyncStorageFormat.CTR_V2
-            else -> SyncStorageFormat.PLAIN
+            // P2-16（sol）：未知格式精确拒绝（返回 null，调用方按无引用处理），
+            // 绝不猜测降级为 PLAIN（会把密文行当明文读）。
+            StorageFormat.PLAIN.name -> SyncStorageFormat.PLAIN
+            else -> return null
         }
         val datasetId = if (format == SyncStorageFormat.CTR_V2) {
             datasetDao.get()?.datasetId ?: return null

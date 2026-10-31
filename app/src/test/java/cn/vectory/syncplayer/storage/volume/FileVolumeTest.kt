@@ -74,16 +74,42 @@ class FileVolumeTest {
     }
 
     @Test
-    fun openWriteMissingVolumeRootFailsFast() {
-        // 父级是普通文件 ⇒ mkdirs 必败 ⇒ 构造即 fail-fast
-        val blocker = File(tmp.newFolder(), "not-a-dir")
-        blocker.writeBytes(byteArrayOf(1))
-        val bad = File(blocker, "deeper")
+    fun missingVolumeRootFailsClosedNotMissing() {
+        // P0-5：FileVolume 不再 mkdirs 卷根；根缺失时 strictStat 必须 IoError（卷不可信），
+        // 绝不报 Missing（调用方会把 Missing 解读为「文件确不存在」进而判负/删行）。
+        val parent = tmp.newFolder()
+        val bad = File(parent, "unmounted-root") // 故意不创建
+        val v = FileVolume("external:u", bad)
+        assertEquals(FileStat.IoError("volume-root"), v.strictStat("a/b.bin"))
+    }
+
+    @Test
+    fun deleteRemovesSymlinkItselfNotTarget() {
+        // P2-17：末级不再 canonicalize——delete 删的是链接自身，绝不删卷内目标文件。
+        val root = tmp.newFolder()
+        val v = FileVolume(VolumeIds.INTERNAL, root)
+        val target = File(root, "real.bin").apply { writeBytes(byteArrayOf(7)) }
+        Files.createSymbolicLink(File(root, "link.bin").toPath(), target.toPath())
+        assertTrue(v.delete("link.bin"))
+        assertFalse(File(root, "link.bin").exists()) // 链接已删
+        assertTrue(target.isFile) // 目标完好
+    }
+
+    @Test
+    fun intermediateSymlinkEscapeRejected() {
+        // P2-17：中间目录符号链接指向卷外 ⇒ 父链 canonical 后逃逸 root ⇒ 拒绝。
+        val root = tmp.newFolder()
+        val outside = tmp.newFolder()
+        val outsideFile = File(outside, "secret.bin").apply { writeBytes(byteArrayOf(1)) }
+        Files.createSymbolicLink(File(root, "hop").toPath(), outside.toPath())
+        val v = FileVolume(VolumeIds.INTERNAL, root)
+        assertTrue(v.strictStat("hop/secret.bin") is FileStat.IoError)
         val threw = try {
-            FileVolume("external:u", bad); false
+            v.openRead("hop/secret.bin"); false
         } catch (_: Exception) {
             true
         }
         assertTrue(threw)
+        assertTrue(outsideFile.isFile)
     }
 }

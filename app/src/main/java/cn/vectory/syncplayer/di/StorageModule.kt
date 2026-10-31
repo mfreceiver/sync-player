@@ -15,6 +15,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import java.io.IOException
 import java.util.UUID
 import javax.inject.Qualifier
 import javax.inject.Singleton
@@ -43,7 +44,13 @@ object StorageModule {
     ): MediaCryptoMaster = MediaCryptoMaster(
         kekProvider = KeystoreKekProvider(context),
         loadBlob = { prefs.getString(MediaCryptoMaster.PREF_KEY, null)?.let { decodeHex(it) } },
-        storeBlob = { blob -> prefs.edit().putString(MediaCryptoMaster.PREF_KEY, encodeHex(blob)).commit() }
+        // P1-10：commit() 返回 false = 未持久化。必须抛异常让 MediaCryptoMaster 拒绝使用
+        // 该 key（KEY_UNAVAILABLE），否则进程内缓存继续加密、重启后 blob 缺失静默换钥。
+        storeBlob = { blob ->
+            if (!prefs.edit().putString(MediaCryptoMaster.PREF_KEY, encodeHex(blob)).commit()) {
+                throw IOException("media master blob persist rejected")
+            }
+        }
     )
 
     /** datasetId 源：storage_dataset 单行（启动 StorageBootstrap 已种；缺行 fail-closed）。 */
