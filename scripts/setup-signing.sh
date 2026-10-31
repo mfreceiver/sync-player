@@ -12,7 +12,7 @@
 #      mode 600，仓库外）。FALLBACK。
 #
 # 用法: ./scripts/setup-signing.sh
-# 配合: ./scripts/gitea/setup-secrets.sh 把同一份凭据推到 Gitea Secrets 供 CI 使用。
+# 发版已改本地流程（release.sh 直接用本文件签名），无 CI Secrets 步骤。
 set -euo pipefail
 
 CREDS="${SYNC_PLAYER_RELEASE_CREDS:-/home/mar/.android/sync-player_release.creds}"

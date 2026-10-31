@@ -10,7 +10,7 @@
 | [`docs/specs/sync.md`](docs/specs/sync.md) | 同步引擎、SyncException/SyncErrorCode、E8 守卫、两阶段提交、重试白名单、SyncProgressPublisher/SyncSpaceChecker |
 | [`docs/specs/storage-security.md`](docs/specs/storage-security.md) | 存储布局、MediaFileStore、ContentProvider 异常边界、App Lock、TOFU、凭证 |
 | [`docs/specs/conventions.md`](docs/specs/conventions.md) | Testing、i18n、Database、Performance、Versioning、Player UX、错误处理、残余风险 |
-| [`docs/release.md`](docs/release.md) | 发版规范、签名凭据链、changelog、CI |
+| [`docs/release.md`](docs/release.md) | 本地发版流程、签名凭据链、changelog、产物 |
 
 ## Environment
 
@@ -81,15 +81,13 @@ Always run a build after code changes to verify compilation — there is no LSP 
 ```bash
 # 一次性凭据就绪：
 ./scripts/setup-signing.sh        # pass(GPG) → local.properties
-./scripts/gitea/setup-secrets.sh  # local.properties → Gitea Secrets
 
 # 每次发版（改动已在 main）：
 ./scripts/release.sh 12.0.5
 # → 校验 + 本地门禁（compileDebugKotlin + testDebugUnitTest + lintDebug）+ 分类 changelog
-# → annotated tag + push → release.yml CI 出签名 APK
+#   + assembleRelease（签名）→ dist/sync-player-<version>-<shortsha>.apk + SHA256SUMS
+#   + annotated tag + push origin main <tag>（纯本地发版，不触发任何 CI）
 ```
 
-`release.sh` 要求干净工作树（或 `--allow-dirty`）。它自己跑本地门禁，无需预跑测试。
-
-Actions: `http://192.168.3.252:11330/mfreceiver/sync-player/actions`
-Release: `http://192.168.3.252:11330/mfreceiver/sync-player/releases/tag/v<VERSION>`
+`release.sh` 要求干净工作树（或 `--allow-dirty`）。它自己跑本地门禁和签名构建，无需预跑测试。
+产物在本机 `dist/`（gitignored）；安装：`adb install -r dist/sync-player-<version>-<sha>.apk`。

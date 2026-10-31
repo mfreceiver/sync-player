@@ -80,7 +80,7 @@
 
 契约是：选择标签 → 解析 `refs/tags/$TAG^{commit}` → checkout 对应提交 → 构建与发布都绑定这份解析结果。标签命名规则复用发布脚本规范；非法或缺失 tag 立即拒绝。校验标签解引用后的 commit，不比较 annotated tag object。正确的手动请求不应仅因最初从某个分支发起就被拒绝。
 
-文件范围沿用原路线 T4：`.gitea/workflows/release.yml`、`scripts/ci/release-check.sh`、`scripts/gitea/publish-release.sh`。同时对齐 T11 的产物文档：APK + SHA256SUMS，不恢复已被有意移除的 mapping 上传。
+文件范围沿用原路线 T4（历史记录：这些 CI 发版文件已于 2026-10-31 移除，发版改本地流程）。同时对齐 T11 的产物文档：APK + SHA256SUMS，不恢复已被有意移除的 mapping 上传。
 
 **完成边界**：缺失/错误标签拒绝；正常标签与手动补发得到一致的提交绑定；后续用隔离 fixture 验证，不用生产 release 做试验。不扩大为 CI 平台改造。
 

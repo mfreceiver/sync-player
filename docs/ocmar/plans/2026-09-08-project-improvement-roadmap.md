@@ -92,7 +92,7 @@ Kotlin + Coroutines/Flow、Room 2.x（dropAllTables 迁移）、DataStore、Medi
 - **lane**: 用户/父 agent 决策，fixer 提供技术评估。
 
 **T4 发布流程 ref/tag 一致性校验（来源 F11，P1/P2）**
-- **文件**: `.gitea/workflows/release.yml:8-12,74`；`scripts/ci/release-check.sh:11-12`；`scripts/gitea/publish-release.sh`
+- **文件**: （历史记录；这些 CI 发版文件已于 2026-10-31 移除，发版改本地流程）
 - **内容**: ① 删除裸 `workflow_dispatch`，或改为必填 tag 输入：workflow **checkout 该选定 tag 本身**（而非默认分支的 `github.sha`），再校验 checkout 的 commit 与 `git rev-parse "refs/tags/$TAG^{commit}"`（**解引用到 commit；不可用 raw tag object 比较**）一致；② 发布脚本接收 tag 时做同样的 `^{commit}` 解引用校验；③ publish 步骤保持既有默认成功传导（无 `continue-on-error`/`if: always()` 绕过即可，**无需额外强制加装 `if: success()`**——workflow 步骤默认仅在前序成功时执行）。
 - **依赖**: 无。
 - **取舍**: 「删除 dispatch」最简但牺牲手动补救通道；「required tag + tag checkout + commit 校验」保留灵活性且不误拒合理 dispatch。两案均**只建议在隔离 sandbox/fixture（本地裸仓 + workflow 干跑）验证**，**不要求真跑生产 release 作为测试**。
@@ -142,7 +142,7 @@ Kotlin + Coroutines/Flow、Room 2.x（dropAllTables 迁移）、DataStore、Medi
 
 **T10 落盘后轻量完整性检查（来源 F14）**：`app/src/main/java/cn/vectory/syncplayer/storage/volume/EncryptedMediaStore.kt:129-143`。现有探针仅 4B magic（:132 `ByteArray(CryptoScheme.MAGIC.size)`）；扩为 O(1) 的**完整 16B header 解析**（含 header 声明的 plaintextLength）+ 实际密文大小 + **可信预期明文长度**三方匹配。**接口依赖需先明确**：当前 `verifyReadable(id)` 无 fileSize 参数，且不能假设 DB 在 upsert 前有最终 metadata——预期长度由 pipeline 侧已有 `action.fileSize` 显式传入，或先定义该接口契约。**不做全文 GCM**（昂贵，播放路径 RangeDecryptor 已认证兜底）。验收标准：A-T10-1 header 字段解析复用 `app/src/main/java/cn/vectory/syncplayer/crypto/CryptoScheme.kt` 既有常量、无格式重复定义；A-T10-2 检查失败抛异常（不返回脏明文）；A-T10-3 预期长度来源为显式参数（无 DB 假设）。回滚：探针增强失败路径需与 SyncEngine finalize 补偿链（`app/src/main/java/cn/vectory/syncplayer/sync/SyncDownloadPipeline.kt:393-432`）兼容。lane：fixer。未来实施后验证建议（非本轮执行）：`compileDebugKotlin` + 相关单测；人为截断密文文件后 finalize 探针应拒绝。
 
-**T11 发布产物契约对齐（来源 F10）**：`docs/release.md:16,137,157,301,357`、`docs/specs/gitea-cicd.md`（mapping 约定同需对齐）、`scripts/release.sh:19,122`、`.gitea/workflows/release.yml:3` 注释 → 统一为「APK + SHA256SUMS（个人侧载，不上传 mapping；本地保留可选）」。**依现有有意行为对齐文档，不把有意不上传当构建故障**。与 T4 同涉 release 脚本/CI 文件域，**需串行执行**（见 §8）。验收标准：A-T11-1 rg "mapping" 在上述文件中仅出现在「不上传/可选」语义处。lane：fixer（文档）。
+**T11 发布产物契约对齐（来源 F10）**：（历史记录：CI 发版 workflow 已于 2026-10-31 移除）`docs/release.md`、`docs/specs/gitea-cicd.md`、`scripts/release.sh` 注释 → 统一为「APK + SHA256SUMS（个人侧载，不上传 mapping；本地保留可选）」。**依现有有意行为对齐文档，不把有意不上传当构建故障**。与 T4 同涉 release 脚本/CI 文件域，**需串行执行**（见 §8）。验收标准：A-T11-1 rg "mapping" 在上述文件中仅出现在「不上传/可选」语义处。lane：fixer（文档）。
 
 **T12 权威文档漂移修订（来源 F12）**：`docs/specs/conventions.md:7` 路径改 `app/src/test`；Gradle 版本以 `gradle/wrapper/gradle-wrapper.properties`（9.3.1）为准修订 AGENTS.md 速查与相关 spec；补记 release.sh 门禁含 lintDebug、非 main 仅 warning。**AGENTS.md 修订需用户批准后进行（本轮不改）**。验收标准：A-T12-1 文档内版本号与 wrapper 文件一致；A-T12-2 路径描述与实际目录一致。lane：fixer（文档）。
 

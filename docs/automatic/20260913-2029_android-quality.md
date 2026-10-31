@@ -591,7 +591,7 @@ override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor? {  // mode 
 ## Gradle / Build Review
 
 构建卫生 unusually 强（多项 folklore 被证据驳回，见 Rejected Hypotheses 7-12）：
-- 签名：凭据缺失时 AGP `validateSigningRelease` **大声失败**（无静默 debug-key 回退）；CI（release.yml + scripts/ci/release-check.sh）在构建前 keytool 校验 store+alias；本地 release.sh 门禁刻意不含 assembleRelease。
+- 签名：凭据缺失时 AGP `validateSigningRelease` **大声失败**（无静默 debug-key 回退）；历史上 CI 曾在构建前 keytool 校验（该 CI 发版链已于 2026-10-31 移除，发版改本地 assembleRelease）。
 - R8：keep 规则与实际反射路径吻合（BouncyCastle 经 jcifs-ng/sshj 反射实例化而非 Security 注册；jcifs 用自传 Handler 构造，无需全局 URL 注册）；文件内有 release-verified 注记。
 - 依赖解析：slf4j 解析到 2.0.13（ServiceLoader，无 StaticLoggerBinder 类引用）。
 - 资源收缩安全：全仓零 `getIdentifier` 动态查找。

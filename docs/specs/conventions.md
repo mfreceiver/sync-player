@@ -38,7 +38,7 @@
 - `versionCode` = `git rev-list --count HEAD`
 - `versionName` = `git describe`
 - 见 `app/build.gradle.kts` 的 `gitVersionCode` / `gitVersionName`。
-- 发版用 `./scripts/release.sh <x.y.z>`（打 tag + push → `release.yml`）。
+- 发版用 `./scripts/release.sh <x.y.z>`（门禁 → 本地签名构建 → dist/ 产物 → tag + push，无 CI）。
 - **不要手改** versionCode/versionName。
 
 ## Player UX 约定

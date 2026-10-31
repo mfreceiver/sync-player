@@ -1,27 +1,28 @@
 #!/usr/bin/env bash
-# scripts/release.sh — sync-player 发版唯一入口：打 annotated tag + push → release.yml 出签名 APK。
+# scripts/release.sh — sync-player 发版唯一入口（本地发版，无 CI）：
+#   门禁 → assembleRelease（签名）→ 本地产物 → annotated tag → push。
 #
 # 版本模型（git 派生，唯一来源是 git，不写任何版本文件）：
 #   versionCode = git rev-list --count HEAD（单调递增，每 commit +1）
 #   versionName = git describe（tag-hash[-dirty]）
-#   CI 传 -PreleaseVersion=<tag去v> 让发布的 APK 用干净 tag 版本名。
+#   本脚本传 -PreleaseVersion=<tag去v> 让发布的 APK 用干净 tag 版本名。
 #
 # 用法: ./scripts/release.sh <version> [--allow-dirty]
 #   <version> 形如 12.1.0（自动加 v 前缀）；也接受 v12.1.0。
 #   --allow-dirty：工作树非干净时强制发版（产物 versionName 带 -dirty 后缀）。
 #
-# 本脚本步骤：
+# 本脚本步骤（顺序保证：任何一步失败都不会留下已 push 的 tag）：
 #   1. 校验分支=main、工作树干净、版本格式 x.y.z、tag 未占用
-#   2. 本地门禁：compileDebugKotlin + testDebugUnitTest + lintDebug（破损代码连 tag 都不打）
+#   2. 本地门禁：compileDebugKotlin + testDebugUnitTest + lintDebug（破损代码连构建都不进）
 #   3. 生成 changelog（上次 tag..HEAD 的 conventional commits 自动分类）
-#   4. 创建 annotated tag（注释 = changelog）
-#   5. git push origin <tag> → 触发 release.yml（clean+lintRelease+testDebug+assembleRelease
-#      → artifacts/ → publish-release.sh 上传 APK/SHA256SUMS + PATCH release body 写入 changelog）
+#   4. 本地 assembleRelease（签名，需 local.properties 已就绪）→ 复制到
+#      dist/sync-player-<version>-<shortsha>.apk + 生成 SHA256SUMS
+#   5. 创建 annotated tag（注释 = changelog）
+#   6. git push origin main + tag（push 不会触发任何 CI；push 失败则回滚本地 tag）
 #
 # 前置:
-#   1. 4 个 RELEASE_* Secrets 已建（./scripts/gitea/setup-secrets.sh）
-#   2. 改动已在 main（tag 应打在稳定线；在分支上发版会警告）
-#   3. 本地签名凭据已就绪（./scripts/setup-signing.sh 从 pass 生成 local.properties）
+#   1. 改动已在 main（tag 应打在稳定线；在分支上发版会警告）
+#   2. 本地签名凭据已就绪（./scripts/setup-signing.sh 从 pass 生成 local.properties）
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -108,17 +109,33 @@ trap 'rm -f "$NOTE_FILE"' EXIT
 echo "==> changelog 生成完成（自 ${LAST_TAG:-start} 以来）"
 sed -n '1,20p' "$NOTE_FILE"
 
-# --- 4. 创建 annotated tag（注释 = changelog；不 commit 任何版本文件）---
-echo "==> 打注解 tag $TAG（HEAD = $(git rev-parse --short HEAD)）"
+# --- 4. 本地签名构建 + 产物（assembleRelease 失败不会留下 tag）---
+SHORT="$(git rev-parse --short HEAD)"
+APK_NAME="sync-player-$VERSION-$SHORT.apk"
+APK_SRC="app/build/outputs/apk/release/app-release.apk"
+echo "==> assembleRelease -PreleaseVersion=$VERSION（本地签名）"
+JAVA_HOME="$JAVA_HOME" ./gradlew assembleRelease -PreleaseVersion="$VERSION"
+[[ -f "$APK_SRC" ]] || { echo "❌ 未找到 $APK_SRC"; exit 1; }
+mkdir -p dist
+cp "$APK_SRC" "dist/$APK_NAME"
+( cd dist && sha256sum "$APK_NAME" > SHA256SUMS )
+echo "==> 产物就绪：dist/$APK_NAME + dist/SHA256SUMS"
+cat dist/SHA256SUMS
+
+# --- 5. 创建 annotated tag（注释 = changelog；不 commit 任何版本文件）---
+echo "==> 打注解 tag $TAG（HEAD = $SHORT）"
 git tag -a "$TAG" -F "$NOTE_FILE"
 
-# --- 5. push tag → 触发 release.yml ---
-echo "==> push tag → 触发 release.yml"
-git push origin "$TAG"
+# --- 6. push main + tag（不触发任何 CI；失败则回滚本地 tag）---
+echo "==> push origin main + $TAG"
+if ! git push origin main "$TAG"; then
+  echo "❌ push 失败，回滚本地 tag $TAG（远端未收到 tag）"
+  git tag -d "$TAG"
+  exit 1
+fi
 
 echo ""
-echo "✅ tag $TAG 已推送。release.yml 将自动："
-echo "   clean + lintRelease + testDebugUnitTest + assembleRelease（签名）"
-echo "   → publish-release.sh：上传 APK/SHA256SUMS + PATCH release body（写入 changelog）"
-echo "   Actions: http://192.168.3.252:11330/mfreceiver/sync-player/actions"
-echo "   Release: http://192.168.3.252:11330/mfreceiver/sync-player/releases/tag/$TAG"
+echo "✅ 发版完成："
+echo "   tag:   $TAG（annotated，注解含分类 changelog；已推送到 origin）"
+echo "   产物:  dist/$APK_NAME + dist/SHA256SUMS（gitignored）"
+echo "   安装:  adb install -r dist/$APK_NAME"

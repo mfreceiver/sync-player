@@ -99,7 +99,7 @@ ViewModel 层 ──(Hilt)──► Repository 层
 10. **Room 索引设计**：`app/src/main/java/cn/vectory/syncplayer/data/local/entity/VideoItemEntity.kt:12` `Index(value=["parentPath"])` 支撑 `app/src/main/java/cn/vectory/syncplayer/data/local/dao/VideoItemDao.kt:9` 按目录查询；同步日志/媒体元数据走事务写入。
 11. **Player 竞态防护**：`app/src/main/java/cn/vectory/syncplayer/player/PlayerViewModel.kt:242-284`——load request generation（BUG-015）使旧代次请求迟到即丢弃；progress 为独立 StateFlow（重组隔离）；保存走 channel 串行化；回收站 undo 与删除竞态有防护（UndoDeleteUseCase）。
 12. **生命周期持久化（尽力保存）**：`app/src/main/java/cn/vectory/syncplayer/player/PlayerScreen.kt:242-262`——ON_STOP 时立即 pause + saveProgress（AND-001），在 recents 划掉/熄屏等 composition dispose 不保证的路径上尽力落盘。
-13. **发版凭据卫生**：`.gitea/workflows/release.yml:77-79`——keystore/local.properties/git-credentials 在 `if: always()` 清理步骤删除；CI 侧 keytool fail-fast 校验（:57-62）。
+13. **发版凭据卫生**：（历史记录：CI 发版 workflow 已于 2026-10-31 移除，发版改本地流程。）
 14. **无障碍已有基础**：`app/src/main/java/cn/vectory/syncplayer/player/AuroraPlayerUi.kt` 已有播放/暂停 contentDescription（:544）、±10s customActions（:579-582 全屏进度、:663-677 迷你进度条）、进度条 ProgressBarRangeInfo + stateDescription（:588-590,670-672）、设置按钮 Role.Button（:795）、速度单选 Role.RadioButton + selected（:835）、精细擦除放大镜 contentDescription（:1089-1090，FineScrubMagnifier）等语义。**后续工作不得重复添加这些语义**。
 15. **重试退避可测性**：`app/src/main/java/cn/vectory/syncplayer/settings/SettingsViewModel.kt:206-208` 指数退避收敛函数独立可测；DataStore 读故障自动重订阅（BUG-003）。
 
@@ -194,13 +194,13 @@ ViewModel 层 ──(Hilt)──► Repository 层
 
 ### F10 [P2｜确认] 发布产物契约漂移（mapping.txt）
 
-- **位置**: `scripts/ci/release-check.sh:6-7`（注释明确「mapping.txt 不上传（个人自用，无线上崩溃符号化需求）」——**有意行为**）、`:16-19`（只归档 APK + SHA256SUMS）vs `.gitea/workflows/release.yml:3`（注释声称产物含 mapping.txt）、`docs/release.md:16,137,157,301,357`、`scripts/release.sh:19,122`（均声称上传 mapping）。
+- **位置**: `scripts/ci/release-check.sh:6-7`（注释明确「mapping.txt 不上传（个人自用，无线上崩溃符号化需求）」——**有意行为**）、`:16-19`（只归档 APK + SHA256SUMS）vs （CI 发版文件已于 2026-10-31 移除，发版改本地流程，产物 APK + SHA256SUMS 不含 mapping。）
 - **性质**: 脚本实际行为（APK+SHA）与文档契约（APK+mapping+SHA）漂移；不上传是**有意选择，不是构建故障**。
 - **最小建议**: 依现有个人侧载选择，将文档与 workflow 注释对齐为「APK + SHA256SUMS」；mapping 本地保留与否写明为可选。
 
 ### F11 [P1/P2｜配置风险] release workflow 允许裸手动触发且发布端不校验 tag
 
-- **位置**: `.gitea/workflows/release.yml:8-12`（`tags: ['v*']` + 裸 `workflow_dispatch`）、`:74`（`TAG: ${{ github.ref_name }}` 直接传发布脚本）；`scripts/ci/release-check.sh:11-12`（非 `v*` ref 时退回「最近 tag」构建）；`scripts/gitea/publish-release.sh:9`（仅断言参数存在）与 `:27-28`（幂等：先 DELETE 已有 release 再 POST）——**全链路无 ref/tag-commit 一致性校验**。
+- **位置**: （历史记录：CI 发版 workflow 与配套脚本已于 2026-10-31 移除）——**全链路无 ref/tag-commit 一致性校验**。
 - **机制推演**: 手动 dispatch 在 `release` 之类的分支名上触发时，checkout 的是该分支 HEAD（release-check 报 tag=分支名、版本退最近 tag），构建产物与「最近 tag」版本号组合，publish 仍按传入 TAG 名发布（或覆盖既有 release）。可能造成分支构建冒充 tag 版本、或覆盖正式 release。
 - **限定**: 基于文件文本推演，Gitea runner 现场行为未验证；触发需人工误用 dispatch，故 P1/P2 之间。
 - **最小建议**: 删除裸 `workflow_dispatch`，或 dispatch 必填 tag 输入并在发布前校验 `github.sha` 与 tag 所指 commit 一致；publish 步骤独立 fail-fast，测试不通过绝不发布。

@@ -14,8 +14,11 @@ local.properties
 .kotlin/
 release.p12*
 
-# CI build outputs (remote-check.sh / release-check.sh archive here)
+# CI build outputs (remote-check.sh archives here)
 artifacts/
+
+# local release artifacts (release.sh copies signed APK + SHA256SUMS here)
+dist/
 
 # opencode workflow metadata (never commit)
 .ocmar/
