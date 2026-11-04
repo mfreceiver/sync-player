@@ -1,5 +1,6 @@
 package cn.vectory.syncplayer.sync
 
+import android.app.ForegroundServiceStartNotAllowedException
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -44,10 +45,11 @@ class SyncService : Service() {
     override fun onCreate() {
         super.onCreate()
         SyncNotificationHelper.createNotificationChannel(this)
-        startForeground(
-            SyncNotificationHelper.NOTIFICATION_ID,
-            SyncNotificationHelper.createOngoingNotification(this, SyncProgress())
-        )
+        if (!startForegroundGuarded(SyncProgress())) {
+            // H3：前台化被拒即放弃服务生命周期（通知/清 pending/stopSelf 在 helper 内）；
+            // collector/coordinator 不再建立。
+            return
+        }
 
         collectorJob = serviceScope.launch {
             syncEngine.progress.collect { progress ->
@@ -95,17 +97,21 @@ class SyncService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // E1: 每次 onStartCommand（含 redeliver）都重新确立前台状态，
+        // E1: 每次 onStartCommand（含系统重建）都重新确立前台状态，
         // 不能只依赖 onCreate——系统在重建/重复拉起场景下可能跳过 onCreate。
-        startForeground(
-            SyncNotificationHelper.NOTIFICATION_ID,
-            SyncNotificationHelper.createOngoingNotification(this, _syncProgress.value)
-        )
+        if (!startForegroundGuarded(_syncProgress.value)) {
+            // H3：前台化被拒（如 dataSync 预算耗尽后系统拒批）——服务无法履行前台
+            // 义务，继续执行只会被系统强制处置；helper 内已发 FAILED 通知、清 pending、
+            // stopSelf。返回 NOT_STICKY（理由见下方）。
+            return START_NOT_STICKY
+        }
         lastStartId = startId
 
         if (intent?.action == ACTION_CANCEL) {
             cancelSync()
-            return START_REDELIVER_INTENT
+            // START_NOT_STICKY：取消意图无需重投——服务停止本就是其目的，重投只会在
+            // 预算受限窗口反复拉起服务放大崩溃循环（待执行任务已持久化在 DB）。
+            return START_NOT_STICKY
         }
 
         val relationId = intent?.getLongExtra(EXTRA_RELATION_ID, 0L) ?: 0L
@@ -116,7 +122,11 @@ class SyncService : Service() {
         // 旧 pendingStopJob 手工取消由 onSyncRequested→cancelStop 承接）。
         drainCoordinator.onSyncRequested(relationId)
 
-        return START_REDELIVER_INTENT
+        // START_NOT_STICKY（H3）：pending 任务持久化在 DB（两阶段提交），崩溃后由
+        // 下次显式 start 的 drain 循环重新消费；START_REDELIVER_INTENT 的自动重投
+        // 在 dataSync 预算受限/前台化被拒的窗口只会反复拉起一个注定失败的服务，
+        // 放大崩溃循环、无任何收益。
+        return START_NOT_STICKY
     }
 
     /**
@@ -148,6 +158,42 @@ class SyncService : Service() {
     private fun stopService(startId: Int) {
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelfResult(startId)
+    }
+
+    /**
+     * H3（闪退最小修复集）：startForeground 防护壳。API 35 对 dataSync 类型前台服务
+     * 施加严格预算——预算耗尽/时机违规（ForegroundServiceStartNotAllowedException）
+     * 或通知服务未就绪（IllegalStateException）时 startForeground 直接抛异常击穿
+     * Service 回调杀进程。失败路径：发 FAILED 通知（复用 SyncNotificationHelper 终态
+     * 通知能力）、清 pending（取消 drain 缓冲，已入队请求不再执行——对应行持久化在
+     * DB，下次 start 重新消费）、stopSelf。日志只记异常类名（敏感红线）。
+     */
+    private fun startForegroundGuarded(progress: SyncProgress): Boolean {
+        return try {
+            startForeground(
+                SyncNotificationHelper.NOTIFICATION_ID,
+                SyncNotificationHelper.createOngoingNotification(this, progress)
+            )
+            true
+        } catch (e: ForegroundServiceStartNotAllowedException) {
+            onForegroundStartRejected(e)
+            false
+        } catch (e: IllegalStateException) {
+            onForegroundStartRejected(e)
+            false
+        }
+    }
+
+    private fun onForegroundStartRejected(e: Exception) {
+        DebugLogger.w(
+            "SyncService",
+            "startForeground rejected: error=${e.javaClass.simpleName}"
+        )
+        SyncNotificationHelper.updateNotification(
+            this, syncEngine.progress.value.copy(phase = SyncPhase.FAILED)
+        )
+        if (::drainCoordinator.isInitialized) drainCoordinator.cancelActiveDrain()
+        stopSelf()
     }
 
     /**
