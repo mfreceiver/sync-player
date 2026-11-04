@@ -836,4 +836,39 @@ class SyncPreviewViewModelTest {
         assertTrue(vm.isFinished.value)
         assertTrue("COMPLETED marks the legacy syncComplete projection", vm.syncComplete.value)
     }
+
+    // =====================================================================
+    // P2-6（opus 复审测试 C）：dryRun/executeDelete 抛 Error → 结构化 UNKNOWN
+    // 终态收敛（不崩进程、不停留在 Scanning/DELETING）。断言枚举，不断言文案。
+    // =====================================================================
+
+    @Test
+    fun `dryRun throwing error converges to ScanFailed with UNKNOWN issue`() = runTest {
+        coEvery { syncEngine.dryRun(1L) } throws OutOfMemoryError("scan-oom")
+        val vm = createVm()
+
+        vm.loadPreview()
+        advanceUntilIdle()
+
+        val state = vm.state.value
+        assertTrue("error from dryRun must land in ScanFailed, not stick in Scanning", state is SyncPreviewState.ScanFailed)
+        assertEquals(SyncPreviewIssue.UNKNOWN, (state as SyncPreviewState.ScanFailed).issue.kind)
+    }
+
+    @Test
+    fun `executeDelete throwing error converges to Finished FAILED with non-null error`() = runTest {
+        val vm = loadedDeleteVm()
+        assertTrue("precondition Ready", vm.state.value is SyncPreviewState.Ready)
+        coEvery { syncEngine.executeDelete(any(), any()) } throws OutOfMemoryError("delete-oom")
+
+        vm.requestExecute() // 含删除项：先设确认门
+        vm.confirmExecute()
+        advanceUntilIdle()
+
+        val state = vm.state.value
+        assertTrue("error from executeDelete must land in Finished", state is SyncPreviewState.Finished)
+        assertEquals(SyncRunOutcome.FAILED, (state as SyncPreviewState.Finished).result.outcome)
+        assertTrue("structured UNKNOWN error message must be surfaced", vm.error.value != null)
+        assertFalse("isDeleting must be reset after Error", vm.isDeleting.value)
+    }
 }

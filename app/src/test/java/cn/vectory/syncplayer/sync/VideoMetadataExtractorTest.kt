@@ -179,4 +179,66 @@ class VideoMetadataExtractorTest {
             unmockkConstructor(MediaMetadataRetriever::class)
         }
     }
+
+    // ------------------------------------------------- P2-10（opus 复审测试 B）
+    // 缩略图 scaled 变体回退与局部 OOM best-effort（约定：断言次数/枚举，不断言文案）。
+
+    private fun stubRetrieverBasics(uri: Uri) {
+        every { anyConstructed<MediaMetadataRetriever>().setDataSource(any<android.content.Context>(), uri) } returns Unit
+        every { anyConstructed<MediaMetadataRetriever>().extractMetadata(any()) } returns null
+        every { anyConstructed<MediaMetadataRetriever>().close() } returns Unit
+    }
+
+    @Test
+    fun `scaled frame null falls back to getFrameAtTime and still writes thumb`() = runTest {
+        coEvery { videoRepository.updateVideoMetadata(any(), any(), any(), any(), any(), any()) } returns 1
+        coEvery { videoRepository.getById(any()) } returns null // 走 by-id 内部路径
+        val bitmap = mockk<android.graphics.Bitmap>(relaxed = true)
+        val sut = VideoMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context)
+        val uri = mockk<Uri>()
+        mockkConstructor(MediaMetadataRetriever::class)
+        try {
+            mockkObject(cn.vectory.syncplayer.provider.MediaUris) {
+                every { cn.vectory.syncplayer.provider.MediaUris.mediaUri(any()) } returns uri
+                stubRetrieverBasics(uri)
+                // quirky 设备：scaled 变体返回 null → 应回退全量 getFrameAtTime
+                every { anyConstructed<MediaMetadataRetriever>().getScaledFrameAtTime(any(), any(), any(), any()) } returns null
+                every { anyConstructed<MediaMetadataRetriever>().getFrameAtTime(any(), any()) } returns bitmap
+
+                sut.extractAndSave(entity())
+            }
+            // 回退确实被采纳（scaled 一次 + fallback 一次）且缩略图仍落盘
+            verify(exactly = 1) { anyConstructed<MediaMetadataRetriever>().getScaledFrameAtTime(any(), any(), any(), any()) }
+            verify(exactly = 1) { anyConstructed<MediaMetadataRetriever>().getFrameAtTime(any(), any()) }
+            coVerify(exactly = 1) { store.writeThumb(any<Long>(), any<ByteArray>()) }
+        } finally {
+            unmockkConstructor(MediaMetadataRetriever::class)
+        }
+    }
+
+    @Test
+    fun `scaled frame oom is local best-effort and metadata columns still commit`() = runTest {
+        coEvery { videoRepository.updateVideoMetadata(any(), any(), any(), any(), any(), any()) } returns 1
+        val sut = VideoMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context)
+        val uri = mockk<Uri>()
+        mockkConstructor(MediaMetadataRetriever::class)
+        try {
+            mockkObject(cn.vectory.syncplayer.provider.MediaUris) {
+                every { cn.vectory.syncplayer.provider.MediaUris.mediaUri(any()) } returns uri
+                stubRetrieverBasics(uri)
+                every { anyConstructed<MediaMetadataRetriever>().getScaledFrameAtTime(any(), any(), any(), any()) } throws OutOfMemoryError("thumb-decode-oom")
+
+                // 不外抛：局部 OOM 兜底后提取链路照常完成
+                val returned = sut.extractAndSave(entity())
+                assertEquals(5L, returned.id)
+            }
+            // 元数据列仍提交（提取 pass 不因缩略图 OOM 失败）
+            coVerify(exactly = 1) { videoRepository.updateVideoMetadata(any(), any(), any(), any(), any(), any()) }
+            // OOM 不降级到更差的全量分配——fallback 不被调用；缩略图不落盘
+            verify(exactly = 0) { anyConstructed<MediaMetadataRetriever>().getFrameAtTime(any(), any()) }
+            coVerify(exactly = 0) { store.writeThumb(any<Long>(), any<ByteArray>()) }
+        } finally {
+            unmockkConstructor(MediaMetadataRetriever::class)
+        }
+    }
 }

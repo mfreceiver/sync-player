@@ -19,6 +19,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -909,5 +910,39 @@ class SyncServiceDrainCoordinatorTest {
         assertEquals(0, k.armedTokens.size)
         assertEquals(0, k.timer.armCount)
         assertEquals(1, k.eligibleStopCalls[0])
+    }
+
+    // ------------------------------------------------------------------
+    // #29（opus 复审测试 A）：consume 抛 OutOfMemoryError → 兜底包成
+    //      SyncException(UNKNOWN, SCAN) 上报恰一次，cause === 原 Error 对象。
+    // ------------------------------------------------------------------
+    @Test
+    fun `29 out of memory error from consume is reported once as wrapped unknown sync failure`() = runTest {
+        val oom = OutOfMemoryError("consume-oom")
+        val k = kit(backgroundScope + StandardTestDispatcher(testScheduler)) { rel, g ->
+            if (rel == 1L) {
+                g.entered.complete(Unit)
+                g.release.await()
+                throw oom
+            } else {
+                immediateConsume(rel, g)
+            }
+        }
+
+        k.coordinator.onSyncRequested(1L)
+        runCurrent()
+        assertTrue(k.gate(1L).entered.isCompleted)
+        k.gate(1L).release.complete(Unit) // pass 抛 OOM
+        runCurrent()
+
+        // 恰一次上报，且为包装后的结构化失败
+        assertEquals(1, k.passFailures.size)
+        val reported = k.passFailures.single().second
+        assertTrue(reported is SyncException)
+        assertEquals(SyncErrorCode.UNKNOWN, (reported as SyncException).code)
+        assertEquals(SyncOperation.SCAN, reported.operation)
+        // cause 保持原 Error 对象身份（可归因，不丢失）
+        assertSame(oom, reported.cause)
+        k.coordinator.cancelActiveDrain()
     }
 }
