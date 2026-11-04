@@ -690,6 +690,14 @@ internal class SyncDownloadPipeline(
                                                 throw e
                                             } catch (e: Exception) {
                                                 Log.w(TAG, SyncSafeLog.metadataExtractionFailed(e))
+                                            } catch (_: OutOfMemoryError) {
+                                                // P2-8（opus 复审）：提取器抛 OOM（缩略图解码
+                                                // 全尺寸位图等）时保持 best-effort 语义——下载本身
+                                                // 已成功，不因元数据窗口失败而让整轮同步走 FAILED。
+                                                // 在调用点统一兜底，覆盖全部 pass 与未来新增提取器；
+                                                // 保留提取器内部的局部 OOM catch 亦无妨。OOM 路径不做
+                                                // 额外分配——直接用常量串（与 SyncSafeLog 格式一致）。
+                                                Log.w(TAG, "metadata extraction failed: OutOfMemoryError")
                                             }
                                             syncLogRepository.log(
                                                 action = "DOWNLOAD",
@@ -943,10 +951,13 @@ internal class SyncDownloadPipeline(
         } catch (e: Throwable) {
             // H1（闪退最小修复集）：非 Exception 的 Throwable（OutOfMemoryError/
             // LinkageError/VirtualMachineError 子类等）兜底。选择转失败而非重抛：
-            // 服务侧 drain 循环/SupervisorJob 会吞掉重抛的 Error，唯一在途工作单元
-            // 静默消失、进度永远停留 Running；转结构化失败（UNKNOWN）可让 UI 收敛到
-            // FAILED 终态，且 per-action 两阶段提交（tmp→finalize）已保证单文件原子性，
-            // 整体失败不影响磁盘一致性。日志走 SyncSafeLog（只记异常类名，敏感红线）。
+            // 重抛的 Error 在无 CoroutineExceptionHandler 的 launch 中会经默认 handler
+            // 交线程 uncaughtExceptionHandler 杀进程（不是被 SupervisorJob 吞掉）——
+            // 兜底转结构化失败（UNKNOWN）才能让 UI 收敛到 FAILED 终态且进程存活。
+            // 一致性边界收窄（P2-7）：单文件一致性由两阶段提交（tmp→finalize）保证；
+            // 但 Error 落在 finalize 后、DB 行 PENDING→READY 提交前的元数据窗口时会
+            // 留下孤儿 tmp/final 文件——由下次 dryRun 的清点自愈（残余风险，
+            // 见 docs/specs/conventions.md）。日志走 SyncSafeLog（只记异常类名，敏感红线）。
             DebugLogger.e(TAG, SyncSafeLog.failure("SYNC", e))
             progressPublisher.value = progressPublisher.value.copy(
                 isRunning = false,
@@ -959,7 +970,9 @@ internal class SyncDownloadPipeline(
                 relationId,
                 SyncOutcome(
                     SyncOutcome.Status.FAILED,
-                    errorCode = (e as? SyncException)?.code?.name ?: SyncErrorCode.UNKNOWN.name
+                    // P2-12：死代码移除——Throwable 分支上 e 不可能是 SyncException
+                    //（其上层 catch(Exception) 已拦截），恒为 UNKNOWN。
+                    errorCode = SyncErrorCode.UNKNOWN.name
                 )
             )
             syncLogRepository.log(

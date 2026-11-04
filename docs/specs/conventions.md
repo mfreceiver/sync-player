@@ -68,5 +68,6 @@
 3. **`SyncEngineBoundaryTest` 重试用例真实退避耗时**（~1-3s），因 `Dispatchers.IO` 上 `delay` 无法被虚拟时间控制。
 4. **`androidTest` DAO 测试未在真机执行**（编译验证通过，CI 无模拟器 job）。
 5. **播放器进度保存 drain 单条有界**：每次 `saveProgress` 以 `saveTimeoutMs`（默认 5s，`@VisibleForTesting` 可注入）为上界，超时放弃该条并继续 drain——挂起的保存不再无限延长 scope 持有 ViewModel 引用，但极端慢 IO 下末次保存可能被放弃。
+6. **同步整轮 Throwable 兜底的磁盘一致性边界**：单文件一致性由两阶段提交（tmp→finalize）保证；但 Error（OOM 等）落在 finalize 后、DB 行 PENDING→READY 提交前的元数据窗口时会留下孤儿 tmp/final 文件——由下次 dryRun 的清点自愈，不做即时清理。
 
 其余风险见 [sync.md](sync.md)（listDirectories/isNotFound/classifySmb/two-phase-commit）。

@@ -373,8 +373,10 @@ class SyncPreviewViewModel @Inject constructor(
                 }
             } catch (e: Throwable) {
                 // H1（闪退最小修复集）：非 Exception 的 Throwable（OOM/LinkageError 等）
-                // 兜底——viewModelScope + SupervisorJob 会吞掉 Error，无兜底则状态永远
-                // 停留在 Scanning。转 ScanFailed(UNKNOWN)（结构化，不读 Throwable.message）。
+                // 兜底。机制更正（P2-6）：无兜底时未捕获 Error 并不会被 SupervisorJob
+                // 「吞掉后静默」——它经默认 CoroutineExceptionHandler 交线程
+                // uncaughtExceptionHandler 直接杀进程。兜底转 ScanFailed(UNKNOWN)
+                // （结构化，不读 Throwable.message）才能既保进程又让状态离开 Scanning。
                 if (isScanCurrent(requestId, modeSnapshot, gen)) {
                     _state.value = SyncPreviewState.ScanFailed(
                         SyncPreviewState.Issue(SyncPreviewIssue.UNKNOWN, null)
@@ -655,9 +657,10 @@ class SyncPreviewViewModel @Inject constructor(
                 )
             } catch (e: Throwable) {
                 // H1（闪退最小修复集）：非 Exception 的 Throwable（OOM/LinkageError 等）
-                // 兜底——viewModelScope + SupervisorJob 会吞掉 Error，无兜底则页面永远
-                // 卡在 Running。归 FAILED 类终态（结构化 UNKNOWN 文案，不读
-                // Throwable.message——敏感红线）。
+                // 兜底。机制更正（P2-6）：无兜底时未捕获 Error 并不会被 SupervisorJob
+                // 「吞掉后静默」——它经默认 CoroutineExceptionHandler 交线程
+                // uncaughtExceptionHandler 直接杀进程。兜底归 FAILED 类终态（结构化
+                // UNKNOWN 文案，不读 Throwable.message——敏感红线）才能既保进程又收敛。
                 if (activeRunId != runId) return@launch
                 activeRunId = 0L
                 _error.value = syncErrorMessage(SyncException(SyncErrorCode.UNKNOWN, SyncOperation.DELETE), context)
