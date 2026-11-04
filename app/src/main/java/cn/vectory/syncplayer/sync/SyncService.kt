@@ -1,6 +1,5 @@
 package cn.vectory.syncplayer.sync
 
-import android.app.ForegroundServiceStartNotAllowedException
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -39,6 +38,14 @@ class SyncService : Service() {
     private lateinit var coordinatorScope: CoroutineScope
     private lateinit var drainCoordinator: SyncServiceDrainCoordinator
 
+    /**
+     * P1-1（opus 复审）：onCreate 阶段 startForeground 被拒即置位。此后 drainCoordinator /
+     * coordinatorScope 保持未初始化——AMS 仍可能投递 onStartCommand（瞬态恢复后第二次
+     * startForegroundGuarded 成功的场景），一旦走到 onSyncRequested/cancelActiveDrain*
+     * 就是 UninitializedPropertyAccessException。命中即只做停服，不再触碰协调器。
+     */
+    private var foregroundRejected = false
+
     private val _syncProgress = MutableStateFlow(SyncProgress())
     val syncProgress = _syncProgress.asStateFlow()
 
@@ -46,8 +53,10 @@ class SyncService : Service() {
         super.onCreate()
         SyncNotificationHelper.createNotificationChannel(this)
         if (!startForegroundGuarded(SyncProgress())) {
-            // H3：前台化被拒即放弃服务生命周期（通知/清 pending/stopSelf 在 helper 内）；
-            // collector/coordinator 不再建立。
+            // H3：前台化被拒即放弃服务生命周期（终态发布/通知/stopSelf 在 helper 内）；
+            // collector/coordinator 不再建立。P1-1：置位拒绝标志——后续 onStartCommand/
+            // cancelSync/onTimeout 命中即直接停服，绝不触碰未初始化的协调器。
+            foregroundRejected = true
             return
         }
 
@@ -88,20 +97,32 @@ class SyncService : Service() {
             // 复审阻断（敏感日志红线）：只留 relationId + 异常类别——不拼 path、不传原始
             // Throwable/message（DebugLogger 带 throwable 会把 stack+message 写入调试环形缓冲）。
             onPassFailed = { relationId, e ->
+                // P2-5：Throwable 兜底分支抛上来的总是包装后的 SyncException——
+                // 只记 e.javaClass.simpleName 会恒为 "SyncException"，无诊断价值；
+                // 补记 cause 类名才能看到真实失败类型（OOM/LinkageError/...）。
                 DebugLogger.w(
                     "SyncService",
-                    "drain pass failed: relationId=$relationId, error=${e.javaClass.simpleName}"
+                    "drain pass failed: relationId=$relationId, " +
+                        "error=${e.javaClass.simpleName}, " +
+                        "cause=${(e.cause ?: e).javaClass.simpleName}"
                 )
             },
         )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // P1-1：onCreate 阶段前台化被拒后协调器未初始化——AMS 仍会投递本回调。不重试
+        // startForeground（即便瞬态恢复成功，下方 onSyncRequested 也会因协调器未初始化
+        // 抛 UninitializedPropertyAccessException）。直接停服并 NOT_STICKY。
+        if (foregroundRejected) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         // E1: 每次 onStartCommand（含系统重建）都重新确立前台状态，
         // 不能只依赖 onCreate——系统在重建/重复拉起场景下可能跳过 onCreate。
         if (!startForegroundGuarded(_syncProgress.value)) {
             // H3：前台化被拒（如 dataSync 预算耗尽后系统拒批）——服务无法履行前台
-            // 义务，继续执行只会被系统强制处置；helper 内已发 FAILED 通知、清 pending、
+            // 义务，继续执行只会被系统强制处置；helper 内已发布 FAILED 终态、发通知、
             // stopSelf。返回 NOT_STICKY（理由见下方）。
             return START_NOT_STICKY
         }
@@ -122,10 +143,11 @@ class SyncService : Service() {
         // 旧 pendingStopJob 手工取消由 onSyncRequested→cancelStop 承接）。
         drainCoordinator.onSyncRequested(relationId)
 
-        // START_NOT_STICKY（H3）：pending 任务持久化在 DB（两阶段提交），崩溃后由
-        // 下次显式 start 的 drain 循环重新消费；START_REDELIVER_INTENT 的自动重投
-        // 在 dataSync 预算受限/前台化被拒的窗口只会反复拉起一个注定失败的服务，
-        // 放大崩溃循环、无任何收益。
+        // START_NOT_STICKY（H3）：pending 任务持久化在 DB（两阶段提交），但服务**不再
+        // 自动续跑**——pending_sync_action 无启动恢复入口，START_REDELIVER_INTENT 的
+        // 自动重投本是唯一续跑路径，取舍后弃用：在 dataSync 预算受限/前台化被拒的窗口
+        // 重投只会反复拉起一个注定失败的服务，放大崩溃循环。接受的行为是进程死亡后
+        // 不自动续跑，需用户重新扫描触发（残余风险，见 docs/specs/sync.md）。
         return START_NOT_STICKY
     }
 
@@ -137,6 +159,11 @@ class SyncService : Service() {
      * 立即停本 start 请求。
      */
     override fun onTimeout(startId: Int) {
+        // P1-1：onCreate 阶段被拒的半初始化服务收到超时——协调器未建立，只停服。
+        if (foregroundRejected) {
+            stopSelf()
+            return
+        }
         SyncNotificationHelper.updateNotification(
             this,
             syncEngine.progress.value.copy(phase = SyncPhase.CANCELLED)
@@ -162,11 +189,11 @@ class SyncService : Service() {
 
     /**
      * H3（闪退最小修复集）：startForeground 防护壳。API 35 对 dataSync 类型前台服务
-     * 施加严格预算——预算耗尽/时机违规（ForegroundServiceStartNotAllowedException）
-     * 或通知服务未就绪（IllegalStateException）时 startForeground 直接抛异常击穿
-     * Service 回调杀进程。失败路径：发 FAILED 通知（复用 SyncNotificationHelper 终态
-     * 通知能力）、清 pending（取消 drain 缓冲，已入队请求不再执行——对应行持久化在
-     * DB，下次 start 重新消费）、stopSelf。日志只记异常类名（敏感红线）。
+     * 施加严格预算——预算耗尽/时机违规（ForegroundServiceStartNotAllowedException，ISE
+     * 子类）或通知服务未就绪（IllegalStateException）时 startForeground 直接抛异常
+     * 击穿 Service 回调杀进程。失败路径：向引擎发布 FAILED 终态（P1-3，使 UI
+     * observeSyncCompletion 收敛）、发终态通知、取消已建立的 drain、stopSelf。
+     * 日志只记异常类名（敏感红线；类名本身即区分 FGSINAIE 与其他 ISE）。
      */
     private fun startForegroundGuarded(progress: SyncProgress): Boolean {
         return try {
@@ -175,10 +202,9 @@ class SyncService : Service() {
                 SyncNotificationHelper.createOngoingNotification(this, progress)
             )
             true
-        } catch (e: ForegroundServiceStartNotAllowedException) {
-            onForegroundStartRejected(e)
-            false
         } catch (e: IllegalStateException) {
+            // P2-12：ForegroundServiceStartNotAllowedException 是 ISE 子类——单 catch
+            // 覆盖两者；日志记 e.javaClass.simpleName 即可区分具体被拒原因。
             onForegroundStartRejected(e)
             false
         }
@@ -189,9 +215,11 @@ class SyncService : Service() {
             "SyncService",
             "startForeground rejected: error=${e.javaClass.simpleName}"
         )
-        SyncNotificationHelper.updateNotification(
-            this, syncEngine.progress.value.copy(phase = SyncPhase.FAILED)
-        )
+        // P1-3（opus 复审）：必须向 progressPublisher 发布 FAILED 终态——否则 UI 侧
+        // observeSyncCompletion 永远等不到终态、预览页永卡 Running。通知同样用发布
+        // 后的终态快照，而非旧的 progress.value。
+        syncEngine.publishForegroundStartRejected()
+        SyncNotificationHelper.updateNotification(this, syncEngine.progress.value)
         if (::drainCoordinator.isInitialized) drainCoordinator.cancelActiveDrain()
         stopSelf()
     }
@@ -205,6 +233,9 @@ class SyncService : Service() {
      * 新 drain 或移除其前台。
      */
     private fun cancelSync() {
+        // P1-1：半初始化服务（onCreate 被拒）上的取消意图——协调器未建立，仅停服语义
+        // 已由 onStartCommand 入口的 foregroundRejected 分支处理，这里不再触碰协调器。
+        if (foregroundRejected) return
         SyncNotificationHelper.updateNotification(
             this,
             syncEngine.progress.value.copy(phase = SyncPhase.CANCELLED)

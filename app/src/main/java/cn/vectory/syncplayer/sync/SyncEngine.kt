@@ -3,6 +3,7 @@ package cn.vectory.syncplayer.sync
 import android.content.Context
 import cn.vectory.syncplayer.data.local.dao.PendingSyncActionDao
 import cn.vectory.syncplayer.data.model.SyncAction
+import cn.vectory.syncplayer.data.model.SyncPhase
 import cn.vectory.syncplayer.data.model.SyncProgress
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
@@ -192,6 +193,18 @@ class SyncEngine @Inject constructor(
     fun resetProgress() {
         if (isSyncRunning) return
         progressPublisher.reset()
+    }
+
+    /**
+     * P1-3（opus 复审）：startForeground 被拒时由 SyncService 调用——以当前快照发布
+     * FAILED 终态（错误码语义为 UNKNOWN：前台化被拒不是引擎内部失败，无更贴切的结构化码）。
+     * 不发布的话 UI 侧 observeSyncCompletion 永远等不到终态、预览页永卡 Running。
+     */
+    fun publishForegroundStartRejected() {
+        progressPublisher.value = progressPublisher.value.copy(
+            isRunning = false,
+            phase = SyncPhase.FAILED
+        )
     }
 
     suspend fun dryRunDelete(relationId: Long): Pair<List<SyncAction>, String?> =

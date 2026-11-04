@@ -78,3 +78,4 @@ SyncException(code, operation, path?, host?, expectedBytes?/actualBytes?/availab
 1. `isNotFound()` 仅按类型（`FileNotFoundException`）。provider 用普通 `IOException` 文本信号 not-found 时会被当真实失败（DB 行保留）——保守，绝不误删。
 2. `classifySmbException` 以 `ntStatus` 数值分类为主、jcifs 英文状态短语为兜底。未知变体安全降级为 `UNKNOWN`→`DOWNLOAD_FAILED`。
 3. 无两阶段提交（Room + EncryptedSharedPreferences + 文件系统）；append-only 写不做崩溃后完整性检查（best-effort purge marker 幂等 → 无害）。
+4. `SyncService` 返回 `START_NOT_STICKY`（防 dataSync 预算受限窗口的崩溃循环）：进程死亡后**不自动续跑**——`pending_sync_action` 行虽持久化但无启动恢复入口，需用户重新扫描触发。
