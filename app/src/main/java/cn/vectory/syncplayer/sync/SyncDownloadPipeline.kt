@@ -940,6 +940,36 @@ internal class SyncDownloadPipeline(
                 errorMessage = syncErrorMessage(e, context)
             )
             return false
+        } catch (e: Throwable) {
+            // H1（闪退最小修复集）：非 Exception 的 Throwable（OutOfMemoryError/
+            // LinkageError/VirtualMachineError 子类等）兜底。选择转失败而非重抛：
+            // 服务侧 drain 循环/SupervisorJob 会吞掉重抛的 Error，唯一在途工作单元
+            // 静默消失、进度永远停留 Running；转结构化失败（UNKNOWN）可让 UI 收敛到
+            // FAILED 终态，且 per-action 两阶段提交（tmp→finalize）已保证单文件原子性，
+            // 整体失败不影响磁盘一致性。日志走 SyncSafeLog（只记异常类名，敏感红线）。
+            DebugLogger.e(TAG, SyncSafeLog.failure("SYNC", e))
+            progressPublisher.value = progressPublisher.value.copy(
+                isRunning = false,
+                phase = SyncPhase.FAILED,
+                relationId = relationId,
+                relationName = name,
+                localBasePath = basePath
+            )
+            syncRelationRepository.updateLastSync(
+                relationId,
+                SyncOutcome(
+                    SyncOutcome.Status.FAILED,
+                    errorCode = (e as? SyncException)?.code?.name ?: SyncErrorCode.UNKNOWN.name
+                )
+            )
+            syncLogRepository.log(
+                action = "SYNC",
+                relativePath = "",
+                status = "FAILED",
+                dryRun = false,
+                errorMessage = syncErrorMessage(e, context)
+            )
+            return false
         } finally {
         }
     }

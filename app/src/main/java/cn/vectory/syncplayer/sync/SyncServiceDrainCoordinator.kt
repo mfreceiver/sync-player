@@ -156,30 +156,53 @@ internal class SyncServiceDrainCoordinator(
             } catch (e: CancellationException) {
                 throw e // 红线：CE 先传播——普通边界不吞取消
             } catch (e: Exception) {
-                // 复审阻断（BUG-018 后续）：普通异常不得无条件终结 launch——已接收请求（如 B）
-                // 会无 pass/停服状态地静默遗留。处置：上报（不吞，回调契约禁抛）→ 失败 pass
-                // 的任务状态未知，但引擎执行体已随异常终结（无存活后台工作）——按无任务路径
-                // 武装有界停服；队列非空则不武装，继续 drain 由后续 pass 收尾接管。若失败收尾
-                // 连续武装仍失败，则撤销令牌并走停服出口，避免永久 receive。
-                try {
-                    onPassFailed(relationId, e)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) { /* 普通上报失败降级，不反杀循环 */ }
-                try {
-                    finishPassTail(myJob, hadTask = false)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    // 二次武装失败后令牌已撤销；队列仍空时立即走既有停服出口，不能回到永久
-                    // receive；若同步有新请求，保留既有 drain 语义继续消费它。
-                    if (requests.isEmpty) {
-                        onEligibleStop()
-                        return
-                    }
-                }
+                if (handlePassFailure(relationId, myJob, e)) return
+            } catch (e: Throwable) {
+                // H1（闪退最小修复集）：非 Exception 的 Throwable（OutOfMemoryError/
+                // LinkageError/VirtualMachineError 子类等）原先直接终结 launch——已入队
+                // 请求无 pass/停服状态地静默遗留；本循环跑在 Main.immediate +
+                // SupervisorJob 上、无未捕获异常 handler，Error 直上还可能击穿进程。
+                // 兜底：包成结构化 SyncException(UNKNOWN)（message 恒 null，cause 不落
+                // 日志），与普通 Exception 同路——上报回调只取异常类名（敏感红线）→
+                // 停服路径。SyncErrorCode 已有 UNKNOWN，无需新增语义码。
+                if (handlePassFailure(
+                        relationId, myJob,
+                        SyncException(SyncErrorCode.UNKNOWN, SyncOperation.SCAN, cause = e)
+                    )
+                ) return
             }
         }
+    }
+
+    /**
+     * 失败 pass 的统一处置（H1：普通 Exception 与 Throwable 兜底共用）。
+     * 复审阻断（BUG-018 后续）：普通异常不得无条件终结 launch——已接收请求（如 B）
+     * 会无 pass/停服状态地静默遗留。处置：上报（不吞，回调契约禁抛）→ 失败 pass
+     * 的任务状态未知，但引擎执行体已随异常终结（无存活后台工作）——按无任务路径
+     * 武装有界停服；队列非空则不武装，继续 drain 由后续 pass 收尾接管。若失败收尾
+     * 连续武装仍失败，则撤销令牌并走停服出口，避免永久 receive。
+     *
+     * @return true ⇒ 循环应终止（已走停服出口）；false ⇒ 继续消费后续请求。
+     */
+    private suspend fun handlePassFailure(relationId: Long, myJob: Job, error: Exception): Boolean {
+        try {
+            onPassFailed(relationId, error)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) { /* 普通上报失败降级，不反杀循环 */ }
+        try {
+            finishPassTail(myJob, hadTask = false)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // 二次武装失败后令牌已撤销；队列仍空时立即走既有停服出口，不能回到永久
+            // receive；若同步有新请求，保留既有 drain 语义继续消费它。
+            if (requests.isEmpty) {
+                onEligibleStop()
+                return true
+            }
+        }
+        return false
     }
 
     /** pass 收尾：非挂起、confined 原子。队列空且循环身份未变时武装 ELIGIBLE 停服。 */

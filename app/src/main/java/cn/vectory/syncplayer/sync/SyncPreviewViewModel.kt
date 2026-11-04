@@ -371,6 +371,15 @@ class SyncPreviewViewModel @Inject constructor(
                         SyncPreviewState.Issue(e.toPreviewIssue(), (e as? SyncException)?.code)
                     )
                 }
+            } catch (e: Throwable) {
+                // H1（闪退最小修复集）：非 Exception 的 Throwable（OOM/LinkageError 等）
+                // 兜底——viewModelScope + SupervisorJob 会吞掉 Error，无兜底则状态永远
+                // 停留在 Scanning。转 ScanFailed(UNKNOWN)（结构化，不读 Throwable.message）。
+                if (isScanCurrent(requestId, modeSnapshot, gen)) {
+                    _state.value = SyncPreviewState.ScanFailed(
+                        SyncPreviewState.Issue(SyncPreviewIssue.UNKNOWN, null)
+                    )
+                }
             } finally {
                 // 防御兜底：非当前扫描的晚回若把状态遗留在本 requestId 的
                 // Scanning（理论上不应发生），回 Idle 而不是永远转圈。
@@ -641,6 +650,17 @@ class SyncPreviewViewModel @Inject constructor(
                 if (activeRunId != runId) return@launch
                 activeRunId = 0L
                 _error.value = syncErrorMessage(e, context)
+                _state.value = SyncPreviewState.Finished(
+                    SyncRunResult(runId = runId, outcome = SyncRunOutcome.FAILED)
+                )
+            } catch (e: Throwable) {
+                // H1（闪退最小修复集）：非 Exception 的 Throwable（OOM/LinkageError 等）
+                // 兜底——viewModelScope + SupervisorJob 会吞掉 Error，无兜底则页面永远
+                // 卡在 Running。归 FAILED 类终态（结构化 UNKNOWN 文案，不读
+                // Throwable.message——敏感红线）。
+                if (activeRunId != runId) return@launch
+                activeRunId = 0L
+                _error.value = syncErrorMessage(SyncException(SyncErrorCode.UNKNOWN, SyncOperation.DELETE), context)
                 _state.value = SyncPreviewState.Finished(
                     SyncRunResult(runId = runId, outcome = SyncRunOutcome.FAILED)
                 )
