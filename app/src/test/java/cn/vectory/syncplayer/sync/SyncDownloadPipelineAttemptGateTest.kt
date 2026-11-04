@@ -398,9 +398,12 @@ class SyncDownloadPipelineAttemptGateTest {
 
         assertFalse(result)
         assertEquals(1, publisher.value.failedFiles)
-        // P0-4（sol）：CAS=0 ⇒ 并发赢家推进 generation——绝不删赢家行/共享 final。
-        coVerify(exactly = 0) { store.delete(42L) }
-        coVerify(exactly = 0) { videoRepository.deleteById(42L) }
+        // 异常路径（非 CAS=0）：内部卷 COMMITTED 单点回滚——删 final + 删行各恰一次。
+        // CAS=0 的"不删赢家"语义由 `zero-row sync metadata commit is explicit failure
+        // with committed cleanup` 与 `cancellation during zero-row commit delivers CE
+        // without destructive cleanup` 两个专项测试覆盖。
+        coVerify(exactly = 1) { store.delete(42L) }
+        coVerify(exactly = 1) { videoRepository.deleteById(42L) }
         coVerify(exactly = 1) {
             syncLogRepository.log("DOWNLOAD", any(), "FAILED", any(), any(), any())
         }
