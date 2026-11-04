@@ -165,6 +165,9 @@ internal class SyncServiceDrainCoordinator(
                 // 兜底：包成结构化 SyncException(UNKNOWN)（message 恒 null，cause 不落
                 // 日志），与普通 Exception 同路——上报回调只取异常类名（敏感红线）→
                 // 停服路径。SyncErrorCode 已有 UNKNOWN，无需新增语义码。
+                // P2-5（opus 复审）：SyncOperation.SCAN 只是「最贴近的既有枚举值」——
+                // 一个 drain pass 实际横跨 scan/download/delete 多操作（consumeAndExecute
+                // 全链路），并非纯扫描；此处 operation 仅用于结构化归类，不承诺精确归因。
                 if (handlePassFailure(
                         relationId, myJob,
                         SyncException(SyncErrorCode.UNKNOWN, SyncOperation.SCAN, cause = e)

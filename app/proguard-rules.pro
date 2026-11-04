@@ -12,17 +12,19 @@
 # remains enabled. SMB verified working in release with class-name-only keep.
 -keep class jcifs.**
 -keep class net.schmizz.**
-# sshj 0.39+：主体包从 net.schmizz 迁移到 com.hierynomus。与 net.schmizz 不同，
-# 0.39 的 security/transport 内部存在按名称的算法/工厂发现（KeyAlgorithm 注册、
-# NamedFactory 查找），member keep（{ *; }）避免构造器/方法被 R8 裁剪后
-# 反射实例化失败（InternalError 绕过 catch(Exception) → 崩溃），与 BouncyCastle 同理。
+# sshj 0.39+：jar 同时含 net.schmizz.**（主体，~356 类）与 com.hierynomus.**（~52 类）
+# ——不存在「主体包迁移」，两个坐标都在 jar 内。com.hierynomus 部分的 security/
+# transport 内部存在按名称的算法/工厂发现（KeyAlgorithm 注册、NamedFactory 查找），
+# member keep（{ *; }）避免构造器/方法被 R8 裁剪后反射实例化失败（InternalError
+# 绕过 catch(Exception) → 崩溃），与 BouncyCastle 同理。
 -keep class com.hierynomus.** { *; }
 
 -dontwarn jcifs.**
 -dontwarn net.schmizz.**
 -dontwarn com.hierynomus.**
-# sshj 依赖 eddsa（EdDSA 曲线表按类名注册发现）与 slf4j-api（Android 无绑定实现，
-# 缺绑定仅在运行时 NOP，非致命）。
+# sshj 依赖 eddsa（EdDSA 签名实现）与 slf4j-api（Android 无绑定实现，缺绑定仅
+# 运行时 NOP，非致命）。eddsa 无已知反射需求——此 keep 是防御性的（防未来版本
+# 引入按类名的发现机制时被裁剪），非必须。
 -keep class net.i2p.crypto.eddsa.**
 -dontwarn net.i2p.crypto.eddsa.**
 -dontwarn org.slf4j.**

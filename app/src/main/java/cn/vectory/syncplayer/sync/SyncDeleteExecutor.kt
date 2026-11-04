@@ -8,6 +8,7 @@ import cn.vectory.syncplayer.data.model.SyncOutcome
 import cn.vectory.syncplayer.data.model.SyncProgress
 import cn.vectory.syncplayer.data.model.SyncProtocol
 import cn.vectory.syncplayer.data.model.SyncPhase
+import cn.vectory.syncplayer.debug.DebugLogger
 import cn.vectory.syncplayer.data.repository.PlaybackRepository
 import cn.vectory.syncplayer.data.repository.SyncLogRepository
 import cn.vectory.syncplayer.data.repository.SyncRelationRepository
@@ -249,6 +250,35 @@ internal class SyncDeleteExecutor(
                 dryRun = false,
                 errorMessage = syncErrorMessage(e, context)
             )
+            return false
+        } catch (e: Throwable) {
+            // P2-9（opus 复审，与 SyncDownloadPipeline H1 同构）：非 Exception 的
+            // Throwable（OOM/LinkageError 等）兜底。无此分支时未捕获 Error 会经默认
+            // CoroutineExceptionHandler 交线程 uncaughtExceptionHandler 杀进程，且
+            // progressPublisher 的 isRunning/DELETING 永不复位（页面永卡删除中）。
+            // CE 已在上层先行传播；兜底转结构化失败（恒 UNKNOWN——Throwable 分支上
+            // e 不可能是 SyncException），复位进度终态后返回 false。
+            DebugLogger.e(TAG, SyncSafeLog.failure("DELETE_BOTH", e))
+            progressPublisher.value = progressPublisher.value.copy(
+                isRunning = false,
+                phase = SyncPhase.FAILED,
+                relationId = relationId,
+                relationName = relation.name,
+                localBasePath = relation.localBasePath
+            )
+            try {
+                withContext(NonCancellable) {
+                    syncRelationRepository.updateLastSync(
+                        relationId,
+                        SyncOutcome(
+                            SyncOutcome.Status.FAILED,
+                            errorCode = SyncErrorCode.UNKNOWN.name
+                        )
+                    )
+                }
+            } catch (_: Exception) {
+                // best-effort：终态记录失败不改变兜底语义（不外抛、不转成功）
+            }
             return false
         } finally {
             client.disconnect()

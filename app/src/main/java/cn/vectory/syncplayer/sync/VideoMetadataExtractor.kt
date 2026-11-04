@@ -105,8 +105,22 @@ class VideoMetadataExtractor @Inject constructor(
         //    无损数据），转提取失败跳过缩略，不崩进程。
         var bitmap: Bitmap? = null
         try {
-            bitmap = mmr.getScaledFrameAtTime(
-                1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 640, 640
+            // P2-10（opus 复审，参照 player/SeekPreviewExtractor 的既有回退模式）：
+            // quirky 设备的 getScaledFrameAtTime 已知会返回 null 或抛异常——回退
+            // getFrameAtTime（全量帧，OPTION_CLOSEST_SYNC）。inner catch 只接
+            // Exception：CE 必须先传播（红线），Error/OOM 落到外层局部兜底而不是
+            // 静默降级到一次更差的全量分配。
+            val scaled = try {
+                mmr.getScaledFrameAtTime(
+                    1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 640, 640
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            bitmap = scaled ?: mmr.getFrameAtTime(
+                1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC
             )
             if (bitmap != null) {
                 val baos = ByteArrayOutputStream()
@@ -120,7 +134,8 @@ class VideoMetadataExtractor @Inject constructor(
             Log.w(TAG, SyncSafeLog.metadataExtractionFailed(e))
         } catch (_: OutOfMemoryError) {
             // 局部 OOM 兜底：缩略图 pass 失败可接受，元数据/正文不受影响。
-            Log.w(TAG, SyncSafeLog.metadataExtractionFailed(OutOfMemoryError()))
+            // P2-10：OOM 路径不做额外分配——常量串，与 SyncSafeLog 输出格式一致。
+            Log.w(TAG, "metadata extraction failed: OutOfMemoryError")
         } finally {
             bitmap?.recycle()
         }
