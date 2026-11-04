@@ -12,9 +12,20 @@
 # remains enabled. SMB verified working in release with class-name-only keep.
 -keep class jcifs.**
 -keep class net.schmizz.**
+# sshj 0.39+：主体包从 net.schmizz 迁移到 com.hierynomus。与 net.schmizz 不同，
+# 0.39 的 security/transport 内部存在按名称的算法/工厂发现（KeyAlgorithm 注册、
+# NamedFactory 查找），member keep（{ *; }）避免构造器/方法被 R8 裁剪后
+# 反射实例化失败（InternalError 绕过 catch(Exception) → 崩溃），与 BouncyCastle 同理。
+-keep class com.hierynomus.** { *; }
 
 -dontwarn jcifs.**
 -dontwarn net.schmizz.**
+-dontwarn com.hierynomus.**
+# sshj 依赖 eddsa（EdDSA 曲线表按类名注册发现）与 slf4j-api（Android 无绑定实现，
+# 缺绑定仅在运行时 NOP，非致命）。
+-keep class net.i2p.crypto.eddsa.**
+-dontwarn net.i2p.crypto.eddsa.**
+-dontwarn org.slf4j.**
 -dontwarn org.bouncycastle.**
 -dontwarn sun.security.x509.X509Key
 
