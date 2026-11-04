@@ -163,11 +163,18 @@ class ImageMetadataExtractor @Inject constructor(
                 }
             }
             // pass3 EXIF：读取失败 ⇒ 提取失败（保留既有 dateTaken）；成功无标签 ⇒ null
-            val exifIn = context.contentResolver.openInputStream(uri)
-                ?: throw IOException("open exif stream failed")
-            // A1-03：无内层 catch(Exception)——readDateTaken 内抛出的任何 CE
-            // 经 use 原样上抛，由外层 CE-first 分支传播（不被吞成提取失败/成功缺失）。
-            dateTaken = exifIn.use { exifDateReader.readDateTaken(it) }
+            // H1（闪退最小修复集）：ExifInterface 解析畸形图片可瞬时大额分配——局部
+            // catch(OutOfMemoryError) 转提取失败（早退、保留既有列值），不崩进程。
+            // CE 不属于 Error，不受此 catch 影响，仍经外层 CE-first 分支传播。
+            try {
+                val exifIn = context.contentResolver.openInputStream(uri)
+                    ?: throw IOException("open exif stream failed")
+                // A1-03：无内层 catch(Exception)——readDateTaken 内抛出的任何 CE
+                // 经 use 原样上抛，由外层 CE-first 分支传播（不被吞成提取失败/成功缺失）。
+                dateTaken = exifIn.use { exifDateReader.readDateTaken(it) }
+            } catch (_: OutOfMemoryError) {
+                throw IOException("exif read oom")
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

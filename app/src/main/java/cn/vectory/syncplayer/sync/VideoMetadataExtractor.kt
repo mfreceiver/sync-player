@@ -96,19 +96,33 @@ class VideoMetadataExtractor @Inject constructor(
     }
 
     private suspend fun generateThumbnail(mmr: MediaMetadataRetriever, videoItem: VideoItemEntity) {
+        // H1（闪退最小修复集）：缩略帧解码是提取链路中唯一的大额像素分配点。
+        // 1) getScaledFrameAtTime 限定 640×640（API 27+，minSdk 34 直接可用）——
+        //    4K/8K 源不再按原始分辨率分配帧位图；
+        // 2) recycle 移入 finally 且判空——compress/writeThumb 抛出（含 CE）时
+        //    位图内存必被回收；
+        // 3) 局部 catch(OutOfMemoryError)：best-effort 语义允许失败（缩略图缺失
+        //    无损数据），转提取失败跳过缩略，不崩进程。
+        var bitmap: Bitmap? = null
         try {
-            val bitmap = mmr.getFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            bitmap = mmr.getScaledFrameAtTime(
+                1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 640, 640
+            )
             if (bitmap != null) {
                 val baos = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 90, baos)
                 writeThumbRouted(videoItem.id, baos.toByteArray())
-                bitmap.recycle()
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             // A1 敏感日志红线：安全摘要，不拼 fileName、不传原始 Throwable。
             Log.w(TAG, SyncSafeLog.metadataExtractionFailed(e))
+        } catch (_: OutOfMemoryError) {
+            // 局部 OOM 兜底：缩略图 pass 失败可接受，元数据/正文不受影响。
+            Log.w(TAG, SyncSafeLog.metadataExtractionFailed(OutOfMemoryError()))
+        } finally {
+            bitmap?.recycle()
         }
     }
 
