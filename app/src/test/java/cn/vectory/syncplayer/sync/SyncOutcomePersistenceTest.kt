@@ -286,6 +286,8 @@ class SyncOutcomePersistenceTest {
     @Test
     fun `insufficient space abort persists FAILED with INSUFFICIENT_SPACE`() = runTest {
         every { mediaFileStore.usableSpace() } returns 0L
+        // 外部 SD v2：目标卷预判会按 action 查 existing 行（新文件 → null → 默认卷）。
+        coEvery { videoRepository.getByRelativePathAndRelationId(any(), relationId) } returns null
         val outcomes = captureOutcomes()
 
         val result = syncEngine.executeSync(relationId, listOf(

@@ -2,6 +2,7 @@ package cn.vectory.syncplayer.sync
 
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
+import cn.vectory.syncplayer.storage.DatasetIdSource
 import cn.vectory.syncplayer.storage.MediaFileStore
 import dagger.Lazy
 import android.media.MediaMetadataRetriever
@@ -37,6 +38,9 @@ import java.io.IOException
  */
 class VideoMetadataExtractorTest {
 
+    /** P1-11：datasetId 源桩（构造签名用）。 */
+    private val TestDatasetIdSource = DatasetIdSource { "ds-test" }
+
     private val videoRepository = mockk<VideoRepository>(relaxed = true)
     private val store = mockk<MediaFileStore>(relaxed = true)
     private val storeLazy = mockk<Lazy<MediaFileStore>>()
@@ -63,7 +67,7 @@ class VideoMetadataExtractorTest {
     @Test
     fun `successful extraction commits five video columns and never upserts`() = runTest {
         coEvery { videoRepository.updateVideoMetadata(any(), any(), any(), any(), any(), any()) } returns 1
-        val sut = VideoMetadataExtractor(videoRepository, storeLazy, context)
+        val sut = VideoMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context)
 
         val returned = sut.extractAndSave(entity())
 
@@ -82,7 +86,7 @@ class VideoMetadataExtractorTest {
     fun `zero-row column update returns input entity without resurrection`() = runTest {
         coEvery { videoRepository.updateVideoMetadata(any(), any(), any(), any(), any(), any()) } returns 0
         val input = entity()
-        val sut = VideoMetadataExtractor(videoRepository, storeLazy, context)
+        val sut = VideoMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context)
 
         val returned = sut.extractAndSave(input)
 
@@ -93,7 +97,7 @@ class VideoMetadataExtractorTest {
 
     @Test
     fun `extraction failure keeps existing row untouched`() = runTest {
-        val sut = VideoMetadataExtractor(videoRepository, storeLazy, context)
+        val sut = VideoMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context)
         val input = entity()
 
         // A3（rev-gpt）：作用域内显式接收返回值并断言，verify 在作用域外
@@ -115,7 +119,7 @@ class VideoMetadataExtractorTest {
 
     @Test
     fun `setDataSource failure is extraction failure with release exactly once`() = runTest {
-        val sut = VideoMetadataExtractor(videoRepository, storeLazy, context)
+        val sut = VideoMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context)
         val input = entity()
         // A4（rev-gpt）：mediaUri 返回类型为 Kotlin 非空 Uri——mock 实例而非 null
         val uri = mockk<Uri>()
@@ -148,7 +152,7 @@ class VideoMetadataExtractorTest {
 
     @Test
     fun `cancellation from setDataSource propagates original CE with release exactly once`() = runTest {
-        val sut = VideoMetadataExtractor(videoRepository, storeLazy, context)
+        val sut = VideoMetadataExtractor(videoRepository, storeLazy, TestDatasetIdSource, context)
         val input = entity()
         val ce = CancellationException("retriever-ce")
         // A4（rev-gpt）：同上——非空 Uri 用 mock 实例

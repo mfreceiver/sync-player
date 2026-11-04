@@ -284,7 +284,7 @@ class SyncDeleteExecutorTest {
 
         // 远端失败 → 本地状态必须原样保留（行/密文/缩略图/播放记录）
         coVerify(exactly = 0) { store.delete(any()) }
-        coVerify(exactly = 0) { store.deleteThumb(any()) }
+        coVerify(exactly = 0) { store.deleteThumb(any<Long>()) }
         coVerify(exactly = 0) { videoRepository.deleteByRelativePathAndRelationId(any(), any()) }
         coVerify(exactly = 0) { playbackRepository.deleteByVideoId(any()) }
     }

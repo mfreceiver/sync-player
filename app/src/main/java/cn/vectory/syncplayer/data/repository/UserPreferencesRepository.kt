@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -50,6 +51,10 @@ class UserPreferencesRepository @Inject constructor(
         val QUICK_RECYCLE = booleanPreferencesKey("quick_recycle")
         val SECURE_LOCK_ENABLED = booleanPreferencesKey("secure_lock_enabled")
         val ONBOARDING_DISMISSED = booleanPreferencesKey("onboarding_dismissed")
+        // 外部 SD v2（任务包 B）：默认写入卷 id（SyncStoragePort.VOLUME_ID_INTERNAL 等）。
+        val DEFAULT_WRITE_VOLUME = stringPreferencesKey("default_write_volume")
+        // 外部 SD v2（任务包 B）：已登记外部卷的 uuid 集合（启动/同步开始时重登记）。
+        val REGISTERED_EXTERNAL_VOLUMES = stringSetPreferencesKey("registered_external_volumes")
     }
 
     val longPressSpeed: Flow<Float> = dataStore.data.map { it[Keys.LONG_PRESS_SPEED] ?: 2.0f }
@@ -107,6 +112,18 @@ class UserPreferencesRepository @Inject constructor(
 
     val onboardingDismissed: Flow<Boolean> = dataStore.data.map {
         it[Keys.ONBOARDING_DISMISSED] ?: false
+    }
+
+    // 外部 SD v2：默认写入卷（新文件落卷）；existing 行始终写回自身卷，不受此偏好影响。
+    // 空值/异常值归一到内部卷 id（fail-safe：读不到偏好时永不指向不存在的卷）。
+    val defaultWriteVolume: Flow<String> = dataStore.data.map {
+        it[Keys.DEFAULT_WRITE_VOLUME]?.takeIf { id -> id.isNotBlank() }
+            ?: cn.vectory.syncplayer.sync.VOLUME_ID_INTERNAL
+    }
+
+    // 外部 SD v2：已登记外部卷 uuid 集合（SyncStoragePort 启动/同步开始时据此重登记）。
+    val registeredExternalVolumes: Flow<Set<String>> = dataStore.data.map {
+        it[Keys.REGISTERED_EXTERNAL_VOLUMES] ?: emptySet()
     }
 
     suspend fun getLongPressSpeed(): Float = longPressSpeed.first()
@@ -186,5 +203,17 @@ class UserPreferencesRepository @Inject constructor(
 
     suspend fun setOnboardingDismissed(dismissed: Boolean) {
         dataStore.edit { it[Keys.ONBOARDING_DISMISSED] = dismissed }
+    }
+
+    suspend fun getDefaultWriteVolume(): String = defaultWriteVolume.first()
+
+    suspend fun getRegisteredExternalVolumes(): Set<String> = registeredExternalVolumes.first()
+
+    suspend fun setRegisteredExternalVolumes(uuids: Set<String>) {
+        dataStore.edit { it[Keys.REGISTERED_EXTERNAL_VOLUMES] = uuids }
+    }
+
+    suspend fun setDefaultWriteVolume(volumeId: String) {
+        dataStore.edit { it[Keys.DEFAULT_WRITE_VOLUME] = volumeId }
     }
 }

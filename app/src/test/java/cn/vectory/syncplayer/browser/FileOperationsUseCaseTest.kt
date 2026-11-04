@@ -77,7 +77,7 @@ class FileOperationsUseCaseTest {
         cacheRoot = tmp.newFolder("cache")
         context = mockk(relaxed = true)
         every { context.cacheDir } returns cacheRoot
-        coEvery { mediaFileStore.deleteThumb(any()) } returns true
+        coEvery { mediaFileStore.deleteThumb(any<Long>()) } returns true
         coEvery { mediaFileStore.checkThumbExistence(any()) } returns MediaExistence.NOT_FOUND
         useCase = FileOperationsUseCase(
             videoRepository = videoRepository,
@@ -308,7 +308,7 @@ class FileOperationsUseCaseTest {
         assertTrue("IO_ERROR must surface as Failed", result is DeleteMediaResult.Failed)
         coVerify(exactly = 0) { videoRepository.deleteMediaRecord(any()) }
         coVerify(exactly = 0) { mediaFileStore.delete(any()) }
-        coVerify(exactly = 0) { mediaFileStore.deleteThumb(any()) }
+        coVerify(exactly = 0) { mediaFileStore.deleteThumb(any<Long>()) }
     }
 
     @Test

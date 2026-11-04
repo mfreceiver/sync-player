@@ -8,7 +8,11 @@ import androidx.exifinterface.media.ExifInterface
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.provider.MediaUris
+import cn.vectory.syncplayer.storage.DatasetIdSource
 import cn.vectory.syncplayer.storage.MediaFileStore
+import cn.vectory.syncplayer.storage.StorageFormat
+import cn.vectory.syncplayer.storage.StorageRef
+import cn.vectory.syncplayer.storage.VolumeIds
 import dagger.Lazy
 import dagger.Binds
 import dagger.Module
@@ -104,6 +108,9 @@ class AndroidExifDateReader @Inject constructor() : ExifDateReader {
 class ImageMetadataExtractor @Inject constructor(
     private val videoRepository: VideoRepository,
     private val mediaFileStoreLazy: Lazy<MediaFileStore>,
+    // P1-11（sol）：外部 CTR_V2 行的缩略图需按已提交 ref 定位（datasetId 参与
+    // 加密路径）；DI 绑定见 di/StorageModule.kt（provideDatasetIdSource）。
+    private val datasetIdSource: DatasetIdSource,
     @ApplicationContext private val context: Context,
     private val bitmapDecoder: BitmapDecoder,
     private val exifDateReader: ExifDateReader,
@@ -149,7 +156,7 @@ class ImageMetadataExtractor @Inject constructor(
                     try {
                         val baos = ByteArrayOutputStream()
                         thumb.compress(Bitmap.CompressFormat.JPEG, 90, baos)
-                        store.writeThumb(item.id, baos.toByteArray())
+                        writeThumbRouted(item.id, baos.toByteArray())
                     } finally {
                         thumb.recycle()
                     }
@@ -182,6 +189,38 @@ class ImageMetadataExtractor @Inject constructor(
     }
 
     /** 标准 inSampleSize 算法：2 幂向下取，使缩略图两边均 ≤ maxSize。 */
+    /**
+     * P1-11（sol）：缩略图按**当前已提交 ref** 路由——外部 CTR_V2 行的加密缩略图
+     * 路径含 datasetId/generation，旧 `writeThumb(id, bytes)` 只写内部明文路径。
+     * 外部已提交行走 `writeThumb(ref, bytes)`；内部行/未提交（PENDING）行沿用 by-id。
+     */
+    private suspend fun writeThumbRouted(id: Long, bytes: ByteArray) {
+        val entity = try {
+            videoRepository.getById(id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+        if (entity != null && VolumeIds.isExternal(entity.volumeId) &&
+            entity.storageFormat == StorageFormat.CTR_V2.name &&
+            entity.iv != null && !entity.generation.isNullOrBlank()
+        ) {
+            val ref = StorageRef(
+                id = id,
+                volumeId = entity.volumeId,
+                datasetId = datasetIdSource(),
+                generation = entity.generation,
+                format = StorageFormat.CTR_V2,
+                iv = entity.iv,
+                plainSize = entity.fileSize,
+            )
+            store.writeThumb(ref, bytes)
+        } else {
+            store.writeThumb(id, bytes)
+        }
+    }
+
     private fun computeInSampleSize(width: Int, height: Int, maxSize: Int): Int {
         var sampleSize = 1
         while (width / sampleSize > maxSize || height / sampleSize > maxSize) {

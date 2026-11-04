@@ -7,7 +7,11 @@ import android.util.Log
 import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.provider.MediaUris
+import cn.vectory.syncplayer.storage.DatasetIdSource
 import cn.vectory.syncplayer.storage.MediaFileStore
+import cn.vectory.syncplayer.storage.StorageFormat
+import cn.vectory.syncplayer.storage.StorageRef
+import cn.vectory.syncplayer.storage.VolumeIds
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.ByteArrayOutputStream
@@ -19,6 +23,9 @@ import kotlinx.coroutines.CancellationException
 class VideoMetadataExtractor @Inject constructor(
     private val videoRepository: VideoRepository,
     private val mediaFileStoreLazy: Lazy<MediaFileStore>,
+    // P1-11（sol）：外部 CTR_V2 行的缩略图需按已提交 ref 定位（datasetId 参与
+    // 加密路径）；DI 绑定见 di/StorageModule.kt（provideDatasetIdSource）。
+    private val datasetIdSource: DatasetIdSource,
     @ApplicationContext private val context: Context
 ) {
     private companion object { const val TAG = "VideoMetadataExtractor" }
@@ -94,7 +101,7 @@ class VideoMetadataExtractor @Inject constructor(
             if (bitmap != null) {
                 val baos = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 90, baos)
-                store.writeThumb(videoItem.id, baos.toByteArray())
+                writeThumbRouted(videoItem.id, baos.toByteArray())
                 bitmap.recycle()
             }
         } catch (e: CancellationException) {
@@ -102,6 +109,40 @@ class VideoMetadataExtractor @Inject constructor(
         } catch (e: Exception) {
             // A1 敏感日志红线：安全摘要，不拼 fileName、不传原始 Throwable。
             Log.w(TAG, SyncSafeLog.metadataExtractionFailed(e))
+        }
+    }
+
+    /**
+     * P1-11（sol）：缩略图按**当前已提交 ref** 路由——外部 CTR_V2 行的加密缩略图
+     * 路径含 datasetId/generation，旧 `writeThumb(id, bytes)` 只写内部明文路径，
+     * 导致外部行缩略图「写到错误卷 + 读取永远 miss（反复重生成）」。现取行后按
+     * 卷/格式构造 [StorageRef] 走 `writeThumb(ref, bytes)`；内部行或未提交
+     * （PENDING/列缺失）行沿用 by-id 路径。
+     */
+    private suspend fun writeThumbRouted(id: Long, bytes: ByteArray) {
+        val entity = try {
+            videoRepository.getById(id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+        if (entity != null && VolumeIds.isExternal(entity.volumeId) &&
+            entity.storageFormat == StorageFormat.CTR_V2.name &&
+            entity.iv != null && !entity.generation.isNullOrBlank()
+        ) {
+            val ref = StorageRef(
+                id = id,
+                volumeId = entity.volumeId,
+                datasetId = datasetIdSource(),
+                generation = entity.generation,
+                format = StorageFormat.CTR_V2,
+                iv = entity.iv,
+                plainSize = entity.fileSize,
+            )
+            store.writeThumb(ref, bytes)
+        } else {
+            store.writeThumb(id, bytes)
         }
     }
 }

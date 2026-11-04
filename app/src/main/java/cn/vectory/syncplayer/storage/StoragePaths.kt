@@ -29,6 +29,15 @@ class StoragePaths @Inject constructor(
     val debugLogsDir: File
         get() = File(context.filesDir, DEBUG_LOGS_DIR).also { it.mkdirs() }
 
+    /**
+     * v2 双卷：外部卷数据根位于 getExternalFilesDir 对应目录下的
+     * `userdata-v2/<datasetId>/`（relPath 由 [MediaPaths.externalRootRel] 表达，
+     * [cn.vectory.syncplayer.storage.volume.FileVolume] 以 relPath 前缀使用）；
+     * 此 helper 仅供需要 File 的少数调用方使用。
+     */
+    fun externalUserdataRoot(externalFilesDir: File, datasetId: String): File =
+        File(externalFilesDir, MediaPaths.externalRootRel(datasetId))
+
     fun toLocalRelativePath(basePath: String, remoteRelPath: String): String {
         return if (basePath.isNotEmpty()) "$basePath/$remoteRelPath" else remoteRelPath
     }

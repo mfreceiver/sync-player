@@ -83,7 +83,7 @@ class Audit20260913V5SkippedCountTest {
         coEvery { videoRepository.getByPathPrefix("base") } returns listOf(videoEntity(1), videoEntity(2))
         coEvery { videoRepository.getById(1L) } returns videoEntity(1)
         coEvery { videoRepository.getById(2L) } returns videoEntity(2)
-        coEvery { mediaFileStore.deleteThumb(any()) } returns true
+        coEvery { mediaFileStore.deleteThumb(any<Long>()) } returns true
         coEvery { mediaFileStore.checkThumbExistence(any()) } returns MediaExistence.NOT_FOUND
         coEvery { mediaFileStore.checkExistence(1L) } returns MediaExistence.NOT_FOUND
         coEvery { mediaFileStore.checkExistence(2L) } returns MediaExistence.IO_ERROR("io boom")

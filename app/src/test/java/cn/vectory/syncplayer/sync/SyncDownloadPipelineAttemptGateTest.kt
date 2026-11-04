@@ -136,7 +136,7 @@ class SyncDownloadPipelineAttemptGateTest {
             storeCalls.add("cancel:${firstArg<Long>()}")
             true
         }
-        coEvery { store.verifyReadable(any(), any()) } coAnswers {
+        coEvery { store.verifyReadable(any<Long>(), any<Long>()) } coAnswers {
             storeCalls.add("verify:${firstArg<Long>()}")
         }
         // fake repository：existing 行由 seedExistingRow 放入；占位 upsert 顺序分配新 id
@@ -261,9 +261,9 @@ class SyncDownloadPipelineAttemptGateTest {
         coVerify(exactly = 3) { client.downloadTo(any(), any(), any()) }
         coVerify(exactly = 3) { store.cancel(42L) }
         coVerify(exactly = 0) { store.delete(any()) }
-        coVerify(exactly = 0) { store.probePendingTmp(any()) }
+        coVerify(exactly = 0) { store.probePendingTmp(any<Long>()) }
         coVerify(exactly = 0) { store.finalize(any()) }
-        coVerify(exactly = 0) { store.verifyReadable(any(), any()) }
+        coVerify(exactly = 0) { store.verifyReadable(any<Long>(), any<Long>()) }
         coVerify(exactly = 0) { videoRepository.updateSyncMetadata(any(), any(), any(), any()) }
         assertEquals(1L, rows[42L]?.fileSize)
         coVerify(exactly = 1) {
@@ -398,42 +398,36 @@ class SyncDownloadPipelineAttemptGateTest {
 
         assertFalse(result)
         assertEquals(1, publisher.value.failedFiles)
-        coVerify(exactly = 1) { store.delete(42L) }
-        coVerify(exactly = 1) { videoRepository.deleteById(42L) }
+        // P0-4（sol）：CAS=0 ⇒ 并发赢家推进 generation——绝不删赢家行/共享 final。
+        coVerify(exactly = 0) { store.delete(42L) }
+        coVerify(exactly = 0) { videoRepository.deleteById(42L) }
         coVerify(exactly = 1) {
             syncLogRepository.log("DOWNLOAD", any(), "FAILED", any(), any(), any())
         }
     }
 
     /**
-     * A3（红，ensureActive 0 行分支）：列提交 0 行的回滚清理（NC 保护区内部）
-     * 期间被取消——清理完整收束恰一次，退出保护区后交付 CE（而非 STORAGE_ERROR
-     * 失败路径），绝不重复补偿、绝不计失败。
-     * 屏障在 store.delete 内：cleanup 执行到删 final 时挂起 → 取消 → 放行。
-     * 红证据（A2 代码，无 ensureActive）：NC 退出后走 commitFailed ⇒ STORAGE_ERROR
-     * ⇒ generic catch 计失败 + FAILED 日志（本测试 exactly=0 断言失败）。
-     *
-     * A6（rev-gpt 方案）：同上——reached 真实信号 + select + join；不依赖 runCurrent。
+     * A3（红，ensureActive 0 行分支）：列提交 0 行（CAS 失败）的 NonCancellable
+     * 保护区期间被取消——退出保护区后交付 CE（而非 STORAGE_ERROR 失败路径），
+     * 绝不计失败、绝无二次补偿。
+     * P0-4（sol）后语义：0 行 CAS=并发赢家推进 generation ⇒ 不删 final、不删行；
+     * 屏障移入 updateSyncStorageMetadata（NC 保护区内部唯一挂起点）。
      */
     @Test
-    fun `cancellation during zero-row cleanup delivers CE with exactly one cleanup`() = runTest {
+    fun `cancellation during zero-row commit delivers CE without destructive cleanup`() = runTest {
         stubBasics()
         stubClient(listOf(1000))
         rows[42L] = seedExistingRow()
         val barrierSut = schedulerSut(testScheduler)
-        coEvery { videoRepository.updateSyncMetadata(any(), any(), any(), any()) } coAnswers {
-            rows.remove(firstArg<Long>()) // 0 行：行已在 finalize 后被并发删除
-            0
-        }
         val release = Channel<Int>(Channel.UNLIMITED)
         val reached = CompletableDeferred<Unit>()
         val enteredBarrier = CopyOnWriteArrayList<Long>()
-        coEvery { store.delete(any()) } coAnswers {
-            storeCalls.add("delete:${firstArg<Long>()}")
+        coEvery { videoRepository.updateSyncMetadata(any(), any(), any(), any()) } coAnswers {
             enteredBarrier.add(firstArg<Long>())
-            reached.complete(Unit) // ← 真实到达信号：删 final 挂起前
-            release.receive() // ← 屏障：回滚删 final 时挂起（仍处 NC 保护区）
-            true
+            reached.complete(Unit) // ← 真实到达信号：CAS 列提交挂起前
+            release.receive() // ← 屏障：仍处 NC 保护区
+            rows.remove(firstArg<Long>()) // 0 行
+            0
         }
         val caught = CopyOnWriteArrayList<Throwable>()
         val returned = CopyOnWriteArrayList<Boolean>()
@@ -448,29 +442,29 @@ class SyncDownloadPipelineAttemptGateTest {
         try {
             select<Unit> {
                 reached.onAwait { }
-                job.onJoin { } // 提前结束——不该先于回滚屏障
+                job.onJoin { } // 提前结束——不该先于 CAS 屏障
             }
             if (!reached.isCompleted) {
                 fail(
-                    "job finished before rollback barrier: returned=$returned " +
+                    "job finished before commit barrier: returned=$returned " +
                         "caught=${caught.map { it.javaClass.name }} storeCalls=$storeCalls " +
                         "phase=${publisher.value.phase}"
                 )
             }
-            assertEquals("rollback must be parked at store.delete barrier", listOf(42L), enteredBarrier)
+            assertEquals("commit must be parked at updateSyncMetadata barrier", listOf(42L), enteredBarrier)
 
-            job.cancel(CancellationException("cleanup-cancel"))
-            release.send(1) // 放行 ⇒ NC 内清理继续收束（删行 + 登记清零）⇒ ensureActive 交付 CE
+            job.cancel(CancellationException("commit-cancel"))
+            release.send(1) // 放行 ⇒ NC 退出 ⇒ ensureActive 交付 CE
             job.join()
 
             assertTrue(
                 "CE must be the final outcome (caught=${caught.map { it.javaClass.name }})",
                 caught.single() is CancellationException
             )
-            // 清理恰一次：删 final + 删行各恰 1 次，绝无二次补偿
-            coVerify(exactly = 1) { store.delete(42L) }
-            coVerify(exactly = 1) { videoRepository.deleteById(42L) }
-            // A6 补：回滚路径绝无任何提取器进入（CE 在提取之前交付）
+            // P0-4：CAS=0 绝不删赢家行/共享 final（内部卷路径），无任何破坏性清理。
+            coVerify(exactly = 0) { store.delete(42L) }
+            coVerify(exactly = 0) { videoRepository.deleteById(any()) }
+            // 提取器绝无进入（CE 在提取之前交付）
             coVerify(exactly = 0) { videoMetadataExtractor.extractAndSave(any()) }
             coVerify(exactly = 0) { imageMetadataExtractor.extractAndSave(any()) }
             // CE 路径：不计成功、不计普通失败、无 FAILED 日志、无复活
@@ -652,8 +646,9 @@ class SyncDownloadPipelineAttemptGateTest {
     // ------------------------------------------------------------------ A1-2 孤儿回滚
 
     /**
-     * A1-2（红）：列提交 0 行（行在 finalize 后被并发删除）⇒ 孤儿文件明确失败 +
-     * COMMITTED 单点回滚（删 final + 删行），绝不 SUCCESS、绝不复活。
+     * A1-2（改，P0-4/sol）：列提交 0 行 ⇒ 孤儿密文明确失败，但 CAS=0 也可能是
+     * 并发赢家推进 generation——绝不删行/删共享 final（内部卷同路径），残留由
+     * 扫描 probe（SIZE_MISMATCH）修复路径回收。绝不 SUCCESS、绝不复活。
      */
     @Test
     fun `zero-row sync metadata commit is explicit failure with committed cleanup`() = runTest {
@@ -670,8 +665,9 @@ class SyncDownloadPipelineAttemptGateTest {
         assertFalse(result)
         assertEquals(1, publisher.value.failedFiles)
         assertEquals(0, publisher.value.completedFiles)
-        coVerify(exactly = 1) { store.delete(42L) }
-        coVerify(exactly = 1) { videoRepository.deleteById(42L) }
+        // P0-4：内部卷绝不删 final/行（可能属于并发赢家）。
+        coVerify(exactly = 0) { store.delete(42L) }
+        coVerify(exactly = 0) { videoRepository.deleteById(any()) }
         coVerify(exactly = 0) { store.cancel(any()) }
         coVerify(exactly = 0) { videoRepository.upsert(match { it.id == 42L }) }
         coVerify(exactly = 1) {

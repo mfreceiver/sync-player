@@ -5,17 +5,30 @@ import android.content.ContentValues
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.ParcelFileDescriptor
+import android.os.storage.StorageManager
 import android.provider.OpenableColumns
+import androidx.annotation.VisibleForTesting
 import cn.vectory.syncplayer.R
+import cn.vectory.syncplayer.crypto.DecryptingFdCallback
 import cn.vectory.syncplayer.data.local.AppDatabase
+import cn.vectory.syncplayer.data.local.entity.VideoItemEntity
 import cn.vectory.syncplayer.storage.MediaFileStore
+import cn.vectory.syncplayer.storage.StorageFormat
+import cn.vectory.syncplayer.storage.StorageRef
+import cn.vectory.syncplayer.storage.StorageState
+import cn.vectory.syncplayer.storage.VolumeIds
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
 import java.io.FileNotFoundException
+import java.io.FileOutputStream
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 
 @EntryPoint
 @InstallIn(SingletonComponent::class)
@@ -63,18 +76,142 @@ class MediaContentProvider : ContentProvider() {
 
     /**
      * 安全打开文件，所有内部异常在 openFile 的外层捕获并转换。
-     * 文件均为明文本地文件，直接以只读 PFD 暴露。
+     * v2 双卷：单一 entity 快照 → PENDING 不公开 → internal PLAIN 走 PFD 快路径；
+     * external CTR_V2 走 openProxyFileDescriptor + DecryptingFdCallback（专用 HandlerThread）。
      */
     private fun safeOpenFile(uri: Uri, id: Long): ParcelFileDescriptor {
         val store = ep().mediaFileStore()
-        ep().appDatabase().videoItemDao().getByIdSync(id)
+        // 单一 entity 快照：后续全部判定基于同一行，避免中途行变更导致混合状态。
+        val entity = ep().appDatabase().videoItemDao().getByIdSync(id)
             ?: throw FileNotFoundException(context!!.getString(R.string.media_error_not_found))
+        if (entity.storageState != StorageState.READY.name) {
+            // PENDING/未知：对外即「不可用」，绝不暴露半成品密文。
+            throw FileNotFoundException(context!!.getString(R.string.media_error_not_found))
+        }
         return if (MediaUris.isMedia(uri)) {
             MediaUris.requireMedia(uri)
-            ParcelFileDescriptor.open(store.mediaFile(id), ParcelFileDescriptor.MODE_READ_ONLY)
+            openMedia(store, entity)
         } else {
             MediaUris.requireThumb(uri)
-            ParcelFileDescriptor.open(store.thumbFile(id), ParcelFileDescriptor.MODE_READ_ONLY)
+            openThumb(store, entity)
+        }
+    }
+
+    private fun openMedia(store: MediaFileStore, entity: VideoItemEntity): ParcelFileDescriptor {
+        if (entity.volumeId == VolumeIds.INTERNAL) {
+            if (entity.storageFormat != StorageFormat.PLAIN.name) {
+                // 不一致组合 fail-closed：绝不把密文当明文供出。
+                throw FileNotFoundException(context!!.getString(R.string.media_error_not_found))
+            }
+            // 快路径：明文本地文件直接 PFD（历史行为不变）。
+            return ParcelFileDescriptor.open(
+                store.mediaFile(entity.id),
+                ParcelFileDescriptor.MODE_READ_ONLY
+            )
+        }
+        val ref = refOf(entity)
+        val key = store.contentKey(ref)
+        val handle = runBlocking(Dispatchers.IO) { store.openRead(ref) }
+        val sm = try {
+            context!!.getSystemService(StorageManager::class.java)
+        } catch (e: Exception) {
+            closeQuietly(handle)
+            throw e
+        } ?: run {
+            // P1-12：handle 所有权兜底——openProxy 前的任何失败路径都必须关闭已打开句柄。
+            closeQuietly(handle)
+            throw FileNotFoundException(context!!.getString(R.string.media_error_not_found))
+        }
+        val callback = DecryptingFdCallback(handle, key, ref.iv!!, ref.plainSize)
+        return try {
+            sm.openProxyFileDescriptor(ParcelFileDescriptor.MODE_READ_ONLY, callback, proxyHandler())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // openProxy 失败必须释放已打开句柄，避免 FD 泄漏。
+            closeQuietly(handle)
+            throw e
+        }
+    }
+
+    private fun closeQuietly(handle: cn.vectory.syncplayer.storage.volume.SeekableReadHandle) {
+        try {
+            handle.close()
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun openThumb(store: MediaFileStore, entity: VideoItemEntity): ParcelFileDescriptor {
+        if (entity.volumeId == VolumeIds.INTERNAL) {
+            if (entity.storageFormat != StorageFormat.PLAIN.name) {
+                throw FileNotFoundException(context!!.getString(R.string.media_error_not_found))
+            }
+            return ParcelFileDescriptor.open(
+                store.thumbFile(entity.id),
+                ParcelFileDescriptor.MODE_READ_ONLY
+            )
+        }
+        val ref = refOf(entity)
+        val bytes = runBlocking(Dispatchers.IO) { store.readThumbBytes(ref) }
+            ?: throw FileNotFoundException(context!!.getString(R.string.media_error_not_found))
+        // P1-12：绝不在 openFile（binder 线程）同步写 pipe——写满 pipe 缓冲（64KiB）而
+        // 读端尚未消费时会死锁（openFile 永不返回）。改后台线程写、写完/失败都关写端。
+        val pipe = ParcelFileDescriptor.createPipe()
+        val writeSide = pipe[1]
+        val readSide = pipe[0]
+        val writer = Thread({
+            try {
+                FileOutputStream(writeSide.fileDescriptor).use { it.write(bytes) }
+            } catch (_: Exception) {
+                // 写失败也关写端，让读端立刻看到 EOF/错误而非永久挂起。
+                try {
+                    writeSide.close()
+                } catch (_: Exception) {
+                }
+            }
+        }, "media-thumb-pipe")
+        writer.isDaemon = true
+        writer.start()
+        return readSide
+    }
+
+    /** entity 单快照 → StorageRef（datasetId 来自 storage_dataset 单行）。 */
+    private fun refOf(entity: VideoItemEntity): StorageRef = StorageRef(
+        id = entity.id,
+        volumeId = entity.volumeId,
+        datasetId = ep().appDatabase().storageDatasetDao().getSync()?.datasetId,
+        generation = entity.generation,
+        format = StorageFormat.entries.firstOrNull { it.name == entity.storageFormat }
+            // P2-16：未知格式精确拒绝（外层统一转安全 FileNotFoundException），绝不猜测
+            // 降级为 PLAIN（供明文）或 CTR_V2（错误 key 解出垃圾）。
+            ?: throw IllegalStateException("unknown storage format"),
+        iv = entity.iv,
+        plainSize = entity.fileSize
+    )
+
+    // ---- proxy 回调线程（懒启动；测试可关闭）----
+
+    @Volatile
+    private var handlerThread: HandlerThread? = null
+
+    private fun proxyHandler(): Handler {
+        val existing = handlerThread
+        if (existing != null && existing.isAlive) return Handler(existing.looper)
+        synchronized(this) {
+            val t = handlerThread?.takeIf { it.isAlive } ?: HandlerThread("media-provider-io").apply {
+                isDaemon = true
+                start()
+            }
+            handlerThread = t
+            return Handler(t.looper)
+        }
+    }
+
+    @VisibleForTesting
+    fun shutdownProxyThread() {
+        synchronized(this) {
+            handlerThread?.quitSafely()
+            handlerThread = null
         }
     }
 

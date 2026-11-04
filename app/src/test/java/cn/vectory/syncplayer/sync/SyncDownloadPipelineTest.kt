@@ -338,7 +338,7 @@ class SyncDownloadPipelineTest {
         coVerify(exactly = 1) { videoRepository.deleteById(4242L) }
         // 元数据 upsert 绝不发生（withMeta 的 fileSize=action.fileSize=1000；占位行是 0）
         coVerify(exactly = 0) { videoRepository.upsert(match { it.fileSize == 1000L }) }
-        coVerify(exactly = 0) { store.verifyReadable(any(), any()) }
+        coVerify(exactly = 0) { store.verifyReadable(any<Long>(), any<Long>()) }
     }
 
     /** 计划 #10（回归锁）：finalize false + 探测 PRESENT——rename 未发生，cancel 路径、不删 final、existing 行保留。 */
@@ -373,7 +373,7 @@ class SyncDownloadPipelineTest {
         // existing 行保留
         coVerify(exactly = 0) { videoRepository.deleteById(any()) }
         // NOT_FINALIZED 不进探测（v2 草案在 tmp 缺失变体会误删 final——评审 #3 数据丢失窗口）
-        coVerify(exactly = 0) { store.probePendingTmp(any()) }
+        coVerify(exactly = 0) { store.probePendingTmp(any<Long>()) }
     }
 
     /** 计划 #12（红）：探测 UNKNOWN——保守只删行、不删 final（旧实现 existing 时保行 → 红）。 */
@@ -486,7 +486,7 @@ class SyncDownloadPipelineTest {
             storeCalls.add("finalize:${firstArg<Long>()}")
             true
         }
-        coEvery { store.probePendingTmp(any()) } coAnswers {
+        coEvery { store.probePendingTmp(any<Long>()) } coAnswers {
             storeCalls.add("probe:${firstArg<Long>()}")
             TmpProbeState.ABSENT
         }
@@ -499,7 +499,7 @@ class SyncDownloadPipelineTest {
             storeCalls.add("cancel:${firstArg<Long>()}")
             true
         }
-        coEvery { store.verifyReadable(any(), any()) } coAnswers {
+        coEvery { store.verifyReadable(any<Long>(), any<Long>()) } coAnswers {
             storeCalls.add("verify:${firstArg<Long>()}")
         }
 
@@ -552,11 +552,12 @@ class SyncDownloadPipelineTest {
         coEvery { videoRepository.getByRelativePathAndRelationId(any(), 1L) } returns existingRow(42L)
         coEvery { videoRepository.updateSyncMetadata(any(), any(), any(), any()) } returns 0
 
-        // 行在 finalize 提交后消失：孤儿密文 → 明确失败 + 清理，绝不 SUCCESS 计数
+        // 行在 finalize 提交后消失：孤儿密文 → 明确失败，绝不 SUCCESS 计数。
+        // P0-4（sol）：CAS=0 可能是并发赢家推进 generation——绝不删 final/删行。
         assertFalse(sut.executeSyncLocked(1L, listOf(dlAction()), emptyList()))
 
-        coVerify(exactly = 1) { store.delete(42L) }
-        coVerify(exactly = 1) { videoRepository.deleteById(42L) }
+        coVerify(exactly = 0) { store.delete(42L) }
+        coVerify(exactly = 0) { videoRepository.deleteById(any()) }
         coVerify(exactly = 0) { store.cancel(any()) }
         assertEquals(1, publisher.value.failedFiles)
         assertEquals(0, publisher.value.completedFiles)

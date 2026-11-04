@@ -16,6 +16,7 @@ import cn.vectory.syncplayer.data.repository.VideoRepository
 import cn.vectory.syncplayer.storage.MediaExistence
 import cn.vectory.syncplayer.storage.MediaFileStore
 import cn.vectory.syncplayer.storage.StoragePaths
+import cn.vectory.syncplayer.storage.VolumeIds
 import dagger.Lazy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -49,7 +50,10 @@ internal class SyncDeleteExecutor(
     private val storagePaths: StoragePaths,
     private val mediaFileStoreLazy: Lazy<MediaFileStore>,
     private val context: Context,
-    private val progressPublisher: SyncProgressPublisher
+    private val progressPublisher: SyncProgressPublisher,
+    // P0-7（sol）：DELETE_BOTH 接存储端口——ref-aware 删除 + 卷可达守卫。
+    // 可选参数：测试/手工构造沿用 legacy 单内部卷语义（null）。
+    private val storagePort: SyncStoragePort? = null
 ) {
 
     private val mediaFileStore: MediaFileStore
@@ -119,8 +123,30 @@ internal class SyncDeleteExecutor(
                 // 2) Local — 远端 ack 后才执行；本地删除失败保留 DB 行，由下次镜像
                 //    同步（dryRun 对比远端快照）推导 DELETE_LOCAL 自愈，不自作主张删行。
                 if (videoItem != null) {
-                    val mediaGone = deleteStoreMedia(store, videoItem.id)
-                    val thumbGone = deleteStoreThumb(store, videoItem.id)
+                    val port = storagePort
+                    if (port != null) {
+                        // P0-7（sol）：外卡行删除前先过卷可达守卫——行所在卷不可达 ⇒
+                        // 本 action 失败保行（fail-closed），绝不按「缺卡 ⇒ 文件不存在」
+                        // 走内部 by-id 删除（旧实现对所有行无条件 store.delete(id)，
+                        // 外卡文件根本没删）。
+                        val targetVolume = port.resolveRef(videoItem.id)?.volumeId
+                            ?: VolumeIds.INTERNAL
+                        if (!port.isVolumeAvailable(targetVolume)) {
+                            failedActions++
+                            Log.w(TAG, "DELETE_BOTH local failed: code=STORAGE_UNAVAILABLE, error=VolumeUnavailable")
+                            syncLogRepository.log(
+                                action = "DELETE_BOTH",
+                                relativePath = action.relativePath,
+                                status = "FAILED",
+                                dryRun = false,
+                                fileSize = action.fileSize,
+                                errorMessage = context.getString(R.string.sync_error_storage_unavailable)
+                            )
+                            continue
+                        }
+                    }
+                    val mediaGone = deleteStoreMedia(store, videoItem.id, port)
+                    val thumbGone = deleteStoreThumb(store, videoItem.id, port)
                     if (!(mediaGone && thumbGone)) {
                         failedActions++
                         Log.w(TAG, SyncSafeLog.localDeleteIncomplete("DELETE_BOTH", videoItem.id, mediaGone, thumbGone))
@@ -230,16 +256,17 @@ internal class SyncDeleteExecutor(
     }
 
     /**
-     * Delete media; [Boolean] false is ambiguous (missing vs fail) — re-check [MediaFileStore.checkExistence].
+     * Delete media; [Boolean] false is ambiguous (missing vs fail) — re-check existence
+     * （port 提供时走 ref-aware 三态：外部卷行经端口定位真实卷，绝不误探内部路径）。
      * @return true if media is gone (deleted or definitively not found); false if still present or probe failed.
      */
-    suspend fun deleteStoreMedia(store: MediaFileStore, id: Long): Boolean {
+    suspend fun deleteStoreMedia(store: MediaFileStore, id: Long, port: SyncStoragePort? = null): Boolean {
         return try {
-            val deleted = store.delete(id)
+            val deleted = if (port != null) port.deleteMedia(id) else store.delete(id)
             if (deleted) {
                 true
             } else {
-                when (store.checkExistence(id)) {
+                when (if (port != null) port.checkMediaExistence(id) else store.checkExistence(id)) {
                     is MediaExistence.NOT_FOUND -> true
                     is MediaExistence.EXISTS, is MediaExistence.IO_ERROR -> false
                 }
@@ -250,7 +277,7 @@ internal class SyncDeleteExecutor(
             // 复审红线：只留行 id + 异常类别，不传原始 Throwable。
             Log.w(TAG, SyncSafeLog.cleanupFailed("deleteStoreMedia", id, e))
             try {
-                when (store.checkExistence(id)) {
+                when (if (port != null) port.checkMediaExistence(id) else store.checkExistence(id)) {
                     is MediaExistence.NOT_FOUND -> true
                     is MediaExistence.EXISTS, is MediaExistence.IO_ERROR -> false
                 }
@@ -263,15 +290,16 @@ internal class SyncDeleteExecutor(
     }
 
     /**
-     * Delete thumb; missing thumb is success. Still-present or IO error after false → failure.
+     * Delete thumb; missing thumb is success. Still-present or IO error after false → failure
+     * （port 提供时走 ref-aware 三态，同 [deleteStoreMedia]）。
      */
-    suspend fun deleteStoreThumb(store: MediaFileStore, id: Long): Boolean {
+    suspend fun deleteStoreThumb(store: MediaFileStore, id: Long, port: SyncStoragePort? = null): Boolean {
         return try {
-            val deleted = store.deleteThumb(id)
+            val deleted = if (port != null) port.deleteThumb(id) else store.deleteThumb(id)
             if (deleted) {
                 true
             } else {
-                when (store.checkThumbExistence(id)) {
+                when (if (port != null) port.checkThumbExistence(id) else store.checkThumbExistence(id)) {
                     is MediaExistence.NOT_FOUND -> true
                     is MediaExistence.EXISTS, is MediaExistence.IO_ERROR -> false
                 }
@@ -282,7 +310,7 @@ internal class SyncDeleteExecutor(
             // 复审红线：只留行 id + 异常类别，不传原始 Throwable。
             Log.w(TAG, SyncSafeLog.cleanupFailed("deleteStoreThumb", id, e))
             try {
-                when (store.checkThumbExistence(id)) {
+                when (if (port != null) port.checkThumbExistence(id) else store.checkThumbExistence(id)) {
                     is MediaExistence.NOT_FOUND -> true
                     is MediaExistence.EXISTS, is MediaExistence.IO_ERROR -> false
                 }

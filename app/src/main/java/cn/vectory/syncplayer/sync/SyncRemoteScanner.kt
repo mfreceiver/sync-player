@@ -182,6 +182,19 @@ internal class SyncRemoteScanner(
             }.toSet()
             for (localVideo in localVideos) {
                 if (localVideo.relativePath !in remoteLocalPaths) {
+                    // P1-6 附带（sol，E8 红线）：DELETE_LOCAL 候选行同样必须过本地 final
+                    // 探针——这些行不进入第一循环（remote ∩ local），旧实现未探测便直接
+                    // 派生删除。行所在卷不可达 ⇒ 探针 IO_ERROR ⇒ 抛入 E8 catch（清空
+                    // 两计划 + FAILED），绝不按「缺卡 ⇒ 文件不存在」推导删除。
+                    when (localFinalProbe.probe(localVideo.id, localVideo.fileSize)) {
+                        MediaProbeState.IO_ERROR -> throw SyncException(
+                            SyncErrorCode.STORAGE_ERROR,
+                            SyncOperation.SCAN
+                        )
+                        // VALID/MISSING/SIZE_MISMATCH：远端已无此文件，本地文件状态
+                        // 不影响删除决策（执行侧仍有卷可达守卫 fail-closed 复核）。
+                        else -> {}
+                    }
                     val action = SyncAction(
                         type = SyncActionType.DELETE_LOCAL,
                         relativePath = localVideo.relativePath,
