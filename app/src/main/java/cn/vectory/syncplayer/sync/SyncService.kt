@@ -132,7 +132,13 @@ class SyncService : Service() {
             syncEngine.progress.value.copy(phase = SyncPhase.CANCELLED)
         )
         drainCoordinator.cancelActiveDrain()
-        stopService(startId)
+        // H2（闪退最小修复集）：无条件 stopSelf()——不再依赖 stopSelfResult(startId) 的
+        // 返回值。预算到期是系统强约束：若 startId 失配（多 start 请求交错/重建场景）
+        // 而 stopSelfResult 返回 false，服务滞留前台会在系统升级处置下被强制 kill
+        // （数据同步预算违规 ANR/崩溃）。无条件停止，未完成的 pending 行已持久化在
+        // DB（两阶段提交），下次同步 drain 会重新消费，无丢失。
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
